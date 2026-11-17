@@ -1,5 +1,13 @@
 # What ERLANG needs from finding/1
 
+> **Superseded in part.** finding/1 and report/1 were released at ITTEN's `v0.3.5`, and ERLANG uses them through a pinned copy of KERCKHOFFS's `core/`. The release settled several points below:
+> - `where` takes `elements`, `locations`, `endpoints` and `resources` together;
+> - `rules` is in the core;
+> - a core `detection` field (`render`, `static`, `config`, `trace`, `live`, `load`) carries the evidence proposed here as `evidence`;
+> - report/1 has the statuses `complete`, `partial` and `refused`.
+>
+> The rest stays as a record of what was asked.
+
 ERLANG's requirements on the shared finding format, split into what the core must carry (because the gate, the board or another specialist reads it) and what stays in ERLANG's own `erlang` object. Written against the uncommitted draft in ITTEN's `finding1` worktree (`schema/finding.schema.json` and `schema/finding-itten.schema.json`), read on 17 November 2026. Nothing here changes ITTEN; it is a list to take there.
 
 ## What the draft has

@@ -12,6 +12,19 @@ Nothing here is built yet. The decisions taken on review are at the end.
 - **Seeded data.** Every database is filled by one seeded generator with fixed row counts, so a fixture behaves the same on every run and machine.
 - **Outputs go to `dist/`**: reports, traces, load results. Never `/tmp`.
 - **Scripts.** Multi-step jobs (start database, seed, start fixture, run, collect, stop) are bash scripts with `#!/usr/bin/env bash` and `set -euo pipefail`.
+- **Every suggested fix is tested.** Every finding carries a fix in `erlang.fix` (`lib/fix.js`), of one of two kinds, as in KERCKHOFFS:
+  - **auto**: complete edits a program can apply to the source, never to build output. Used when the call's shape is simple: adding a `signal`, a `timeout` or a pool setting to an options object, or adding the options argument.
+  - **guided**: no edits; every place the person must change, and a note. Used for fixes that take judgement.
+
+  `scripts/fix-test.js` applies each planted finding's auto fix to a fresh copy of the planted twin and runs the check again. The report must be complete, the finding gone, nothing new reported, and every edited file must still parse. A guided fix is never applied. Instead, the test replaces the lines it lists with the clean twin's lines at the same places, and the finding must then be gone. So the listed places are enough, and the clean twin is the fix a person would write. Then every auto fix is applied together, and only guided findings may be left.
+- **One file's failure is that file's.** A file that cannot be read, is not UTF-8, or makes a check throw is recorded as unread. The report is then partial, with the file named and the error described, never quoted (`lib/isolate.js`). The scan goes on, and the CLI exits 3 when there are no findings.
+- **The repository scans clean.** `erlang.config.json` at a scan root may exclude paths that are not part of the app (`lib/scope.js`). Every report names the config and what it excludes, and a config that cannot be read refuses the scan. This repository excludes `fixtures/` and `dist/`. `scripts/self-scan.js` runs the CLI on the repository and requires a complete report with no findings, as part of `npm test`.
+- **Exit codes.**
+  - 0: complete, with no findings.
+  - 1: findings, whether or not the report is also partial.
+  - 2: refused.
+  - 3: partial, with no findings.
+  - 64: bad usage.
 
 ## What each fixture proves
 
@@ -111,4 +124,5 @@ Taken on review, 17 November 2026.
 2. **Load driver.** k6, run as an external program installed by the user or CI; never vendored, modified or embedded. The licence boundary is in `research/prior-art.md`.
 3. **ORM forms.** L01a, L01b, L02 and L03 in raw SQL and Prisma; Drizzle later.
 4. **Timing guard.** A lock file written by ITTEN during each serial timing phase, with its pid and an expiry. ERLANG refuses to generate load while one exists and its pid is alive. The spec is `research/itten-lock.md`, for ITTEN to implement.
-5. **finding/1.** A draft exists in ITTEN, not yet committed. ERLANG's requirements on it are in `research/finding1-requirements.md`. Until it settles, the fixture test matches on check, form, route and evidence channel.
+5. **finding/1.** Released with report/1 at ITTEN's `v0.3.5`. ERLANG uses a pinned copy of KERCKHOFFS's `core/`, which carries both, until the shared core is extracted (`research/first-check.md`). The fixture scorer is the core's `fixture-score.js`.
+6. **Static checks first** (`research/first-check.md`). L07 (`no-timeout`) is built first, as a static fixture of source files that are never installed or run. Then L01a and L01b (D), then L02 (C). Prisma is pinned at 7.10.1.
