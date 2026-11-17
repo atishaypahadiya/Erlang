@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/atishaypahadiya/erlang/schema/config.schema.json",
+  "title": "erlang.config.json",
+  "description": "How ERLANG scans a subject, read from the scan root only (lib/scope.js). Every report names the config and what it excludes.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "exclude": {
+      "description": "Paths relative to the scan root that are not part of the app, such as test fixtures with planted defects or generated reports. A directory (trailing / optional) excludes everything under it; a file excludes that file. No globs, no .., nothing absolute.",
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^(?!/)(?!.*\\\\)(?!.*(?:^|/)\\.\\.?(?:/|$))(?!.*//)[^*?\\[\\]{}]+$"
+      }
+    }
+  }
+}

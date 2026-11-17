@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/atishaypahadiya/erlang/schema/finding-erlang.schema.json",
+  "title": "finding/1, ERLANG's extension",
+  "description": "The erlang object of a finding/1 written by ERLANG. Fields are added as checks need them; see research/finding1-requirements.md.",
+  "type": "object",
+  "required": ["strength", "fix"],
+  "additionalProperties": false,
+  "properties": {
+    "strength": {
+      "enum": ["MUST", "SHOULD", "MAY"],
+      "description": "From the rule, as written in reference/."
+    },
+    "client": {
+      "enum": ["fetch", "axios", "got", "node:http", "node:https", "pg"],
+      "description": "no-timeout: the client making the call, found by where it is imported from."
+    },
+    "unresolved": {
+      "const": true,
+      "description": "The check could not read what decides the finding (options spread from a package, a value computed at run time), so the finding is info, not a defect."
+    },
+    "calls": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "no-timeout on an instance: how many calls on it set no timeout; each is listed in where.locations after the instance."
+    },
+    "fix": {
+      "description": "The suggested fix (lib/fix.js). auto: edits a program can apply, re-checked by scripts/fix-test.js. guided: every place a person must change, and a note.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["kind", "edits"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "auto" },
+            "edits": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "required": ["file", "line", "column", "length", "replace"],
+                "additionalProperties": false,
+                "properties": {
+                  "file": { "type": "string", "minLength": 1 },
+                  "line": { "type": "integer", "minimum": 1 },
+                  "column": { "type": "integer", "minimum": 1 },
+                  "length": { "type": "integer", "minimum": 0 },
+                  "replace": { "type": "string" }
+                }
+              }
+            },
+            "note": { "type": "string", "minLength": 1 }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "locations", "note"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "guided" },
+            "locations": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "required": ["file", "line"],
+                "additionalProperties": false,
+                "properties": {
+                  "file": { "type": "string", "minLength": 1 },
+                  "line": { "type": "integer", "minimum": 1 }
+                }
+              }
+            },
+            "note": { "type": "string", "minLength": 1 }
+          }
+        }
+      ]
+    }
+  }
+}
