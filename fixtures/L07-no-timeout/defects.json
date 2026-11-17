@@ -141,6 +141,34 @@
       },
       "fix": "guided",
       "fixedInClean": "signal: AbortSignal.timeout(3000) set after the spread"
+    },
+    {
+      "id": "L07j",
+      "check": "no-timeout",
+      "title": "http.request with a timeout option and no handler: the option only emits an event",
+      "severity": "warning",
+      "where": {
+        "file": "src/avatars.js",
+        "line": 5,
+        "column": 3,
+        "symbol": "avatar"
+      },
+      "fix": "auto",
+      "fixedInClean": "a 'timeout' handler that destroys the request, chained on the call"
+    },
+    {
+      "id": "L07k",
+      "check": "no-timeout",
+      "title": "https.get with a timeout whose 'timeout' handler only logs",
+      "severity": "warning",
+      "where": {
+        "file": "src/thumbnails.js",
+        "line": 6,
+        "column": 15,
+        "symbol": "thumbnail"
+      },
+      "fix": "guided",
+      "fixedInClean": "the handler destroys the request instead of logging"
     }
   ],
   "decoys": [
@@ -268,6 +296,24 @@
         "file": "src/db.js",
         "line": 13,
         "column": 10
+      }
+    },
+    {
+      "id": "L07-d15",
+      "title": "https.get with a timeout and a 'timeout' handler that destroys the request",
+      "where": {
+        "file": "src/avatars.js",
+        "line": 9,
+        "column": 15
+      }
+    },
+    {
+      "id": "L07-d16",
+      "title": "setTimeout chained on the request with a callback that destroys it",
+      "where": {
+        "file": "src/avatars.js",
+        "line": 15,
+        "column": 3
       }
     }
   ]

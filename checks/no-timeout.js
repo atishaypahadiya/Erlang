@@ -10,8 +10,10 @@
 //              signal, on the call, the instance or its defaults.
 //   got        got and instances from got.extend. Bounded by a timeout or a
 //              signal; got sets no timeout by default.
-//   node:http  http and https get and request. Bounded by a signal, a timeout
-//   node:https option, or setTimeout on the request.
+//   node:http  http and https get and request. Bounded by a signal, or by a
+//   node:https timeout option or setTimeout on the request together with a
+//              'timeout' handler that destroys or aborts it: the option alone
+//              only emits an event (a warning when nothing ends the request).
 //   pg         Pool and Client. Bounded when the config sets statement_timeout
 //              or query_timeout, and connectionTimeoutMillis; pg's default
 //              for each is no timeout.
@@ -31,7 +33,7 @@ import { ts, build, position, relOf } from '../lib/program.js';
 import { readSources } from '../lib/sources.js';
 import { perFile } from '../lib/isolate.js';
 import { finding, fingerprint } from '../core/finding.js';
-import { insertProperty, appendArgument } from '../lib/fix.js';
+import { insertProperty, appendArgument, insertAfter } from '../lib/fix.js';
 
 export const CHECK = 'no-timeout';
 const RULES = ['TMO-01'];
@@ -490,39 +492,115 @@ export function run(root) {
 
   function onHttp(call, module, method) {
     const args = call.arguments.map(unwrap);
-    const isFn = (a) => a && (ts.isArrowFunction(a) || ts.isFunctionExpression(a));
-    const isUrl = (a) => a && (ts.isStringLiteralLike(a) || ts.isTemplateExpression(a) || (ts.isNewExpression(a) && isGlobal(origin(cx, a.expression), 'URL')));
+    // A callback: a function, an identifier naming one, or one named as
+    // callbacks are (cb, callback, done, next, handler, on...).
+    const isFn = (a) => {
+      if (!a) return false;
+      if (ts.isArrowFunction(a) || ts.isFunctionExpression(a)) return true;
+      if (!ts.isIdentifier(a)) return false;
+      if (/^(cb|callback|done|next|handler|respond|on[A-Z]\w*)$/.test(a.text)) return true;
+      const d = declOf(cx, a)?.decl;
+      return !!(d && (ts.isFunctionDeclaration(d) || (ts.isVariableDeclaration(d) && d.initializer && ts.isFunctionLike(unwrap(d.initializer)))));
+    };
+    // The first argument is a URL or the options. A URL: a string, a template,
+    // a concatenation, new URL(...), a variable holding one, or a name that
+    // says so (url, href, endpoint...).
+    const isUrl = (a, depth = 0) => {
+      if (!a) return false;
+      if (ts.isStringLiteralLike(a) || ts.isTemplateExpression(a) || ts.isBinaryExpression(a)) return true;
+      if (ts.isNewExpression(a) && isGlobal(origin(cx, a.expression), 'URL')) return true;
+      if (!ts.isIdentifier(a)) return false;
+      if (/url|uri|href|endpoint|link/i.test(a.text)) return true;
+      const d = declOf(cx, a)?.decl;
+      return !!(d && ts.isVariableDeclaration(d) && d.initializer && depth < MAX_DEPTH && isUrl(unwrap(d.initializer), depth + 1));
+    };
     let options;
     if (args[0] && !isUrl(args[0]) && !isFn(args[0])) options = args[0];
     else if (args[1] && !isFn(args[1])) options = args[1];
     const { verdict: sig } = judgeFetchOptions(cx, options);
     const obj = evalObject(cx, options);
     const t = lookup(obj, 'timeout');
-    const timed = !t.absent && !t.open && !isZero(t.value);
-    if (sig === 'bounded' || timed || setsTimeout(call)) { stats.bounded++; return; }
+    const option = !t.absent && !t.open && !isZero(t.value);
+    const h = timeoutHandling(call);
+    // The timeout option and req.setTimeout only emit 'timeout'; the request
+    // ends only if a handler destroys or aborts it.
+    if (sig === 'bounded' || ((option || h.timer) && h.destroys)) { stats.bounded++; return; }
     if (sig === 'unknown' || typeof sig === 'object' || t.open) return add(unresolved(call, `node:${module}`, 'its options come from code ERLANG cannot read'));
-    const fix = guided([call], `Pass options with signal: AbortSignal.timeout(ms)${isFn(args.at(-1)) ? ' before the callback' : ''}, or call setTimeout(ms) on the request and destroy it when the timer fires.`);
-    add(make(call, `node:${module}`, 'error', `${module}.${method}${inName(call)} has no deadline: no signal, no timeout, and no setTimeout on the request.`, fix));
+    const name = `${module}.${method}${inName(call)}`;
+    if (option || h.timer) {
+      const how = option ? 'the timeout option' : 'setTimeout on the request';
+      if (h.handlers.length) {
+        const fix = guided([call, ...h.handlers], 'Make the \'timeout\' handler end the request: call destroy() on it (req.destroy(new Error(\'request timed out\'))).');
+        return add(make([call, ...h.handlers], `node:${module}`, 'warning', `${name} sets a timeout, but ${how} only emits a 'timeout' event, and its handler (${h.handlers.map(where).join(', ')}) does not destroy or abort the request, so the request still waits forever.`, fix));
+      }
+      const fix = auto(call, [insertAfter(fileOf(call), call, '.on(\'timeout\', function () { this.destroy(new Error(\'request timed out\')); })')]);
+      return add(make(call, `node:${module}`, 'warning', `${name} sets a timeout, but ${how} only emits a 'timeout' event: nothing destroys the request when it fires, so the request still waits forever.`, fix));
+    }
+    const fix = guided([call], `Pass options with signal: AbortSignal.timeout(ms)${isFn(args.at(-1)) ? ' before the callback' : ''}, or set a timeout and destroy the request in its 'timeout' handler.`);
+    add(make(call, `node:${module}`, 'error', `${name} has no deadline: no signal, no timeout, and no setTimeout on the request.`, fix));
   }
 
-  // req.setTimeout(...) on the request this call returns: chained, or on the
-  // variable it is assigned to.
-  function setsTimeout(call) {
+  // What the request this call returns does about time, from calls chained
+  // on it or made on the variable it is assigned to (in the same file):
+  //   timer:     setTimeout(ms[, handler]) is called on it
+  //   handlers:  the functions given to on/once/addListener('timeout', ...)
+  //              or as setTimeout's callback
+  //   destroys:  one of those handlers calls destroy() or abort() on it
+  function timeoutHandling(call) {
+    const out = { timer: false, handlers: [], destroys: false };
+    const consider = (c, sym) => {
+      const name = c.expression.name.text;
+      let fn = null;
+      if (name === 'setTimeout') { if (c.arguments[0] && !isZero(c.arguments[0])) out.timer = true; fn = c.arguments[1]; }
+      else if (['on', 'once', 'addListener', 'prependListener'].includes(name) && c.arguments[0] && ts.isStringLiteralLike(unwrap(c.arguments[0])) && unwrap(c.arguments[0]).text === 'timeout') fn = c.arguments[1];
+      if (!fn) return;
+      const body = handlerBody(unwrap(fn));
+      out.handlers.push(fn);
+      if (body && endsRequest(body.node, sym, body.loose)) out.destroys = true;
+    };
     let n = call;
-    while (n.parent && ts.isPropertyAccessExpression(n.parent) && n.parent.parent && ts.isCallExpression(n.parent.parent)) {
-      if (n.parent.name.text === 'setTimeout') return true;
+    while (n.parent && ts.isPropertyAccessExpression(n.parent) && n.parent.expression === n && n.parent.parent && ts.isCallExpression(n.parent.parent)) {
+      consider(n.parent.parent, null);
       n = n.parent.parent;
     }
-    const decl = n.parent && ts.isVariableDeclaration(n.parent) ? n.parent : null;
-    if (!decl || !ts.isIdentifier(decl.name)) return false;
-    const sym = cx.checker.getSymbolAtLocation(decl.name);
+    const decl = n.parent && ts.isVariableDeclaration(n.parent) && ts.isIdentifier(n.parent.name) ? n.parent : null;
+    if (decl) {
+      const sym = cx.checker.getSymbolAtLocation(decl.name);
+      const visit = (x) => {
+        if (ts.isCallExpression(x) && ts.isPropertyAccessExpression(x.expression) && ts.isIdentifier(x.expression.expression) && cx.checker.getSymbolAtLocation(x.expression.expression) === sym) consider(x, sym);
+        ts.forEachChild(x, visit);
+      };
+      visit(decl.getSourceFile());
+    }
+    return out;
+  }
+
+  // A handler's body: an inline function's, or that of the function an
+  // identifier names. For a named function the request is not in scope by
+  // name, so any destroy() or abort() it makes counts (loose).
+  function handlerBody(fn) {
+    if (fn && (ts.isArrowFunction(fn) || ts.isFunctionExpression(fn))) return { node: fn.body, loose: false };
+    if (fn && ts.isIdentifier(fn)) {
+      const d = declOf(cx, fn)?.decl;
+      const f = d && ts.isVariableDeclaration(d) && d.initializer ? unwrap(d.initializer) : d;
+      if (f && ts.isFunctionLike(f) && f.body) return { node: f.body, loose: true };
+    }
+    return null;
+  }
+
+  // Whether code calls destroy() or abort() on the request: on `this`, on the
+  // request's variable, or (loose) on anything.
+  function endsRequest(body, sym, loose) {
     let found = false;
     const visit = (x) => {
       if (found) return;
-      if (ts.isCallExpression(x) && ts.isPropertyAccessExpression(x.expression) && x.expression.name.text === 'setTimeout' && ts.isIdentifier(x.expression.expression) && cx.checker.getSymbolAtLocation(x.expression.expression) === sym) found = true;
+      if (ts.isCallExpression(x) && ts.isPropertyAccessExpression(x.expression) && ['destroy', 'abort'].includes(x.expression.name.text)) {
+        const target = unwrap(x.expression.expression);
+        if (loose || target.kind === ts.SyntaxKind.ThisKeyword || (sym && ts.isIdentifier(target) && cx.checker.getSymbolAtLocation(target) === sym)) found = true;
+      }
       ts.forEachChild(x, visit);
     };
-    visit(decl.getSourceFile());
+    visit(body);
     return found;
   }
 

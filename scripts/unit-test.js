@@ -99,6 +99,19 @@ console.log('\nnode:http, and fetch inside helpers');
 expectFindings('http.request with req.setTimeout on the request is bounded', {
   'h.js': "import http from 'node:http';\nexport function f(u) {\n  const req = http.request(u);\n  req.setTimeout(1000, () => req.destroy());\n  return req;\n}\n",
 }, []);
+expectFindings('req.setTimeout(ms) with no callback and no handler only emits an event: a warning, auto-fixed', {
+  'h.js': "import https from 'node:https';\nexport function f(url) {\n  const req = https.get(url);\n  req.setTimeout(1000);\n  return req;\n}\n",
+}, [['warning', 'h.js', 3, 'auto']]);
+expectFindings('A timeout option with a named handler function that destroys the request is bounded', {
+  'h.js': "import http from 'node:http';\nfunction giveUp() { this.destroy(); }\nexport const f = (url) => http.get(url, { timeout: 500 }).on('timeout', giveUp);\n",
+}, []);
+expectAutoFixHolds('A timeout option and no handler: a destroying handler is chained on the call', { 'h.js': "import http from 'node:http';\nexport const f = (url) => http.get(url, { timeout: 500 });\n" });
+expectFindings('https.get(url) on a parameter named for a URL, with no options: an error', {
+  'h.js': "import https from 'node:https';\nexport const f = (targetUrl, cb) => https.get(targetUrl, cb);\n",
+}, [['error', 'h.js', 2, 'guided']]);
+expectFindings('https.get(x) where x is a parameter that could be options: info, not a guess', {
+  'h.js': "import https from 'node:https';\nexport const f = (x, cb) => https.get(x, cb);\n",
+}, [['info', 'h.js', 2, 'guided']]);
 expectFindings('A helper whose signal is a parameter: judged at each caller; shorthand { signal } is followed', {
   'h.js': 'export function get(u, signal) {\n  return fetch(u, { signal });\n}\n',
   'a.js': "import { get } from './h.js';\nexport const bad = () => get('x');\nexport const good = () => get('y', AbortSignal.timeout(1000));\n",
