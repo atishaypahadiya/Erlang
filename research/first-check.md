@@ -110,6 +110,7 @@ Small lookup tables are the hard case: static code cannot know a table's size. R
 - Know the ORM's batching, by version:
   - Prisma 6 and 7 batch `findUnique` calls made in the same tick (C13). So `Promise.all(ids.map(id => prisma.x.findUnique(...)))` is one query, and a sequential `await` in a `for` loop is not. The docs state the same-tick rule but name neither case; both follow from the dataloader source, which dispatches on `process.nextTick`. The fixture must confirm them before the check relies on them.
   - Batching applies only to `findUnique` with scalar equality filters.
+  - Probed on 17 November 2026 (`research/prisma-batching.md`): both cases are confirmed; `findUnique` batches even with a non-unique filter added, so the scalar-equality limit above does not hold; `findFirst`, `findMany`, `count` and every write are never batched.
   - Prisma 8 drops it (C13). The check must read the resolved Prisma version from the lockfile.
 - Report only when the loop's bound comes from a query result or request input. A loop over a literal array or a fixed small list is the decoy in `fixtures/PLAN.md`.
 - Static sees the shape, not the size, so the message says so. A trace check later confirms the count.

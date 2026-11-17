@@ -1,0 +1,13 @@
+{
+  "name": "erlang-probe-prisma7-batching",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Probe: which Prisma 7.10.1 access patterns become one query and which become one per item. Run with run.sh; never installed here.",
+  "type": "module",
+  "dependencies": {
+    "@prisma/adapter-better-sqlite3": "7.10.1",
+    "@prisma/client": "7.10.1",
+    "prisma": "7.10.1",
+    "typescript": "6.0.3"
+  }
+}

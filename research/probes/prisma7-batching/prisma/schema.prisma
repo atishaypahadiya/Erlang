@@ -1,0 +1,32 @@
+// Two tables, enough for per-item reads and per-row writes.
+// Both of Prisma 7's generators: the older prisma-client-js and the newer
+// prisma-client (TypeScript output). The probe runs once with each.
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated"
+}
+
+generator ts {
+  provider            = "prisma-client"
+  output              = "../generated-ts"
+  moduleFormat        = "esm"
+  importFileExtension = "ts"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model Customer {
+  id     Int     @id
+  email  String  @unique
+  name   String
+  orders Order[]
+}
+
+model Order {
+  id         Int      @id @default(autoincrement())
+  customerId Int
+  customer   Customer @relation(fields: [customerId], references: [id])
+  total      Int
+}
