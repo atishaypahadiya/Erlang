@@ -1,0 +1,114 @@
+# Fixture plan
+
+A test bench for ERLANG's checks: small local services, each with one planted defect, and a clean twin of each with the defect fixed. A check passes when it reports its defect on the planted service and reports nothing on the clean twin. ERLANG publishes its recall and precision on this set, as ITTEN does on its pages.
+
+Nothing here is built yet. The decisions taken on review are at the end.
+
+## Ground rules
+
+- **Loopback only.** Every fixture binds to `127.0.0.1` and is never deployed, published or exposed. The load driver refuses any target that is not loopback or a CI service container, whatever the flags. Load against another party's service is a denial-of-service attack, so there is no override switch for it in fixture runs.
+- **Where load runs.** The full load suite runs in CI or on a separate machine. On the owner's Mac, only a smoke run (one fixture, a few seconds, low rate) runs, and never while ITTEN is timing: ERLANG reads ITTEN's timing lock before and during every load step and refuses or stops while one is active (`research/itten-lock.md`). Static and trace checks at low rate are not load and are not refused.
+- **One defect per fixture.** A planted service differs from its clean twin in the defect and nothing else: same routes, same data, same response shape, as far as the defect allows. A diff of the two directories should read as the fix.
+- **Seeded data.** Every database is filled by one seeded generator with fixed row counts, so a fixture behaves the same on every run and machine.
+- **Outputs go to `dist/`**: reports, traces, load results. Never `/tmp`.
+- **Scripts.** Multi-step jobs (start database, seed, start fixture, run, collect, stop) are bash scripts with `#!/usr/bin/env bash` and `set -euo pipefail`.
+
+## What each fixture proves
+
+Each defect can be seen through up to three kinds of evidence. The failure model (`research/failure-model.md`) says which apply to which defect. The fixtures test each channel separately, so a check that relies on one channel cannot hide behind another.
+
+| Channel | Input | Deterministic? |
+|---|---|---|
+| Static | Source files and migrations | Yes |
+| Trace | OpenTelemetry spans and database query logs from a short scripted run at low rate | Mostly: counts are exact, durations are not |
+| Load | A local open-model load run (fixed arrival rate, not a fixed number of users), defect against twin | No: judged by ratios between the twins, with repeat runs |
+
+Counts are preferred to timings wherever a defect has a count: queries per request, rows returned, bytes per response, upstream attempts per request, connections checked out. A count is the same on a laptop and on a CI runner. A latency is not. Timing-based judgments compare the planted service with its clean twin, run on the same machine back to back, never against an absolute number.
+
+## Stack
+
+- **Node.js 22 LTS, plain `node:http` or Express, and PostgreSQL 16**, with `pg` as the driver and its built-in pool. Node matches ITTEN's toolchain. PostgreSQL gives a real network connection pool and real query plans (`EXPLAIN`, `pg_stat_statements`), which an embedded database such as SQLite does not. In CI it runs as a service container. Locally it runs in Docker.
+- **An upstream stub**: a local HTTP service whose latency, error rate and hang behaviour are set per request by a header or a control endpoint. Fixtures that call another service call this. It counts every attempt it receives, so retry amplification is a count, not a guess.
+- **Raw SQL and an ORM.** L01a, L01b, L02 and L03 each come in two forms: raw SQL through `pg`, and Prisma. The static check is entirely different between the two (a SQL string sent inside a loop, against a Prisma `findUnique` called inside a loop over a `findMany` result), while the trace and load checks should not care. Drizzle follows as a third form once the Prisma form passes. The other fixtures use raw SQL, since their defect is not in how the query is written.
+- **k6 as the load driver, installed separately.** k6 is AGPL-3.0. ERLANG runs the `k6` program the user or CI installed, as a separate process, and reads its JSON output. It never vendors, bundles, modifies or links k6 code, and its scenarios are generated at run time. ERLANG checks for `k6` on the path and stops with an install hint if it is missing; it does not install it. CI installs k6 from Grafana's release in a workflow step. ERLANG keeps its own guard in front of k6: the target must be loopback or a CI service container, rate and duration are capped, and the ITTEN timing lock is honoured.
+- **A second language later.** One Python set (FastAPI with SQLAlchemy) for the static and trace checks, once the Node set passes, to show the checks are not tied to one stack.
+
+## Layout
+
+```
+fixtures/
+  PLAN.md              this file
+  README.md            what each fixture plants, written when they are built
+  defects.json         the registry below, read by the fixture test
+  seed/                the seeded data generator, one per schema
+  upstream/            the upstream stub
+  L01a-n-plus-one/
+    sql/
+      planted/         the service with the defect, raw SQL
+      clean/           the twin with the defect fixed
+    prisma/
+      planted/
+      clean/
+  L02-unbounded-query/
+  ...
+  L06-retry-storm/
+    planted/           fixtures with one form keep the flat layout
+    clean/
+```
+
+`defects.json` lists, for each fixture and form: its ID, the form (`sql`, `prisma`, later `drizzle`), the check expected to fire, the evidence channels expected to see it, the route that shows it, what is planted, and what the twin does instead. The fixture test reads it and fails on any miss, any finding on a twin, and any finding on a planted service other than the one planted. Planted and clean code are written by hand rather than generated from one table, as ITTEN's `make.js` does for its pages: a service's defect lives in control flow, which a table cannot hold.
+
+## Planted defects
+
+IDs follow the ranks in `research/failure-model.md`. Row counts and rates are starting values to tune once the services exist. The rules each fixture exercises are listed in the failure model.
+
+| ID | Check | Planted | In the clean twin | Static | Trace | Load |
+|---|---|---|---|---|---|---|
+| L01a | `n-plus-one` | `GET /orders` lists 50 orders and fetches each order's customer with its own query: 51 queries. | One query with a join, or two with `WHERE id = ANY($1)`: at most 2. | Query or lazy load inside a loop over a result set | Many database spans of one statement shape under one request span | Statements per request at page sizes 10 and 100 |
+| L01b | `per-row-writes` | `POST /orders/import` inserts 1,000 rows with one `INSERT` each. | One multi-row `INSERT` per batch of 500. | Insert or save inside a loop | `INSERT` statements per request | Statements per request at 1× and 10× batch size |
+| L02 | `unbounded-query` | `GET /events` returns every row of a 200,000-row table, with no `LIMIT` and no pagination. | Keyset pagination, default page 50, maximum 200, enforced on the server. | List query with no `LIMIT`; page size taken from the client without a cap | Rows returned per statement; response bytes | Response size and latency at 1× and 10× data |
+| L03 | `missing-index` | `GET /users/:id/events` filters `events` by `user_id`, which has no index. | Index on `events(user_id, created_at)`. | Query predicates compared with the indexes declared in migrations | `EXPLAIN` of the captured statement shows a sequential scan of a large table | Latency against the twin |
+| L04 | `oversized-payload` | `GET /products` returns full rows with a 50 KB description each, uncompressed; the product page needs 20 calls to `GET /products/:id/price`. | The list returns the fields the page uses; responses are compressed; prices come back in one call. | `SELECT *` on list routes; no compression middleware | Response bytes; `Content-Encoding`; calls per page view | Bytes per request; time to load one page view |
+| L05 | `memory-growth` | A module-level `Map` caches responses by full query string, with no size limit and no expiry. | An LRU bounded by entries and by age. | Module-level collection that is only ever added to | Process memory against requests served | Resident memory keeps rising over a soak run with unique keys, and does not fall after it |
+| L06 | `retry-storm` | Retries a failed upstream call five times at once, with no backoff, no jitter and no budget, including on overload replies (503, 429). | At most 3 attempts, capped exponential backoff with full jitter, no retry on overload replies, and a retry budget. | Retry loop with no delay, or a fixed delay with no jitter | Attempt spans per request and the gaps between them | Attempts the stub counts per user request, with the stub failing |
+| L07 | `no-timeout` | Calls the upstream stub with no timeout. The stub is set to accept and never reply. | A timeout on every outbound call, below the route's own deadline, and the deadline passed on. | Outbound HTTP or database call with no timeout set | A span that never ends, or ends only when the client gives up | In-flight requests and open sockets grow for as long as the stub hangs |
+| L08 | `pool-exhaustion` | Holds a pooled connection across the upstream call, and does not release it on the error path. Pool size 5. | Takes the connection after the upstream call, releases it in `finally`. | `connect()` with no release in `finally`; a connection held across an `await` on another service | Time waiting for a connection; connections checked out | Errors acquiring a connection once concurrency passes the pool size |
+| L09 | `blocking-work` | `POST /signup` hashes the password with `crypto.pbkdf2Sync` at a high iteration count on the request thread. | The asynchronous hash, run on the worker pool. | `*Sync` calls and known CPU-bound calls inside request handlers | Event-loop delay | Latency of `GET /health`, which does no work, while `/signup` is under load |
+| L10 | `no-cache` | `GET /stats` runs a 1-second aggregate on every request, for inputs that change once a minute. | Result cached for 60 s with a bound on entries; `Cache-Control` and `ETag` on the response. | Weak: a known-expensive call with no cache in front of it | The same statement with the same parameters on every request | Throughput against the twin |
+| L11 | `cold-start` | Builds a large lookup table on the first request, inside the handler. | Builds it at startup, before the service reports ready. | Weak: lazy initialisation inside a handler | A long initialisation span on the first request only | First-request latency after a restart against steady state |
+| L12 | `no-load-shedding` | Accepts every request and queues it without limit, so under overload every request is late rather than some refused. | A bounded number of requests in flight; requests over the bound get 503 at once. | Weak: no concurrency limit in front of handlers | Queue time rising with load | Past the knee the twin keeps goodput flat and refuses the excess quickly; the planted service's goodput falls and its p99 grows without bound (CAP-02) |
+
+L01b and L12 are not in the brief's list. L01b is there because row-by-row writes were among the commonest defects in the one controlled study of generated database code. L12 is there because CAP-02, ERLANG's main load oracle, needs a service that fails it.
+
+L01a to L04 can be judged from counts on one machine with no concurrent load, so they are built first: they run on a laptop without breaking the rule about ITTEN's timing runs.
+
+## What must not be reported
+
+As ITTEN's fixtures do, both twins carry things that look like defects and are not. Each guards against a false positive found to be likely while building a check:
+
+- a loop that runs a query once per item over a fixed, small list of known size, such as three settings rows (not an N+1 that grows with data);
+- a query with no `LIMIT` that returns one row by primary key (bounded by the key, not unbounded);
+- a sequential scan over a 20-row lookup table (the planner is right to scan it);
+- a retry with no jitter in a one-off startup migration that no request waits on;
+- a module-level `Map` with a fixed set of keys filled at startup (bounded);
+- a synchronous file read at startup, outside any handler.
+
+The list grows as checks are built. Each entry names the check it protects.
+
+## Acceptance test
+
+- Every planted defect is reported by its check, through every channel the registry lists for it. Recall 100%.
+- No clean twin has any finding. No planted service has a finding other than its own. Precision 100%.
+- Static and trace findings are identical, field by field, across five runs on two machines (a laptop and a CI runner).
+- Load findings agree in presence and severity across five CI runs. A load finding that comes and goes is reported as unstable and fails the test, rather than being averaged away.
+- Every load run stays under its rate and duration caps, and the run log shows its target was loopback or a CI service container.
+
+## Decisions
+
+Taken on review, 17 November 2026.
+
+1. **Stack.** Node 22 and PostgreSQL first; Python later.
+2. **Load driver.** k6, run as an external program installed by the user or CI; never vendored, modified or embedded. The licence boundary is in `research/prior-art.md`.
+3. **ORM forms.** L01a, L01b, L02 and L03 in raw SQL and Prisma; Drizzle later.
+4. **Timing guard.** A lock file written by ITTEN during each serial timing phase, with its pid and an expiry. ERLANG refuses to generate load while one exists and its pid is alive. The spec is `research/itten-lock.md`, for ITTEN to implement.
+5. **finding/1.** A draft exists in ITTEN, not yet committed. ERLANG's requirements on it are in `research/finding1-requirements.md`. Until it settles, the fixture test matches on check, form, route and evidence channel.
