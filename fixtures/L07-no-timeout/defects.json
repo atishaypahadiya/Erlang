@@ -1,0 +1,274 @@
+{
+  "note": "The fixture pair for no-timeout (L07 in fixtures/PLAN.md), scanned with no-timeout alone. Written by hand: each planted defect is fixed in place in the clean twin, and the twins differ in nothing else. A finding catches a defect when its check matches and its locations name the defect's file, line, column and symbol (every place, when the defect lists several), with the defect's severity. Decoys are in both twins; reporting one is a false positive. scripts/seed.js is excluded by the twin's erlang.config.json and must not be reported either. Paths are relative to each twin. Nothing here is installed or run.",
+  "check": "no-timeout",
+  "checks": [
+    "no-timeout"
+  ],
+  "plan": "L07",
+  "planted": "fixtures/L07-no-timeout/planted",
+  "clean": "fixtures/L07-no-timeout/clean",
+  "defects": [
+    {
+      "id": "L07a",
+      "check": "no-timeout",
+      "title": "fetch with no options: no deadline",
+      "severity": "error",
+      "where": {
+        "file": "src/quotes.js",
+        "line": 5,
+        "column": 21,
+        "symbol": "getQuote"
+      },
+      "fix": "auto",
+      "fixedInClean": "signal: AbortSignal.timeout(3000) added, same line"
+    },
+    {
+      "id": "L07b",
+      "check": "no-timeout",
+      "title": "fetch with options but no signal",
+      "severity": "error",
+      "where": {
+        "file": "src/payments.js",
+        "line": 5,
+        "column": 21,
+        "symbol": "charge"
+      },
+      "fix": "auto",
+      "fixedInClean": "signal: AbortSignal.timeout(5000) added to the options"
+    },
+    {
+      "id": "L07c",
+      "check": "no-timeout",
+      "title": "A wrapped fetch whose caller passes no signal",
+      "severity": "error",
+      "where": [
+        {
+          "file": "src/inventory.js",
+          "line": 6,
+          "column": 10,
+          "symbol": "stockLevel"
+        },
+        {
+          "file": "src/http.js",
+          "line": 3,
+          "column": 21,
+          "symbol": "fetchJson"
+        }
+      ],
+      "fix": "auto",
+      "fixedInClean": "the caller passes signal: AbortSignal.timeout(2000)"
+    },
+    {
+      "id": "L07d",
+      "check": "no-timeout",
+      "title": "An axios instance with no timeout, called from another module",
+      "severity": "error",
+      "where": {
+        "file": "src/clients.ts",
+        "line": 3,
+        "column": 24,
+        "symbol": "billing"
+      },
+      "fix": "auto",
+      "fixedInClean": "timeout: 3000 added to axios.create"
+    },
+    {
+      "id": "L07e",
+      "check": "no-timeout",
+      "title": "axios.get on the default instance with no timeout",
+      "severity": "error",
+      "where": {
+        "file": "src/shipping.js",
+        "line": 6,
+        "column": 26,
+        "symbol": "track"
+      },
+      "fix": "auto",
+      "fixedInClean": "{ timeout: 2000 } passed"
+    },
+    {
+      "id": "L07f",
+      "check": "no-timeout",
+      "title": "got with no timeout",
+      "severity": "error",
+      "where": {
+        "file": "src/rates.js",
+        "line": 7,
+        "column": 10,
+        "symbol": "rate"
+      },
+      "fix": "auto",
+      "fixedInClean": "{ timeout: { request: 5000 } } passed"
+    },
+    {
+      "id": "L07g",
+      "check": "no-timeout",
+      "title": "https.get with a callback and no deadline",
+      "severity": "error",
+      "where": {
+        "file": "src/geo.js",
+        "line": 5,
+        "column": 3,
+        "symbol": "lookup"
+      },
+      "fix": "guided",
+      "fixedInClean": "options with signal: AbortSignal.timeout(2000) passed before the callback"
+    },
+    {
+      "id": "L07h",
+      "check": "no-timeout",
+      "title": "A pg pool with no statement or connection timeout",
+      "severity": "error",
+      "where": {
+        "file": "src/db.js",
+        "line": 3,
+        "column": 21,
+        "symbol": "pool"
+      },
+      "fix": "auto",
+      "fixedInClean": "statement_timeout: 5000 and connectionTimeoutMillis: 2000 added"
+    },
+    {
+      "id": "L07i",
+      "check": "no-timeout",
+      "title": "fetch options spread from a package the check cannot read",
+      "severity": "info",
+      "where": {
+        "file": "src/search.js",
+        "line": 6,
+        "column": 21,
+        "symbol": "search"
+      },
+      "fix": "guided",
+      "fixedInClean": "signal: AbortSignal.timeout(3000) set after the spread"
+    }
+  ],
+  "decoys": [
+    {
+      "id": "L07-d1",
+      "title": "fetch with signal: AbortSignal.timeout",
+      "where": {
+        "file": "src/quotes.js",
+        "line": 10,
+        "column": 21
+      }
+    },
+    {
+      "id": "L07-d2",
+      "title": "fetch with AbortSignal.any including a timeout",
+      "where": {
+        "file": "src/payments.js",
+        "line": 14,
+        "column": 21
+      }
+    },
+    {
+      "id": "L07-d3",
+      "title": "A wrapped fetch whose caller passes a signal",
+      "where": {
+        "file": "src/inventory.js",
+        "line": 10,
+        "column": 10
+      }
+    },
+    {
+      "id": "L07-d4",
+      "title": "A wrapper that sets its own deadline",
+      "where": {
+        "file": "src/http.js",
+        "line": 9,
+        "column": 21
+      }
+    },
+    {
+      "id": "L07-d5",
+      "title": "A caller of a wrapper that sets its own deadline",
+      "where": {
+        "file": "src/inventory.js",
+        "line": 14,
+        "column": 10
+      }
+    },
+    {
+      "id": "L07-d6",
+      "title": "An axios instance created with a timeout, called from another module",
+      "where": {
+        "file": "src/invoices.ts",
+        "line": 9,
+        "column": 26
+      }
+    },
+    {
+      "id": "L07-d7",
+      "title": "axios.post with a timeout in its config",
+      "where": {
+        "file": "src/shipping.js",
+        "line": 11,
+        "column": 26
+      }
+    },
+    {
+      "id": "L07-d8",
+      "title": "A got instance extended with a request timeout",
+      "where": {
+        "file": "src/rates.js",
+        "line": 11,
+        "column": 10
+      }
+    },
+    {
+      "id": "L07-d9",
+      "title": "http.get with a signal",
+      "where": {
+        "file": "src/geo.js",
+        "line": 9,
+        "column": 3
+      }
+    },
+    {
+      "id": "L07-d10",
+      "title": "A pg pool with both timeouts",
+      "where": {
+        "file": "src/db.js",
+        "line": 5,
+        "column": 26
+      }
+    },
+    {
+      "id": "L07-d11",
+      "title": "fetch with a controller its own timer aborts",
+      "where": {
+        "file": "src/report.js",
+        "line": 6,
+        "column": 23
+      }
+    },
+    {
+      "id": "L07-d12",
+      "title": "A method named fetch on a local object",
+      "where": {
+        "file": "src/cache.js",
+        "line": 6,
+        "column": 10
+      }
+    },
+    {
+      "id": "L07-d13",
+      "title": "A local function named fetch",
+      "where": {
+        "file": "src/cache.js",
+        "line": 14,
+        "column": 10
+      }
+    },
+    {
+      "id": "L07-d14",
+      "title": "A query on a pool, which is reported once at the pool",
+      "where": {
+        "file": "src/db.js",
+        "line": 13,
+        "column": 10
+      }
+    }
+  ]
+}
