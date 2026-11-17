@@ -1,0 +1,20 @@
+{
+  "name": "@atishaypahadiya/erlang",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Load and resilience checks for the owner's own services. Named after A. K. Erlang; not the Erlang programming language.",
+  "type": "module",
+  "bin": {
+    "erlang": "bin/erlang.js"
+  },
+  "scripts": {
+    "test": "node scripts/core-pin-test.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "UNLICENSED",
+  "dependencies": {
+    "typescript": "6.0.3"
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "note": "A read-only copy of KERCKHOFFS's core/, temporary until the shared core is extracted into its own repository. Never edit these files here: scripts/core-pin-test.js fails if any differs from the hash below. To update: copy core/ again from a newer KERCKHOFFS commit with git show, record the commit and the new hashes here, and run npm test.",
+  "source": "kerckhoffs",
+  "branch": "main",
+  "commit": "e1eeb00ab9554f83ba88947b5ec3791c35fc49ec",
+  "copied": "2026-11-17",
+  "contract": {
+    "from": "itten",
+    "tag": "v0.3.5",
+    "commit": "f79c18f"
+  },
+  "files": {
+    "core/finding.js": "7b09f2538fb632b06e1a89fc077902f1b676f2bf954df439a777713c65c49407",
+    "core/fixture-score.js": "fc7dfea168e4f1528daa8fca5e95a56951390e67196bc41120d4fdbde6a0201e",
+    "core/report.js": "6257edcae3a324813f36c94ebeb2d5d09028ffa992472e64851f4526440a0951",
+    "core/schema.js": "e9e0fb8e831944a9c3d0e53b0d2f44734800d20d4eafd85b4170efd73ce7dfab",
+    "core/schema/README.md": "029660401352ca8356c5948be51473a6af9467f0b5174c7ba290d6b7c523be10",
+    "core/schema/finding.schema.json": "40d045272bd878a15f5c804cb3fd78ce5b4bd3623d53910110a78f8f1d8d61b1",
+    "core/schema/report.schema.json": "00efc3e15d106ba40760fd8d6a26177909d02ccbb397b280636801ec95bb6d83"
+  }
+}
