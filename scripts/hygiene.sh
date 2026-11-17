@@ -6,8 +6,9 @@
 #   scripts/hygiene.sh message <file>  check a commit message (commit-msg hook)
 #   scripts/hygiene.sh all             check every tracked file and every commit message
 #
-# The terms live in .erlang-private-terms, a local file kept out of the
-# repository, so this script does not carry the words it looks for. One
+# The terms live in .erlang-private-terms, kept out of the repository, so this
+# script does not carry the words it looks for. scripts/setup.sh makes it a link
+# to the file the specialists share, ~/.config/specialists/private-terms. One
 # case-insensitive extended regular expression per line; blank lines and lines
 # starting with # are ignored. Lines starting with "private " hold a regular
 # expression for paths that must never be committed. Without the file the check
@@ -16,18 +17,31 @@
 # Writing about automated tools as a subject is fine; the terms should match
 # claims of authorship (trailers, "generated with ...") and nothing broader.
 #
-# Install the hooks once per clone:
-#   printf '#!/usr/bin/env bash\nexec scripts/hygiene.sh staged\n' > .git/hooks/pre-commit
-#   printf '#!/usr/bin/env bash\nexec scripts/hygiene.sh message "$1"\n' > .git/hooks/commit-msg
-#   chmod +x .git/hooks/pre-commit .git/hooks/commit-msg
+# The hooks in scripts/hooks call it; run scripts/setup.sh once per clone to
+# enable them. Whether or not the terms file exists, the terms file itself (or
+# a link to it, or a backup of it) is never allowed into a commit.
 set -euo pipefail
 
 root=$(git rev-parse --show-toplevel)
 terms_file="$root/.erlang-private-terms"
 mode=${1:-}
 
+# The terms file, its link and its backups never enter the repository,
+# whatever the terms say. Checked before anything else, even without the file.
+if [[ ${1:-} == staged ]]; then
+  list=$(git diff --cached --name-only --diff-filter=ACMR)
+elif [[ ${1:-} == all ]]; then
+  list=$(git ls-files)
+else
+  list=""
+fi
+if leaked=$(printf '%s\n' "$list" | grep -E '(^|/)\.[a-z]+-private-terms' ); then
+  while IFS= read -r path; do echo "hygiene: $path holds private terms and must not be committed" >&2; done <<< "$leaked"
+  exit 1
+fi
+
 if [[ ! -f $terms_file ]]; then
-  echo "hygiene: skipped, .erlang-private-terms not found" >&2
+  echo "hygiene: skipped, .erlang-private-terms not found (run scripts/setup.sh)" >&2
   exit 0
 fi
 
