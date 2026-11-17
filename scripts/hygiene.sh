@@ -15,45 +15,45 @@
 # case-insensitive extended regular expression per line; blank lines and lines
 # starting with # are ignored. Lines starting with "private " name a path that
 # must never be committed: the path itself, or anything under it when it is a
-# prefix such as ".cache/". This is the format KERCKHOFFS reads too. Without the file the check
-# is skipped, with a notice.
+# prefix such as ".cache/". This is the format KERCKHOFFS reads too. Without
+# the file the content scan is skipped, with a notice; the built-in path
+# refusals below still run.
 #
 # Writing about automated tools as a subject is fine; the terms should match
 # claims of authorship (trailers, "generated with ...") and nothing broader.
 #
 # The hooks in scripts/hooks call it; run scripts/setup.sh once per clone to
-# enable them. Whether or not the terms file exists, the terms file itself (or
-# a link to it, or a backup of it) is never allowed into a commit.
+# enable them. Whether or not the terms file exists, no commit may hold a
+# private terms file (or a link to it, or a backup of it), the private
+# instructions file or the private settings folder.
 set -euo pipefail
 
 root=$(git rev-parse --show-toplevel)
 terms_file="$root/.erlang-private-terms"
 mode=${1:-}
 
-# The terms file, its link and its backups never enter the repository,
-# whatever the terms say. Checked before anything else, even without the file.
-if [[ ${1:-} == staged ]]; then
-  list=$(git diff --cached --name-only --diff-filter=ACMR)
-elif [[ ${1:-} == all ]]; then
-  list=$(git ls-files)
-else
-  list=""
-fi
-if leaked=$(printf '%s\n' "$list" | grep -E '(^|/)\.[a-z]+-private-terms' ); then
-  while IFS= read -r path; do echo "hygiene: $path holds private terms and must not be committed" >&2; done <<< "$leaked"
-  exit 1
-fi
+# Paths no commit may hold at any depth, whatever the terms file says or
+# whether it exists: any private terms file, its link or backups
+# (private-terms, .erlang-private-terms, private-terms.bak1), the private
+# instructions file and the private settings folder. Written as character
+# classes so this file does not name them. The same list as KERCKHOFFS's.
+always_private='(^|/)([^/]*-)?private-terms|(^|/)CL[A]UDE(\.local)?\.md$|(^|/)\.cl[a]ude/'
 
+terms=""
+private=""
 if [[ ! -f $terms_file ]]; then
-  echo "hygiene: skipped, .erlang-private-terms not found (run scripts/setup.sh)" >&2
-  exit 0
+  if [[ -L $terms_file ]]; then
+    echo "hygiene: .erlang-private-terms links to $(readlink "$terms_file"), which does not exist; content not scanned, only built-in private paths checked; run scripts/setup.sh" >&2
+  else
+    echo "hygiene: .erlang-private-terms not found; content not scanned, only built-in private paths checked; run scripts/setup.sh" >&2
+  fi
+else
+  # A leading "subject " marks a pattern banned even as a subject, not only as
+  # an authorship claim. Repositories with an allowlist may relax those; this one
+  # has none, so they are enforced like the rest, with the marker removed.
+  terms=$(grep -v -E '^[[:space:]]*(#|$)' "$terms_file" | grep -v -E '^private ' | sed -E 's/^[[:space:]]*subject[[:space:]]+//' || true)
+  private=$(grep -E '^private ' "$terms_file" | sed -e 's/^private //' || true)
 fi
-
-# A leading "subject " marks a pattern banned even as a subject, not only as
-# an authorship claim. Repositories with an allowlist may relax those; this one
-# has none, so they are enforced like the rest, with the marker removed.
-terms=$(grep -v -E '^[[:space:]]*(#|$)' "$terms_file" | grep -v -E '^private ' | sed -E 's/^[[:space:]]*subject[[:space:]]+//' || true)
-private=$(grep -E '^private ' "$terms_file" | sed -e 's/^private //' || true)
 
 failed=0
 fail() { echo "hygiene: $*" >&2; failed=1; }
@@ -72,9 +72,14 @@ scan() {
   fi
 }
 
-# Check a path against the "private" lines. $2, if given, labels the report.
+# Check a path against the built-in private paths and the "private" lines.
+# $2, if given, labels the report.
 check_path() {
   local path=$1 label=${2:-$1} p
+  if printf '%s\n' "$path" | grep -q -i -E "$always_private"; then
+    fail "$label is private and must not be committed"
+    return 0
+  fi
   [[ -n $private ]] || return 0
   while IFS= read -r p; do
     [[ -n $p ]] || continue
@@ -84,12 +89,6 @@ check_path() {
     fi
   done <<< "$private"
 }
-
-# Paths no commit may hold at any depth, whatever the terms file says: the
-# terms file and its link or backups, the private instructions file, and the
-# private settings folder. Written as character classes so this file does not
-# name them.
-always_private='(^|/)\.[a-z]+-private-terms|(^|/)CL[A]UDE(\.local)?\.md$|(^|/)\.cl[a]ude/'
 
 
 case $mode in
@@ -132,11 +131,7 @@ case $mode in
         meta=${entry%%$'\t'*}
         path=${entry#*$'\t'}
         blob=${meta##* }
-        if printf '%s\n' "$path" | grep -q -i -E "$always_private"; then
-          fail "$short:$path is private and must not be committed"
-        else
-          check_path "$path" "$short:$path"
-        fi
+        check_path "$path" "$short:$path"
         # Scan each distinct content once, under the first commit that has it.
         [[ $seen == *" $blob "* ]] && continue
         seen="$seen$blob "
