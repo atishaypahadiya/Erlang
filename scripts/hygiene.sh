@@ -10,8 +10,9 @@
 # script does not carry the words it looks for. scripts/setup.sh makes it a link
 # to the file the specialists share, ~/.config/specialists/private-terms. One
 # case-insensitive extended regular expression per line; blank lines and lines
-# starting with # are ignored. Lines starting with "private " hold a regular
-# expression for paths that must never be committed. Without the file the check
+# starting with # are ignored. Lines starting with "private " name a path that
+# must never be committed: the path itself, or anything under it when it is a
+# prefix such as ".cache/". This is the format KERCKHOFFS reads too. Without the file the check
 # is skipped, with a notice.
 #
 # Writing about automated tools as a subject is fine; the terms should match
@@ -66,10 +67,15 @@ scan() {
 }
 
 check_path() {
-  local path=$1
-  if [[ -n $private ]] && printf '%s\n' "$path" | grep -q -E -f <(printf '%s\n' "$private"); then
-    fail "$path is private and must not be committed"
-  fi
+  local path=$1 p
+  [[ -n $private ]] || return 0
+  while IFS= read -r p; do
+    [[ -n $p ]] || continue
+    if [[ $path == "$p" || $path == "$p"* ]]; then
+      fail "$path is private and must not be committed"
+      return 0
+    fi
+  done <<< "$private"
 }
 
 case $mode in
