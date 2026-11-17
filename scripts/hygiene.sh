@@ -5,6 +5,9 @@
 #   scripts/hygiene.sh staged          check the files staged for commit (pre-commit hook)
 #   scripts/hygiene.sh message <file>  check a commit message (commit-msg hook)
 #   scripts/hygiene.sh all             check every tracked file and every commit message
+#   scripts/hygiene.sh history [revs]  check every file at every commit in revs (default
+#                                      main) and each commit's message; run it on
+#                                      origin/main..main before a push
 #
 # The terms live in .erlang-private-terms, kept out of the repository, so this
 # script does not carry the words it looks for. scripts/setup.sh makes it a link
@@ -69,17 +72,25 @@ scan() {
   fi
 }
 
+# Check a path against the "private" lines. $2, if given, labels the report.
 check_path() {
-  local path=$1 p
+  local path=$1 label=${2:-$1} p
   [[ -n $private ]] || return 0
   while IFS= read -r p; do
     [[ -n $p ]] || continue
     if [[ $path == "$p" || $path == "$p"* ]]; then
-      fail "$path is private and must not be committed"
+      fail "$label is private and must not be committed"
       return 0
     fi
   done <<< "$private"
 }
+
+# Paths no commit may hold at any depth, whatever the terms file says: the
+# terms file and its link or backups, the private instructions file, and the
+# private settings folder. Written as character classes so this file does not
+# name them.
+always_private='(^|/)\.[a-z]+-private-terms|(^|/)CL[A]UDE(\.local)?\.md$|(^|/)\.cl[a]ude/'
+
 
 case $mode in
   staged)
@@ -108,8 +119,36 @@ case $mode in
       done < <(git rev-list HEAD)
     fi
     ;;
+  history)
+    revs=${2:-main}
+    git rev-parse -q --verify "${revs##*..}^{commit}" > /dev/null || { echo "hygiene: no such revision: $revs" >&2; exit 2; }
+    commits=$(git rev-list "$revs")
+    [[ -n $commits ]] || { echo "hygiene: no commits in $revs" >&2; exit 0; }
+    seen=" "
+    while IFS= read -r hash; do
+      short=${hash:0:7}
+      scan "commit $short message" < <(git log -1 --format=%B "$hash")
+      while IFS= read -r -d '' entry; do
+        meta=${entry%%$'\t'*}
+        path=${entry#*$'\t'}
+        blob=${meta##* }
+        if printf '%s\n' "$path" | grep -q -i -E "$always_private"; then
+          fail "$short:$path is private and must not be committed"
+        else
+          check_path "$path" "$short:$path"
+        fi
+        # Scan each distinct content once, under the first commit that has it.
+        [[ $seen == *" $blob "* ]] && continue
+        seen="$seen$blob "
+        if git cat-file blob "$blob" | grep -q -I ''; then
+          scan "$short:$path" < <(git cat-file blob "$blob")
+        fi
+      done < <(git ls-tree -r -z "$hash")
+    done <<< "$commits"
+    echo "hygiene: history of $revs checked ($(printf '%s\n' "$commits" | wc -l | tr -d ' ') commits)" >&2
+    ;;
   *)
-    echo "usage: hygiene.sh staged | message <file> | all" >&2
+    echo "usage: hygiene.sh staged | message <file> | all | history [revs]" >&2
     exit 2
     ;;
 esac
