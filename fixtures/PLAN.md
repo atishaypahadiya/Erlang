@@ -2,7 +2,7 @@
 
 A test bench for ERLANG's checks: small local services, each with one planted defect, and a clean twin of each with the defect fixed. A check passes when it reports its defect on the planted service and reports nothing on the clean twin. ERLANG publishes its recall and precision on this set, as ITTEN does on its pages.
 
-Nothing here is built yet. The decisions taken on review are at the end.
+L07 (`no-timeout`) is built, as a static pair in `L07-no-timeout/`. `scripts/fixture-test.js` scores it, and `scripts/fix-test.js` checks its fixes. The rest is planned. The decisions taken on review are at the end.
 
 ## Ground rules
 
