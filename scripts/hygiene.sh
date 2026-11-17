@@ -46,7 +46,10 @@ if [[ ! -f $terms_file ]]; then
   exit 0
 fi
 
-terms=$(grep -v -E '^[[:space:]]*(#|$)' "$terms_file" | grep -v -E '^private ' || true)
+# A leading "subject " marks a pattern banned even as a subject, not only as
+# an authorship claim. Repositories with an allowlist may relax those; this one
+# has none, so they are enforced like the rest, with the marker removed.
+terms=$(grep -v -E '^[[:space:]]*(#|$)' "$terms_file" | grep -v -E '^private ' | sed -E 's/^[[:space:]]*subject[[:space:]]+//' || true)
 private=$(grep -E '^private ' "$terms_file" | sed -e 's/^private //' || true)
 
 failed=0
