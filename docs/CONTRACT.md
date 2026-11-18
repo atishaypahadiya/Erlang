@@ -162,6 +162,6 @@ Trace findings are finding/1:
 - One Docker container, removed on exit, including on failure. The image stays in Docker's store.
 - Nothing in `fixtures/`: each twin is copied to `dist/` before it runs.
 
-**Determinism.** The seeds use no randomness, and the counts are exact. In the runs so far, L01a's and L01b's reports were identical across two runs, apart from `started`. Timings are written to the twin's log but never judged.
+**Determinism.** The seeds use no randomness, and the counts are exact. For each of the four forms, two consecutive runs gave reports identical apart from `started`, for both twins. Timings are written to the twin's log but never judged.
 
 **Load on the machine.** Everything runs at `nice -n 15`. The container is held to one CPU and 1 GB. A full run of the four forms takes about 90 seconds.
