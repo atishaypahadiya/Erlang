@@ -32,11 +32,12 @@ import * as perItem from '../checks/per-item.js';
 import * as unboundedQuery from '../checks/unbounded-query.js';
 import * as poolSizing from '../checks/pool-sizing.js';
 import * as retryPolicy from '../checks/retry-policy.js';
+import * as missingIndex from '../checks/missing-index.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 export const SPECIALIST = 'erlang';
 export const VERSION = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version;
-export const CHECKS = [noTimeout, perItem, unboundedQuery, poolSizing, retryPolicy];
+export const CHECKS = [noTimeout, perItem, unboundedQuery, poolSizing, retryPolicy, missingIndex];
 const namesOf = (c) => c.CHECKS ?? [c.CHECK];
 
 // The subject as a path relative to the working directory, so a report never

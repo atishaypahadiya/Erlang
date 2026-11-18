@@ -295,6 +295,33 @@ console.log('\nretry-policy: libraries and loops');
   expectFindings('No handler found: info', { 'job.js': "import axios from 'axios';\nexport async function job() {\n  while (true) {\n    try {\n      return (await axios.get('http://up.test/a', { timeout: 2000 })).data;\n    } catch (err) {\n      if (err.response?.status < 500) throw err;\n    }\n  }\n}\n" }, [['info', 'job.js', 3, 'guided'], ['info', 'job.js', 3, 'guided']], RP);
 }
 
+console.log('\nmissing-index: schemas, predicates and fixes');
+{
+  const MI = ['missing-index'];
+  const fastify = (q) => `import Fastify from 'fastify';\nimport pg from 'pg';\nconst pool = new pg.Pool();\nconst app = Fastify();\napp.get('/x', async function x(request) {\n  return (await pool.query(${q})).rows;\n});\napp.listen({ port: 3000 });\n`;
+  const ddl = (extra = '') => `create table events (\n  id bigserial primary key,\n  user_id bigint not null,\n  kind text not null,\n  email text,\n  created_at timestamptz not null\n);\n${extra}`;
+  const sqlCase = (name, q, extra, want) => expectFindings(name, { 'app.js': fastify(q), 'db/001_init.sql': ddl(extra) }, want, MI);
+  sqlCase('A composite index whose first column is filtered serves it', "'select id from events where user_id = $1', [request.params.id]", 'create index events_user_kind on events (user_id, kind);\n', []);
+  sqlCase('An index whose second column is filtered does not', "'select id from events where kind = $1', [request.query.k]", 'create index events_user_kind on events (user_id, kind);\n', [['warning', 'app.js', 6, 'auto']]);
+  sqlCase('A unique constraint added by ALTER TABLE is an index', "'select id from events where email = $1', [request.query.e]", 'alter table events add constraint events_email_key unique (email);\n', []);
+  sqlCase('An index on lower(email) does not serve email = $1', "'select id from events where email = $1', [request.query.e]", 'create index events_email_lower on events (lower(email));\n', [['warning', 'app.js', 6, 'auto']]);
+  sqlCase('A filter with OR is not judged', "'select id from events where user_id = $1 or kind = $2', [1, 'a']", '', []);
+  sqlCase('A subquery is not judged (counted as unreadable)', "'select id from events where user_id in (select id from users where active)'", '', []);
+  sqlCase('ORDER BY with LIMIT and no filter sorts the whole table: reported', "'select id from events order by created_at desc limit 20'", '', [['warning', 'app.js', 6, 'auto']]);
+  sqlCase('ORDER BY with no LIMIT is not judged', "'select id, kind from events order by created_at'", '', []);
+  sqlCase('$queryRaw-style template text with an interpolation is read', '`select id from events where kind = ${request.query.k}`', '', [['warning', 'app.js', 6, 'auto']]);
+  expectAutoFixHolds('  the auto fix writes db/002_events_kind_idx.sql', { 'app.js': fastify("'select id from events where kind = $1', [request.query.k]"), 'db/001_init.sql': ddl() }, MI);
+  expectFindings('Migrations that are not numbered files: the fix is guided', { 'app.js': fastify("'select id from events where kind = $1', [request.query.k]"), 'schema.sql': ddl() }, [['warning', 'app.js', 6, 'guided']], MI);
+  expectFindings('A table with no DDL in the repository is not judged', { 'app.js': fastify("'select id from sessions where token = $1', [1]"), 'db/001_init.sql': ddl() }, [], MI);
+  expectFindings('No handler: a query finding is info, a foreign key stays a warning', { 'job.js': "import pg from 'pg';\nconst pool = new pg.Pool();\nexport const run = () => pool.query('select id from events where kind = $1', ['a']);\n", 'db/001_init.sql': ddl('create table notes (\n  id bigserial primary key,\n  event_id bigint references events (id)\n);\n') }, [['info', 'job.js', 3, 'auto'], ['warning', 'db/001_init.sql', 10, 'auto']], MI);
+  const prisma = (provider, extra = '', model = '') => `datasource db {\n  provider = "${provider}"\n${extra}}\n\nmodel User {\n  id    Int    @id\n  posts Post[]\n}\n\nmodel Post {\n  id     Int    @id\n  userId Int\n  user   User   @relation(fields: [userId], references: [id])\n  title  String\n${model}}\n`;
+  const express = (call) => `import express from 'express';\nimport { PrismaClient } from '@prisma/client';\nconst prisma = new PrismaClient();\nconst app = express();\napp.get('/x', async (req, res) => {\n  res.json(await ${call});\n});\napp.listen(3000);\n`;
+  expectFindings('Prisma on MySQL: relation foreign keys are indexed by the database', { 'prisma/schema.prisma': prisma('mysql'), 'app.js': express("prisma.user.findMany({ take: 5 })") }, [], MI);
+  expectFindings('Prisma relationMode = "prisma": no foreign keys in the database', { 'prisma/schema.prisma': prisma('postgresql', '  relationMode = "prisma"\n'), 'app.js': express("prisma.user.findMany({ take: 5 })") }, [], MI);
+  expectFindings('Prisma @@index(fields: [userId]) in its named form', { 'prisma/schema.prisma': prisma('postgresql', '', '  @@index(fields: [userId], name: "post_user")\n'), 'app.js': express("prisma.post.findMany({ where: { userId: 1 } })") }, [], MI);
+  expectFindings('Prisma AND: [...] is read; contains is not indexable', { 'prisma/schema.prisma': prisma('postgresql', '', '  @@index([userId])\n'), 'app.js': express("prisma.post.findMany({ where: { AND: [{ title: { equals: 'a' } }, { userId: { contains: 'x' } }] } })") }, [['warning', 'app.js', 6, 'auto']], MI);
+}
+
 console.log('\nIsolation and scope');
 {
   const dir = subject({

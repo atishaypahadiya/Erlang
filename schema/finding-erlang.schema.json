@@ -200,6 +200,20 @@
     "jitter": {
       "type": "boolean",
       "description": "retry-policy: whether the wait is randomised."
+    },
+    "table": {
+      "type": "string",
+      "minLength": 1,
+      "description": "missing-index: the table (or Prisma model) that needs the index."
+    },
+    "index": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "missing-index: the columns (Prisma: fields) of the suggested index, in order."
     }
   }
 }
