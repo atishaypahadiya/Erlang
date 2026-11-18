@@ -335,6 +335,16 @@
         "node:http"
       ],
       "description": "pool-exhaustion: the client of the other service a connection is held across."
+    },
+    "blocking": {
+      "enum": [
+        "crypto",
+        "zlib",
+        "fs",
+        "child_process",
+        "bcrypt"
+      ],
+      "description": "blocking-work: what the synchronous call blocks on."
     }
   },
   "anyOf": [

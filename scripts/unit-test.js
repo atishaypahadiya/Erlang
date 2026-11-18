@@ -386,6 +386,38 @@ console.log('\npool-exhaustion: checkouts, releases and calls held across');
   expectAutoFixHolds('  the auto fix adds the missing release', { 'app.js': app(`  const client = await pool.connect();\n${q}\n  res.json({});`) }, PE);
 }
 
+console.log('\nblocking-work: synchronous calls on the request thread');
+{
+  const BW = ['blocking-work'];
+  const app = (head, body, extra = {}) => ({ 'app.js': `import express from 'express';\n${head}\nconst app = express();\napp.post('/x', async (req, res) => {\n${body}\n  res.end();\n});\napp.listen(3000);\n`, ...extra });
+  const bw = (name, head, body, want, extra) => expectFindings(name, app(head, body, extra), want, BW);
+  bw('crypto.pbkdf2Sync through the default import: auto', "import crypto from 'node:crypto';", "  const k = crypto.pbkdf2Sync(req.body.p, 's', 1000, 32, 'sha256');", [['warning', 'app.js', 5, 'auto']]);
+  {
+    const r = bw('A named import: guided, naming the import line too', "import { scryptSync } from 'crypto';", "  const k = scryptSync(req.body.p, 's', 32);", [['warning', 'app.js', 5, 'guided']]);
+    ok('  its locations are the call, then the import', JSON.stringify(r.findings[0]?.erlang.fix.locations.map((l) => l.line)) === '[5,2]', JSON.stringify(r.findings[0]?.erlang.fix.locations));
+  }
+  bw('fs.existsSync has no promise form: guided', "import fs from 'node:fs';", "  if (fs.existsSync('x')) res.status(409);", [['warning', 'app.js', 5, 'guided']]);
+  bw('child_process.execSync: guided', "import cp from 'node:child_process';", "  cp.execSync('ls');", [['warning', 'app.js', 5, 'guided']]);
+  bw('Inside a callback that is not async: guided', "import zlib from 'node:zlib';", "  const out = req.body.parts.map((p) => zlib.gzipSync(p));", [['warning', 'app.js', 5, 'guided']]);
+  bw('In a helper that is not async, reached by the handler: guided, at the helper', "import { load } from './load.js';", '  load();', [['warning', 'load.js', 2, 'guided']], { 'load.js': "import fs from 'node:fs';\nexport function load() { return fs.readFileSync('x'); }\n" });
+  bw('randomBytes(16) is quick, and with a callback runs on the worker pool: nothing', "import crypto from 'node:crypto';", '  const a = crypto.randomBytes(16);\n  crypto.randomBytes(1 << 20, () => {});', []);
+  bw('randomBytes of a size from the request: auto', "import crypto from 'node:crypto';", '  const a = crypto.randomBytes(req.body.n);', [['warning', 'app.js', 5, 'auto']]);
+  bw('fs/promises, crypto.createHash and zlib.gzip: nothing', "import fs from 'node:fs';\nimport crypto from 'node:crypto';\nimport zlib from 'node:zlib';", "  const t = await fs.promises.readFile('x');\n  crypto.createHash('sha1').update(t).digest();\n  zlib.gzip(t, () => {});", []);
+  expectFindings('CommonJS require of crypto: auto', { 'app.js': "const express = require('express');\nconst crypto = require('crypto');\nconst app = express();\napp.post('/x', async (req, res) => {\n  res.send(crypto.pbkdf2Sync(req.body.p, 's', 1000, 32, 'sha256'));\n});\napp.listen(3000);\n" }, [['warning', 'app.js', 5, 'auto']], BW);
+  {
+    const r = scanOf(subject({ 'tool.js': "import fs from 'node:fs';\nimport bcrypt from 'bcryptjs';\nconsole.log(bcrypt.hashSync(fs.readFileSync(process.argv[2], 'utf8'), 10));\n" }), BW);
+    ok('No handler: nothing reported, and the run data says why', r.status === 'complete' && r.findings.length === 0 && r.erlang.checks['blocking-work'].notes.some((x) => x.includes('not judged')) && r.erlang.checks['blocking-work'].skipped.noHandlers === 2, summary(r));
+  }
+  {
+    const r = scanOf(subject(app("import zlib from 'node:zlib';", '  zlib.gunzipSync(req.body.blob);')), BW);
+    ok('A synchronous gunzip is named as decompression, whose size the sender chooses', r.findings[0]?.message.includes("decompresses the whole input on the request thread, and its size is the sender's to choose"), r.findings[0]?.message);
+  }
+  expectAutoFixHolds('  the auto fix for generateKeyPairSync resolves { publicKey, privateKey }', app("import crypto from 'node:crypto';", "  const { publicKey } = crypto.generateKeyPairSync('ed25519');"), BW);
+  expectAutoFixHolds('  the auto fix for fs.readFileSync uses fs.promises', app("import * as fs from 'node:fs';", "  const t = fs.readFileSync('x', 'utf8');"), BW);
+  expectAutoFixHolds("  the auto fix for bcrypt's compareSync awaits compare", app("import bcrypt from 'bcrypt';", '  const ok = bcrypt.compareSync(req.body.p, req.body.h);'), BW);
+  expectAutoFixHolds('  the auto fix for zlib.brotliCompressSync awaits brotliCompress', app("import zlib from 'node:zlib';", '  const z = zlib.brotliCompressSync(req.body.b, {});'), BW);
+}
+
 console.log('\nIsolation and scope');
 {
   const dir = subject({
