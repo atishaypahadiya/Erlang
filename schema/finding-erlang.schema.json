@@ -166,6 +166,40 @@
           }
         }
       ]
+    },
+    "retrier": {
+      "enum": [
+        "axios-retry",
+        "p-retry",
+        "got",
+        "loop"
+      ],
+      "description": "retry-policy: what retries, a library or a hand-written loop."
+    },
+    "attempts": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": 1
+        },
+        {
+          "const": "unbounded"
+        }
+      ],
+      "description": "retry-policy: attempts per request, the first try included."
+    },
+    "backoff": {
+      "enum": [
+        "none",
+        "fixed",
+        "linear",
+        "exponential"
+      ],
+      "description": "retry-policy: how the wait between attempts grows."
+    },
+    "jitter": {
+      "type": "boolean",
+      "description": "retry-policy: whether the wait is randomised."
     }
   }
 }

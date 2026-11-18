@@ -263,6 +263,38 @@ console.log('\npool-sizing: deployments, limits and lifetimes');
   expectFindings('A pg Client per request, ended in finally: still per request', { 'src/server.js': handler("app.get('/x', async function x() {\n  const c = new pg.Client();\n  await c.connect();\n  try { return (await c.query('select 1')).rows; } finally { await c.end(); }\n});") }, [['error', 'src/server.js', 6, 'guided']], PS);
 }
 
+console.log('\nretry-policy: libraries and loops');
+{
+  const RP = ['retry-policy'];
+  const fastify = (head, body) => `import Fastify from 'fastify';\n${head}\nconst app = Fastify();\n${body}\napp.listen({ port: 3000 });\n`;
+  const route = (call) => `app.get('/x', async function x() {\n  return ${call};\n});`;
+  const axr = (args) => fastify(`import axios from 'axios';\nimport axiosRetry from 'axios-retry';\naxiosRetry(${args});`, route("(await axios.get('http://up.test/a', { timeout: 2000 })).data"));
+  expectFindings('axiosRetry(axios) with no options: no wait, error, an options argument added', { 'app.js': axr('axios') }, [['error', 'app.js', 4, 'auto']], RP);
+  expectAutoFixHolds('  { retryDelay: axiosRetry.exponentialDelay } appended', { 'app.js': axr('axios') }, RP);
+  expectFindings('axios-retry with linearDelay: error', { 'app.js': axr('axios, { retries: 2, retryDelay: axiosRetry.linearDelay() }') }, [['error', 'app.js', 4, 'auto']], RP);
+  expectFindings('axios-retry retrying everything (retryCondition: () => true): RTY-06 warning', { 'app.js': axr('axios, { retryDelay: axiosRetry.exponentialDelay, retryCondition: () => true }') }, [['warning', 'app.js', 4, 'guided']], RP);
+  const pr = (opts, inner = "const r = await fetch('http://up.test/a', { signal: AbortSignal.timeout(2000) });\n    if (r.status === 404) throw new AbortError('gone');\n    return r.json();") => fastify("import pRetry, { AbortError } from 'p-retry';", `app.get('/x', async function x() {\n  return pRetry(async () => {\n    ${inner}\n  }${opts});\n});`);
+  expectFindings('p-retry with every default: 10 retries, no jitter, waits to 512 s: error', { 'app.js': pr('') }, [['error', 'app.js', 5, 'auto']], RP);
+  expectAutoFixHolds('  { randomize: true, maxTimeout: 10_000 } appended', { 'app.js': pr('') }, RP);
+  expectFindings('p-retry with retries: Infinity: RTY-01 error', { 'app.js': pr(', { retries: Infinity, randomize: true, maxTimeout: 5000 }') }, [['error', 'app.js', 5, 'auto']], RP);
+  expectFindings('p-retry with retries: Infinity and a maxRetryTime is capped', { 'app.js': pr(', { retries: Infinity, maxRetryTime: 10_000, randomize: true, maxTimeout: 5000 }') }, [], RP);
+  expectFindings('p-retry around axios with no AbortError: 4xx retried, warning', { 'app.js': pr(', { retries: 2, randomize: true }', "return (await axios.get('http://up.test/a', { timeout: 2000 })).data;").replace("import Fastify from 'fastify';", "import Fastify from 'fastify';\nimport axios from 'axios';") }, [['warning', 'app.js', 6, 'guided']], RP);
+  const gt = (retry) => fastify("import got from 'got';", route(`got('http://up.test/a', { timeout: { request: 2000 }, retry: ${retry} }).json()`));
+  expectFindings('got with noise: 0: no jitter, error', { 'app.js': gt('{ limit: 2, noise: 0 }') }, [['error', 'app.js', 5, 'auto']], RP);
+  expectFindings('got with limit 8 and no backoffLimit: the last wait is 128 s, error', { 'app.js': gt('{ limit: 8 }') }, [['error', 'app.js', 5, 'auto']], RP);
+  expectAutoFixHolds('  backoffLimit: 10_000 inserted', { 'app.js': gt('{ limit: 8 }') }, RP);
+  expectFindings('got retrying 404: warning', { 'app.js': gt('{ limit: 2, statusCodes: [404, 500, 503] }') }, [['warning', 'app.js', 5, 'guided']], RP);
+  const lp = (head, body) => fastify(`import axios from 'axios';\n${head}`, `app.get('/x', async function x() {\n${body}\n});`);
+  const tryLoop = (header, wait, extra = '') => `  ${extra}${header} {\n    try {\n      return (await axios.get('http://up.test/a', { timeout: 2000 })).data;\n    } catch (err) {\n      if (attempt >= 3 || err.response?.status < 500) throw err;\n      ${wait}\n    }\n  }`;
+  expectFindings('A doubling delay variable with no jitter: error, wrapped in Math.random()', { 'app.js': lp('', tryLoop('for (let attempt = 0; attempt < 4; attempt++)', 'await new Promise((r) => setTimeout(r, delay)); delay *= 2;', 'let delay = 100;\n  ')) }, [['error', 'app.js', 7, 'auto']], RP);
+  expectAutoFixHolds('  Math.random() * Math.min(10_000, delay) holds', { 'app.js': lp('', tryLoop('for (let attempt = 0; attempt < 4; attempt++)', 'await new Promise((r) => setTimeout(r, delay)); delay *= 2;', 'let delay = 100;\n  ')) }, RP);
+  expectFindings('A jittered wait that does not grow: warning', { 'app.js': lp("import { setTimeout as sleep } from 'node:timers/promises';", tryLoop('for (let attempt = 0; attempt < 4; attempt++)', 'await sleep(Math.random() * 1000);')) }, [['warning', 'app.js', 6, 'auto']], RP);
+  expectFindings('A do-while with a counter capped in its condition and jittered backoff: nothing', { 'app.js': lp("import { setTimeout as sleep } from 'node:timers/promises';", "  let attempt = 0;\n  do {\n    try {\n      return (await axios.get('http://up.test/a', { timeout: 2000 })).data;\n    } catch (err) {\n      if (err.response?.status < 500) throw err;\n      await sleep(Math.random() * Math.min(10_000, 100 * 2 ** attempt));\n    }\n    attempt++;\n  } while (attempt < 3);\n  throw new Error('down');") }, [], RP);
+  expectFindings('A retry loop around a project function that calls fetch is a retry', { 'app.js': lp("import { setTimeout as sleep } from 'node:timers/promises';\nasync function up() { const r = await fetch('http://up.test/a', { signal: AbortSignal.timeout(2000) }); if (r.status >= 400 && r.status < 500) throw Object.assign(new Error('4xx'), { status: r.status }); if (!r.ok) throw new Error('5xx'); return r.json(); }", "  for (let attempt = 0; attempt < 3; attempt++) {\n    try {\n      return await up();\n    } catch (err) {\n      if (err.status) throw err;\n      await sleep(250);\n    }\n  }") }, [['error', 'app.js', 7, 'auto']], RP);
+  expectFindings('A retry loop around a database query is not judged (outbound HTTP only)', { 'app.js': fastify("import pg from 'pg';\nconst pool = new pg.Pool();", "app.get('/x', async function x() {\n  for (let attempt = 0; attempt < 3; attempt++) {\n    try {\n      return (await pool.query('select 1')).rows;\n    } catch {}\n  }\n});") }, [], RP);
+  expectFindings('No handler found: info', { 'job.js': "import axios from 'axios';\nexport async function job() {\n  while (true) {\n    try {\n      return (await axios.get('http://up.test/a', { timeout: 2000 })).data;\n    } catch (err) {\n      if (err.response?.status < 500) throw err;\n    }\n  }\n}\n" }, [['info', 'job.js', 3, 'guided'], ['info', 'job.js', 3, 'guided']], RP);
+}
+
 console.log('\nIsolation and scope');
 {
   const dir = subject({
