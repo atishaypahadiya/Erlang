@@ -2,7 +2,7 @@
 
 A test bench for ERLANG's checks: small local services, each with one planted defect, and a clean twin of each with the defect fixed. A check passes when it reports its defect on the planted service and reports nothing on the clean twin. ERLANG publishes its recall and precision on this set, as ITTEN does on its pages.
 
-Built as static pairs, source files that are never installed or run: L07 (`no-timeout`) in `L07-no-timeout/`, and L01a (`n-plus-one`), L01b (`per-row-writes`) and L02 (`unbounded-query`), each in a `sql/` form (Fastify and `pg`) and a `prisma/` form (Express and Prisma 7.10.1). `scripts/fixture-test.js` scores each pair, and `scripts/fix-test.js` checks its fixes. The rest is planned. The decisions taken on review are at the end.
+Built as static pairs, source files that are never installed or run: L07 (`no-timeout`) in `L07-no-timeout/`, and L01a (`n-plus-one`), L01b (`per-row-writes`) and L02 (`unbounded-query`), each in a `sql/` form (Fastify and `pg`) and a `prisma/` form (Express and Prisma 7.10.1); and L13 (`pool-sizing`), a configuration fixture in a `compose/` form (Docker Compose, PM2, `pg`) and a `kubernetes/` form (a Deployment with an HPA, a worker, a CronJob, Prisma 7.10.1 with `@prisma/adapter-pg`). `scripts/fixture-test.js` scores each pair, and `scripts/fix-test.js` checks its fixes. The rest is planned. The decisions taken on review are at the end.
 
 ## Ground rules
 
@@ -91,7 +91,9 @@ IDs follow the ranks in `research/failure-model.md`. Row counts and rates are st
 | L11 | `cold-start` | Builds a large lookup table on the first request, inside the handler. | Builds it at startup, before the service reports ready. | Weak: lazy initialisation inside a handler | A long initialisation span on the first request only | First-request latency after a restart against steady state |
 | L12 | `no-load-shedding` | Accepts every request and queues it without limit, so under overload every request is late rather than some refused. | A bounded number of requests in flight; requests over the bound get 503 at once. | Weak: no concurrency limit in front of handlers | Queue time rising with load | Past the knee the twin keeps goodput flat and refuses the excess quickly; the planted service's goodput falls and its p99 grows without bound (CAP-02) |
 
-L01b and L12 are not in the brief's list. L01b is there because row-by-row writes were among the commonest defects in the one controlled study of generated database code. L12 is there because CAP-02, ERLANG's main load oracle, needs a service that fails it.
+| L13 | `pool-sizing` | Pool `max` × every deployed process passes the database's `max_connections` less its reserved connections; a pool made per request. | `max` sized so every process fits at once; one pool per process. | Pool `max` × replicas (or an HPA's `maxReplicas`) × PM2 instances against `max_connections`; a pool or client constructed in a handler | Connections open at the database | Connection errors ("too many clients already") once every process's pool fills |
+
+L01b, L12 and L13 are not in the brief's list. L13 is there because the first check plan (`research/first-check.md`, E) found no prior art for it, and L08's leaked connection is a different defect. L01b is there because row-by-row writes were among the commonest defects in the one controlled study of generated database code. L12 is there because CAP-02, ERLANG's main load oracle, needs a service that fails it.
 
 L01a to L04 can be judged from counts on one machine with no concurrent load, so they are built first: they run on a laptop without breaking the rule about ITTEN's timing runs.
 
@@ -120,6 +122,13 @@ Added while building `unbounded-query` (L02):
 - a page size from the client capped with `Math.min`;
 - a literal `LIMIT`, a count, a cursor stream, and a table the owner names under `smallTables`.
 
+Added while building `pool-sizing` (L13):
+
+- a pool made on first use and kept (`??=`, a module variable, `globalThis`): one per process, not per request;
+- a pool in a script or test helper no deployed process imports (a seed, a test database);
+- a CronJob's or a one-off service's pool, which is counted in the total but not reported itself;
+- the `globalThis` Prisma singleton.
+
 The list grows as checks are built. Each entry names the check it protects.
 
 ## Known gaps
@@ -136,6 +145,10 @@ Known false negatives:
 - **Statements built at run time** (`unbounded-query`). A query whose text comes from a function or a variable ERLANG cannot read is not judged; the run data counts them as unreadable. Prisma options spread from code it cannot read are skipped the same way.
 - **Validated page sizes** (`unbounded-query`). A page size that passes through a schema validator (zod, joi) cannot be traced back to request input, so it counts as bounded, whether or not the schema sets a maximum.
 - **Deep offsets and eager loading** (`unbounded-query`). `skip`/`OFFSET` from the client, and an `include` of a to-many relation with no `take` (DAT-05), are not checked.
+- **One database** (`pool-sizing`). Every pool in a deployment is taken to connect to the same database; pools on different databases are summed together.
+- **Processes ERLANG cannot follow** (`pool-sizing`). A service with no `build:` whose image is not the project's, a command that names no project file, or a `node:cluster` fork count leaves that process uncounted or counted at its least (1). A total that passes the limit even so is still reported; otherwise the finding is `info`.
+- **Drivers other than `pg` and Prisma** (`pool-sizing`). postgres.js, mysql2 and Knex pools are not counted, so their connections are missing from the total.
+- **Surge** (`pool-sizing`). A rolling deploy's extra pods, and kustomize overlays that change replicas, are not read; the auto fix's note says to leave room.
 - **Unknown Prisma version** (`n-plus-one`). When neither a lockfile nor `package.json` names `@prisma/client`, batching is assumed, as in Prisma 6 and 7, so `findUnique` calls started together are not reported. Under Prisma 8, which drops the batching, they would be one query each. To revisit when Prisma 8 reaches general availability.
 
 ## Acceptance test

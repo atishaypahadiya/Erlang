@@ -1,0 +1,70 @@
+{
+  "note": "The fixture pair for pool-sizing (L13 in fixtures/PLAN.md), Kubernetes and Prisma 7.10.1 form, scanned with pool-sizing alone. Written by hand: each planted defect is fixed in place in the clean twin, line for line, and the twins differ in nothing else. A finding catches a defect when its check matches and its locations name the defect's file, line, column and symbol (every place, when the defect lists several), with the defect's severity. Decoys are in both twins; reporting one is a false positive. The database is managed; erlang.config.json gives its max_connections, 200, and the default 3 are reserved. Paths are relative to each twin. Nothing here is installed or run.",
+  "check": "pool-sizing",
+  "checks": [
+    "pool-sizing"
+  ],
+  "plan": "L13",
+  "form": "kubernetes",
+  "planted": "fixtures/L13-pool-sizing/kubernetes/planted",
+  "clean": "fixtures/L13-pool-sizing/kubernetes/clean",
+  "defects": [
+    {
+      "id": "L13-k1",
+      "check": "pool-sizing",
+      "title": "Adapter pool x (HPA maximum + worker replicas), plus the CronJob, opens 355 connections; the database allows 197",
+      "severity": "error",
+      "where": {
+        "file": "src/db.js",
+        "line": 7,
+        "column": 77,
+        "symbol": "prisma"
+      },
+      "fix": "auto",
+      "fixedInClean": "max 13, so 13 x 14 + 5 = 187"
+    },
+    {
+      "id": "L13-k2",
+      "check": "pool-sizing",
+      "title": "A Prisma client, and its pool, made per request",
+      "severity": "error",
+      "where": {
+        "file": "src/server.js",
+        "line": 15,
+        "column": 14,
+        "symbol": "orderStatus"
+      },
+      "fix": "guided",
+      "fixedInClean": "the shared client"
+    }
+  ],
+  "decoys": [
+    {
+      "id": "L13-k-d1",
+      "title": "The CronJob's pool: counted in the total, not reported itself",
+      "where": {
+        "file": "scripts/nightly.js",
+        "line": 4,
+        "column": 14
+      }
+    },
+    {
+      "id": "L13-k-d2",
+      "title": "A pool in a test helper no deployment runs",
+      "where": {
+        "file": "test/helpers.js",
+        "line": 4,
+        "column": 25
+      }
+    },
+    {
+      "id": "L13-k-d3",
+      "title": "The globalThis singleton client, one per process",
+      "where": {
+        "file": "src/db.js",
+        "line": 7,
+        "column": 49
+      }
+    }
+  ]
+}

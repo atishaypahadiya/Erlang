@@ -1,0 +1,21 @@
+services:
+  api:
+    build: .
+    command: npx pm2-runtime ecosystem.config.cjs
+    environment:
+      DATABASE_URL: postgres://db:5432/shop
+      REPORTING_URL: postgres://db:5432/shop
+    deploy:
+      replicas: 3
+    depends_on:
+      - db
+  migrate:
+    build: .
+    command: node scripts/migrate.js
+    environment:
+      DATABASE_URL: postgres://db:5432/shop
+  db:
+    image: postgres:16
+    command: postgres -c max_connections=100
+    environment:
+      POSTGRES_HOST_AUTH_METHOD: trust

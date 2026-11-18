@@ -1,0 +1,70 @@
+{
+  "note": "The fixture pair for pool-sizing (L13 in fixtures/PLAN.md), Docker Compose and PM2 form, scanned with pool-sizing alone. Written by hand: each planted defect is fixed in place in the clean twin, line for line, and the twins differ in nothing else. A finding catches a defect when its check matches and its locations name the defect's file, line, column and symbol (every place, when the defect lists several), with the defect's severity. Decoys are in both twins; reporting one is a false positive. The database is the Compose db service, with max_connections 100 and the default 3 reserved. Paths are relative to each twin. Nothing here is installed or run.",
+  "check": "pool-sizing",
+  "checks": [
+    "pool-sizing"
+  ],
+  "plan": "L13",
+  "form": "compose",
+  "planted": "fixtures/L13-pool-sizing/compose/planted",
+  "clean": "fixtures/L13-pool-sizing/compose/clean",
+  "defects": [
+    {
+      "id": "L13-c1",
+      "check": "pool-sizing",
+      "title": "Pools x PM2 processes x replicas open 133 connections; the database allows 97",
+      "severity": "error",
+      "where": {
+        "file": "src/db.js",
+        "line": 3,
+        "column": 21,
+        "symbol": "pool"
+      },
+      "fix": "auto",
+      "fixedInClean": "max 14, so 14 x 6 + 2 x 6 + 1 = 97"
+    },
+    {
+      "id": "L13-c2",
+      "check": "pool-sizing",
+      "title": "A pool made per request",
+      "severity": "error",
+      "where": {
+        "file": "src/routes/reports.js",
+        "line": 12,
+        "column": 18,
+        "symbol": "exportPage"
+      },
+      "fix": "guided",
+      "fixedInClean": "the shared reporting pool"
+    }
+  ],
+  "decoys": [
+    {
+      "id": "L13-c-d1",
+      "title": "A pool made on first use and kept (??=): one per process, not per request",
+      "where": {
+        "file": "src/db.js",
+        "line": 9,
+        "column": 21
+      }
+    },
+    {
+      "id": "L13-c-d2",
+      "title": "A pool in a seed script no service runs",
+      "where": {
+        "file": "scripts/seed.js",
+        "line": 4,
+        "column": 14
+      }
+    },
+    {
+      "id": "L13-c-d3",
+      "title": "The migrate service's one client",
+      "where": {
+        "file": "scripts/migrate.js",
+        "line": 4,
+        "column": 16
+      }
+    }
+  ]
+}
