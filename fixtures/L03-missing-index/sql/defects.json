@@ -1,0 +1,136 @@
+{
+  "note": "The fixture pair for missing-index (L03 in fixtures/PLAN.md), raw SQL (Fastify and pg) form, scanned with missing-index alone. Written by hand: each planted defect is fixed in place in the clean twin, line for line, and the twins differ in nothing else. A finding catches a defect when its check matches and its locations name the defect's file, line, column and symbol (every place, when the defect lists several), with the defect's severity. Decoys are in both twins; reporting one is a false positive. The clean twin adds one migration, migrations/002_indexes.sql, with the four indexes; each auto fix writes a migration of its own. Paths are relative to each twin. Nothing here is installed or run.",
+  "check": "missing-index",
+  "checks": [
+    "missing-index"
+  ],
+  "plan": "L03",
+  "form": "sql",
+  "planted": "fixtures/L03-missing-index/sql/planted",
+  "clean": "fixtures/L03-missing-index/sql/clean",
+  "defects": [
+    {
+      "id": "L03-s1",
+      "check": "missing-index",
+      "title": "events filtered by user_id, ordered by created_at, with no index on user_id",
+      "severity": "warning",
+      "where": {
+        "file": "src/routes.js",
+        "line": 6,
+        "column": 28,
+        "symbol": "userEvents"
+      },
+      "fix": "auto",
+      "fixedInClean": "events (user_id, created_at)",
+      "fixedIn": [
+        "migrations/002_indexes.sql"
+      ]
+    },
+    {
+      "id": "L03-s2",
+      "check": "missing-index",
+      "title": "order_items joined on order_id, a foreign key with no index",
+      "severity": "warning",
+      "where": {
+        "file": "src/routes.js",
+        "line": 12,
+        "column": 28,
+        "symbol": "orderItems"
+      },
+      "fix": "auto",
+      "fixedInClean": "order_items (order_id)",
+      "fixedIn": [
+        "migrations/002_indexes.sql"
+      ]
+    },
+    {
+      "id": "L03-s3",
+      "check": "missing-index",
+      "title": "orders filtered by a range of created_at with no index",
+      "severity": "warning",
+      "where": {
+        "file": "src/routes.js",
+        "line": 18,
+        "column": 28,
+        "symbol": "recentOrders"
+      },
+      "fix": "auto",
+      "fixedInClean": "orders (created_at)",
+      "fixedIn": [
+        "migrations/002_indexes.sql"
+      ]
+    },
+    {
+      "id": "L03-s4",
+      "check": "missing-index",
+      "title": "audit_log.actor_id, a foreign key with no index, queried nowhere",
+      "severity": "warning",
+      "where": {
+        "file": "migrations/001_init.sql",
+        "line": 33,
+        "column": 3
+      },
+      "fix": "auto",
+      "fixedInClean": "audit_log (actor_id)",
+      "fixedIn": [
+        "migrations/002_indexes.sql"
+      ]
+    }
+  ],
+  "decoys": [
+    {
+      "id": "L03-s-d1",
+      "title": "A read by primary key",
+      "where": {
+        "file": "src/routes.js",
+        "line": 24,
+        "column": 19
+      }
+    },
+    {
+      "id": "L03-s-d2",
+      "title": "A read by a unique column",
+      "where": {
+        "file": "src/routes.js",
+        "line": 29,
+        "column": 19
+      }
+    },
+    {
+      "id": "L03-s-d3",
+      "title": "A filter whose first column is indexed (user_id), the second not (status)",
+      "where": {
+        "file": "src/routes.js",
+        "line": 34,
+        "column": 19
+      }
+    },
+    {
+      "id": "L03-s-d4",
+      "title": "A filter on a boolean column, too unselective for an index to help",
+      "where": {
+        "file": "src/routes.js",
+        "line": 39,
+        "column": 19
+      }
+    },
+    {
+      "id": "L03-s-d5",
+      "title": "A table the owner names under smallTables",
+      "where": {
+        "file": "src/routes.js",
+        "line": 44,
+        "column": 19
+      }
+    },
+    {
+      "id": "L03-s-d6",
+      "title": "A query in a script no request handler reaches",
+      "where": {
+        "file": "scripts/audit-report.js",
+        "line": 4,
+        "column": 24
+      }
+    }
+  ]
+}

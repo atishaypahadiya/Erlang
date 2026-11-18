@@ -1,0 +1,110 @@
+{
+  "note": "The fixture pair for missing-index (L03 in fixtures/PLAN.md), Express and Prisma 7.10.1 form, scanned with missing-index alone. Written by hand: each planted defect is fixed in place in the clean twin, line for line, and the twins differ in nothing else. A finding catches a defect when its check matches and its locations name the defect's file, line, column and symbol (every place, when the defect lists several), with the defect's severity. Decoys are in both twins; reporting one is a false positive. Indexes are declared in prisma/schema.prisma; the clean twin adds the @@index lines the auto fixes add. Paths are relative to each twin. Nothing here is installed or run.",
+  "check": "missing-index",
+  "checks": [
+    "missing-index"
+  ],
+  "plan": "L03",
+  "form": "prisma",
+  "planted": "fixtures/L03-missing-index/prisma/planted",
+  "clean": "fixtures/L03-missing-index/prisma/clean",
+  "defects": [
+    {
+      "id": "L03-p1",
+      "check": "missing-index",
+      "title": "Event filtered by userId, ordered by createdAt, with no index on userId",
+      "severity": "warning",
+      "where": {
+        "file": "src/app.js",
+        "line": 8,
+        "column": 18,
+        "symbol": "userEvents"
+      },
+      "fix": "auto",
+      "fixedInClean": "@@index([userId, createdAt])"
+    },
+    {
+      "id": "L03-p2",
+      "check": "missing-index",
+      "title": "Order filtered by a range of createdAt with no index",
+      "severity": "warning",
+      "where": {
+        "file": "src/app.js",
+        "line": 13,
+        "column": 18,
+        "symbol": "recentOrders"
+      },
+      "fix": "auto",
+      "fixedInClean": "@@index([createdAt])"
+    },
+    {
+      "id": "L03-p3",
+      "check": "missing-index",
+      "title": "OrderItem.orderId, a relation's foreign key with no index (include: { items } reads by it)",
+      "severity": "warning",
+      "where": {
+        "file": "prisma/schema.prisma",
+        "line": 46,
+        "column": 3
+      },
+      "fix": "auto",
+      "fixedInClean": "@@index([orderId])"
+    }
+  ],
+  "decoys": [
+    {
+      "id": "L03-p-d1",
+      "title": "findUnique by id",
+      "where": {
+        "file": "src/app.js",
+        "line": 18,
+        "column": 18
+      }
+    },
+    {
+      "id": "L03-p-d2",
+      "title": "findFirst by a @unique field",
+      "where": {
+        "file": "src/app.js",
+        "line": 23,
+        "column": 18
+      }
+    },
+    {
+      "id": "L03-p-d3",
+      "title": "A filter whose first field is indexed (userId)",
+      "where": {
+        "file": "src/app.js",
+        "line": 28,
+        "column": 18
+      }
+    },
+    {
+      "id": "L03-p-d4",
+      "title": "Filters on an enum and a Boolean, too unselective for an index",
+      "where": {
+        "file": "src/app.js",
+        "line": 33,
+        "column": 18
+      }
+    },
+    {
+      "id": "L03-p-d5",
+      "title": "A model the owner names under smallTables",
+      "where": {
+        "file": "src/app.js",
+        "line": 38,
+        "column": 18
+      }
+    },
+    {
+      "id": "L03-p-d6",
+      "title": "A count in a script no request handler reaches",
+      "where": {
+        "file": "scripts/signups.js",
+        "line": 4,
+        "column": 19
+      }
+    }
+  ]
+}

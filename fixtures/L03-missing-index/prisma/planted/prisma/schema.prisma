@@ -1,0 +1,55 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Plan {
+  FREE
+  PRO
+}
+
+model User {
+  id        Int      @id @default(autoincrement())
+  email     String   @unique
+  active    Boolean  @default(true)
+  plan      Plan     @default(FREE)
+  createdAt DateTime @default(now())
+  events    Event[]
+  orders    Order[]
+}
+
+model Event {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id])
+  kind      String
+  createdAt DateTime @default(now())
+}
+
+model Order {
+  id         Int         @id @default(autoincrement())
+  userId     Int
+  user       User        @relation(fields: [userId], references: [id])
+  status     String
+  totalCents Int
+  createdAt  DateTime    @default(now())
+  items      OrderItem[]
+
+  @@index([userId])
+}
+
+model OrderItem {
+  id      Int    @id @default(autoincrement())
+  orderId Int
+  order   Order  @relation(fields: [orderId], references: [id])
+  sku     String
+  qty     Int
+}
+
+model Country {
+  code String @id
+  name String
+}

@@ -2,7 +2,7 @@
 
 A test bench for ERLANG's checks: small local services, each with one planted defect, and a clean twin of each with the defect fixed. A check passes when it reports its defect on the planted service and reports nothing on the clean twin. ERLANG publishes its recall and precision on this set, as ITTEN does on its pages.
 
-Built as static pairs, source files that are never installed or run: L07 (`no-timeout`) in `L07-no-timeout/`; L06 (`retry-policy`) in a `libraries/` form (axios-retry 4.5.0, p-retry 9.0.0, got 16.2.0) and a `loops/` form (hand-written retries around axios and fetch); and L01a (`n-plus-one`), L01b (`per-row-writes`) and L02 (`unbounded-query`), each in a `sql/` form (Fastify and `pg`) and a `prisma/` form (Express and Prisma 7.10.1); and L13 (`pool-sizing`), a configuration fixture in a `compose/` form (Docker Compose, PM2, `pg`) and a `kubernetes/` form (a Deployment with an HPA, a worker, a CronJob, Prisma 7.10.1 with `@prisma/adapter-pg`). `scripts/fixture-test.js` scores each pair, and `scripts/fix-test.js` checks its fixes. The rest is planned. The decisions taken on review are at the end.
+Built as static pairs, source files that are never installed or run: L07 (`no-timeout`) in `L07-no-timeout/`; L06 (`retry-policy`) in a `libraries/` form (axios-retry 4.5.0, p-retry 9.0.0, got 16.2.0) and a `loops/` form (hand-written retries around axios and fetch); and L01a (`n-plus-one`), L01b (`per-row-writes`), L02 (`unbounded-query`) and L03 (`missing-index`), each in a `sql/` form (Fastify and `pg`) and a `prisma/` form (Express and Prisma 7.10.1); and L13 (`pool-sizing`), a configuration fixture in a `compose/` form (Docker Compose, PM2, `pg`) and a `kubernetes/` form (a Deployment with an HPA, a worker, a CronJob, Prisma 7.10.1 with `@prisma/adapter-pg`). `scripts/fixture-test.js` scores each pair, and `scripts/fix-test.js` checks its fixes. The rest is planned. The decisions taken on review are at the end.
 
 ## Ground rules
 
@@ -137,6 +137,15 @@ Added while building `retry-policy` (L06):
 - pagination whose `catch` ends the loop, and a `for`-`of` with one call per item;
 - a retry, with no jitter, in a migration or script no request waits on.
 
+Added while building `missing-index` (L03):
+
+- a read by primary key or by a unique column;
+- a filter whose first column is indexed and whose second is not;
+- a filter on a boolean or an enum column, too unselective for an index to help;
+- a table the owner names under `smallTables`, and a query in a script no request handler reaches.
+
+L03's SQL fixes add a migration rather than edit one, so its clean twin has a file the planted twin lacks; each such defect names it under `fixedIn` in `defects.json`, and `scripts/fixture-test.js` accepts that difference.
+
 The list grows as checks are built. Each entry names the check it protects.
 
 ## Known gaps
@@ -163,6 +172,9 @@ Known false negatives:
 - **Uncapped jittered loops** (`retry-policy`). A hand-written loop with jittered exponential backoff and no `Math.min` is not reported: its longest wait cannot be read from the code.
 - **Layers, budgets, idempotency** (`retry-policy`). RTY-02 (retrying at one layer), RTY-05 (a retry budget) and RTY-07 (retrying a POST without an idempotency key) are not checked.
 - **Readiness waits** (`retry-policy`, a false positive). A loop that waits for a server the code itself started has the shape of a retry with a fixed wait. In a project with handlers, it is reported only if a handler reaches it; with none found, it is `info`.
+- **Plans and sizes** (`missing-index`). Whether an index pays off depends on the table's size and the column's selectivity; the check reads neither, so it warns, and the trace harness is where a plan decides (DAT-07). Only boolean and enum columns are taken as too unselective.
+- **Queries it does not read** (`missing-index`). Filters joined with `OR`, subqueries, CTEs, `UNION`, statements built at run time, `LIKE`, and Prisma relation filters are not judged. A partial index counts as serving every query on its column.
+- **Schemas it does not read** (`missing-index`). Only SQL DDL and `schema.prisma`: Knex, TypeORM and Sequelize migrations written in JavaScript are not read, so their tables are unknown and not judged. SQL queries on a Prisma-managed table are not matched against `schema.prisma`, whose names are fields, not columns.
 - **Unknown Prisma version** (`n-plus-one`). When neither a lockfile nor `package.json` names `@prisma/client`, batching is assumed, as in Prisma 6 and 7, so `findUnique` calls started together are not reported. Under Prisma 8, which drops the batching, they would be one query each. To revisit when Prisma 8 reaches general availability.
 
 ## Acceptance test
