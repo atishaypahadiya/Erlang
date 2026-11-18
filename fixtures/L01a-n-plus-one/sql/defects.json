@@ -1,0 +1,119 @@
+{
+  "note": "The fixture pair for n-plus-one (L01a in fixtures/PLAN.md), raw SQL through pg form, scanned with n-plus-one alone. Written by hand: each planted defect is fixed in place in the clean twin, line for line, and the twins differ in nothing else. A finding catches a defect when its check matches and its locations name the defect's file, line, column and symbol (every place, when the defect lists several: the call made once per item, then the query inside a helper), with the defect's severity. Decoys are in both twins; reporting one is a false positive. Prisma is pinned at 7.10.1, whose batching research/prisma-batching.md records as observed. Paths are relative to each twin. Nothing here is installed or run.",
+  "check": "n-plus-one",
+  "checks": [
+    "n-plus-one"
+  ],
+  "plan": "L01a",
+  "form": "sql",
+  "planted": "fixtures/L01a-n-plus-one/sql/planted",
+  "clean": "fixtures/L01a-n-plus-one/sql/clean",
+  "defects": [
+    {
+      "id": "L01a-s1",
+      "check": "n-plus-one",
+      "title": "Each order's customer read with its own query, awaited in a for loop over the orders",
+      "severity": "error",
+      "where": {
+        "file": "src/routes/orders.js",
+        "line": 8,
+        "column": 57,
+        "symbol": "listOrders"
+      },
+      "fix": "guided",
+      "fixedInClean": "a join in the list query; the loop is gone"
+    },
+    {
+      "id": "L01a-s2",
+      "check": "n-plus-one",
+      "title": "A helper that reads one product, called once per item in Promise.all: pg sends each query",
+      "severity": "error",
+      "where": [
+        {
+          "file": "src/routes/orders.js",
+          "line": 15,
+          "column": 60,
+          "symbol": "orderItems"
+        },
+        {
+          "file": "src/products.js",
+          "line": 4,
+          "column": 26,
+          "symbol": "productById"
+        }
+      ],
+      "fix": "guided",
+      "fixedInClean": "a join in the items query"
+    },
+    {
+      "id": "L01a-s3",
+      "check": "n-plus-one",
+      "title": "A query per id in the request body, on a pooled client",
+      "severity": "error",
+      "where": {
+        "file": "src/routes/orders.js",
+        "line": 24,
+        "column": 63,
+        "symbol": "lookupOrders"
+      },
+      "fix": "guided",
+      "fixedInClean": "one query with where id = any($1)"
+    }
+  ],
+  "decoys": [
+    {
+      "id": "L01a-s-d1",
+      "title": "One query per setting over a fixed list of three keys",
+      "where": {
+        "file": "src/routes/orders.js",
+        "line": 42,
+        "column": 82
+      }
+    },
+    {
+      "id": "L01a-s-d2",
+      "title": "A loop over query rows that runs no query, then one query with = any($1)",
+      "where": {
+        "file": "src/routes/orders.js",
+        "line": 36,
+        "column": 19
+      }
+    },
+    {
+      "id": "L01a-s-d3",
+      "title": "Promise.all over a fixed array of two different queries",
+      "where": {
+        "file": "src/routes/orders.js",
+        "line": 48,
+        "column": 52
+      }
+    },
+    {
+      "id": "L01a-s-d4",
+      "title": "Keyset pagination: one query per page of 500, in a while loop",
+      "where": {
+        "file": "src/routes/orders.js",
+        "line": 56,
+        "column": 30
+      }
+    },
+    {
+      "id": "L01a-s-d5",
+      "title": "The product helper called once, outside any loop",
+      "where": {
+        "file": "src/routes/catalog.js",
+        "line": 6,
+        "column": 12
+      }
+    },
+    {
+      "id": "L01a-s-d6",
+      "title": "A per-customer query in a one-off script that no request reaches",
+      "where": {
+        "file": "scripts/report.js",
+        "line": 6,
+        "column": 26
+      }
+    }
+  ]
+}

@@ -1,0 +1,147 @@
+{
+  "note": "The fixture pair for n-plus-one (L01a in fixtures/PLAN.md), Prisma 7.10.1 form, scanned with n-plus-one alone. Written by hand: each planted defect is fixed in place in the clean twin, line for line, and the twins differ in nothing else. A finding catches a defect when its check matches and its locations name the defect's file, line, column and symbol (every place, when the defect lists several: the call made once per item, then the query inside a helper), with the defect's severity. Decoys are in both twins; reporting one is a false positive. Prisma is pinned at 7.10.1, whose batching research/prisma-batching.md records as observed. Paths are relative to each twin. Nothing here is installed or run.",
+  "check": "n-plus-one",
+  "checks": [
+    "n-plus-one"
+  ],
+  "plan": "L01a",
+  "form": "prisma",
+  "planted": "fixtures/L01a-n-plus-one/prisma/planted",
+  "clean": "fixtures/L01a-n-plus-one/prisma/clean",
+  "defects": [
+    {
+      "id": "L01a-p1",
+      "check": "n-plus-one",
+      "title": "Each order's customer read with an awaited findUnique in a for loop over a findMany result",
+      "severity": "error",
+      "where": {
+        "file": "src/routes/orders.js",
+        "line": 6,
+        "column": 54,
+        "symbol": "listOrders"
+      },
+      "fix": "guided",
+      "fixedInClean": "include: { customer: true } on the findMany; the loop is gone"
+    },
+    {
+      "id": "L01a-p2",
+      "check": "n-plus-one",
+      "title": "findFirst once per item in Promise.all: Prisma never batches findFirst",
+      "severity": "error",
+      "where": {
+        "file": "src/routes/orders.js",
+        "line": 13,
+        "column": 58,
+        "symbol": "orderItems"
+      },
+      "fix": "auto",
+      "fixedInClean": "findUnique, which Prisma 7 batches into one query"
+    },
+    {
+      "id": "L01a-p3",
+      "check": "n-plus-one",
+      "title": "An awaited findUnique for each id in the request body",
+      "severity": "error",
+      "where": {
+        "file": "src/routes/orders.js",
+        "line": 20,
+        "column": 51,
+        "symbol": "lookupOrders"
+      },
+      "fix": "guided",
+      "fixedInClean": "one findMany with where: { id: { in: ids } }"
+    },
+    {
+      "id": "L01a-p4",
+      "check": "n-plus-one",
+      "title": "count once per customer in Promise.all: Prisma never batches count",
+      "severity": "error",
+      "where": {
+        "file": "src/routes/customers.js",
+        "line": 6,
+        "column": 80,
+        "symbol": "listCustomers"
+      },
+      "fix": "guided",
+      "fixedInClean": "include: { _count: { select: { orders: true } } } on the findMany"
+    },
+    {
+      "id": "L01a-p5",
+      "check": "n-plus-one",
+      "title": "A helper that reads one customer, awaited once per invoice in a for loop",
+      "severity": "error",
+      "where": [
+        {
+          "file": "src/routes/invoices.js",
+          "line": 10,
+          "column": 62,
+          "symbol": "listInvoices"
+        },
+        {
+          "file": "src/customers.js",
+          "line": 4,
+          "column": 26,
+          "symbol": "customerName"
+        }
+      ],
+      "fix": "guided",
+      "fixedInClean": "the customer's name included with the invoices"
+    }
+  ],
+  "decoys": [
+    {
+      "id": "L01a-p-d1",
+      "title": "findUnique once per order in Promise.all, which Prisma 7 sends as one query",
+      "where": {
+        "file": "src/routes/orders.js",
+        "line": 28,
+        "column": 52
+      }
+    },
+    {
+      "id": "L01a-p-d2",
+      "title": "findMany with include: related rows in a fixed number of queries",
+      "where": {
+        "file": "src/routes/customers.js",
+        "line": 11,
+        "column": 18
+      }
+    },
+    {
+      "id": "L01a-p-d3",
+      "title": "The customer-name helper called once, outside any loop",
+      "where": {
+        "file": "src/routes/invoices.js",
+        "line": 17,
+        "column": 57
+      }
+    },
+    {
+      "id": "L01a-p-d4",
+      "title": "findUnique per setting over a fixed list of three keys",
+      "where": {
+        "file": "src/routes/settings.js",
+        "line": 6,
+        "column": 80
+      }
+    },
+    {
+      "id": "L01a-p-d5",
+      "title": "findUnique per id in a batch $transaction, which Prisma 7 sends as one query",
+      "where": {
+        "file": "src/routes/settings.js",
+        "line": 13,
+        "column": 54
+      }
+    },
+    {
+      "id": "L01a-p-d6",
+      "title": "A per-order query in a one-off script that no request reaches",
+      "where": {
+        "file": "scripts/backfill.js",
+        "line": 6,
+        "column": 23
+      }
+    }
+  ]
+}

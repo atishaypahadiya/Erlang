@@ -1,0 +1,110 @@
+{
+  "note": "The fixture pair for per-row-writes (L01b in fixtures/PLAN.md), raw SQL through pg form, scanned with per-row-writes alone. Written by hand: each planted defect is fixed in place in the clean twin, line for line, and the twins differ in nothing else. A finding catches a defect when its check matches and its locations name the defect's file, line, column and symbol (every place, when the defect lists several: the call made once per item, then the query inside a helper), with the defect's severity. Decoys are in both twins; reporting one is a false positive. Prisma is pinned at 7.10.1, whose batching research/prisma-batching.md records as observed. Paths are relative to each twin. Nothing here is installed or run.",
+  "check": "per-row-writes",
+  "checks": [
+    "per-row-writes"
+  ],
+  "plan": "L01b",
+  "form": "sql",
+  "planted": "fixtures/L01b-per-row-writes/sql/planted",
+  "clean": "fixtures/L01b-per-row-writes/sql/clean",
+  "defects": [
+    {
+      "id": "L01b-s1",
+      "check": "per-row-writes",
+      "title": "An awaited INSERT per row of the request body, in a for loop",
+      "severity": "warning",
+      "where": {
+        "file": "src/routes/writes.js",
+        "line": 7,
+        "column": 48,
+        "symbol": "importOrders"
+      },
+      "fix": "guided",
+      "fixedInClean": "one INSERT from unnest()"
+    },
+    {
+      "id": "L01b-s2",
+      "check": "per-row-writes",
+      "title": "An INSERT per item in Promise.all on one client: pg sends each statement",
+      "severity": "warning",
+      "where": {
+        "file": "src/routes/writes.js",
+        "line": 17,
+        "column": 58,
+        "symbol": "addItems"
+      },
+      "fix": "guided",
+      "fixedInClean": "one INSERT from unnest()"
+    },
+    {
+      "id": "L01b-s3",
+      "check": "per-row-writes",
+      "title": "A helper that updates one row, awaited once per item in a for loop",
+      "severity": "warning",
+      "where": [
+        {
+          "file": "src/routes/writes.js",
+          "line": 30,
+          "column": 52,
+          "symbol": "updateStock"
+        },
+        {
+          "file": "src/stock.js",
+          "line": 4,
+          "column": 10,
+          "symbol": "setStock"
+        }
+      ],
+      "fix": "guided",
+      "fixedInClean": "one UPDATE from unnest()"
+    }
+  ],
+  "decoys": [
+    {
+      "id": "L01b-s-d1",
+      "title": "A multi-row INSERT from unnest(), once",
+      "where": {
+        "file": "src/routes/writes.js",
+        "line": 36,
+        "column": 11
+      }
+    },
+    {
+      "id": "L01b-s-d2",
+      "title": "One INSERT, outside any loop",
+      "where": {
+        "file": "src/routes/writes.js",
+        "line": 42,
+        "column": 28
+      }
+    },
+    {
+      "id": "L01b-s-d3",
+      "title": "An INSERT per role over a fixed list of two",
+      "where": {
+        "file": "src/routes/writes.js",
+        "line": 43,
+        "column": 51
+      }
+    },
+    {
+      "id": "L01b-s-d4",
+      "title": "Transaction control on the client, once each",
+      "where": {
+        "file": "src/routes/writes.js",
+        "line": 16,
+        "column": 13
+      }
+    },
+    {
+      "id": "L01b-s-d5",
+      "title": "An INSERT per row in a seed script that no request reaches",
+      "where": {
+        "file": "scripts/seed.js",
+        "line": 5,
+        "column": 9
+      }
+    }
+  ]
+}

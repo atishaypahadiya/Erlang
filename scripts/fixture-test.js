@@ -26,10 +26,13 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = join(ROOT, 'dist', 'fixtures');
 const extensionSchema = JSON.parse(readFileSync(join(ROOT, 'schema', 'finding-erlang.schema.json'), 'utf8'));
 
-// Every fixture pair: a directory under fixtures/ with a defects.json.
-export const FIXTURES = readdirSync(join(ROOT, 'fixtures'), { withFileTypes: true })
-  .filter((e) => e.isDirectory() && existsSync(join(ROOT, 'fixtures', e.name, 'defects.json')))
-  .map((e) => e.name)
+// Every fixture pair: a directory under fixtures/ with a defects.json, or,
+// for a fixture with forms (raw SQL and Prisma), each form's directory one
+// level down: L01a-n-plus-one/sql.
+const dirs = (rel) => readdirSync(join(ROOT, 'fixtures', rel), { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => (rel ? `${rel}/${e.name}` : e.name));
+const hasSpec = (rel) => existsSync(join(ROOT, 'fixtures', rel, 'defects.json'));
+export const FIXTURES = dirs('')
+  .flatMap((d) => (hasSpec(d) ? [d] : dirs(d).filter(hasSpec)))
   .sort();
 
 export const specOf = (id) => JSON.parse(readFileSync(join(ROOT, 'fixtures', id, 'defects.json'), 'utf8'));
@@ -80,7 +83,7 @@ function runFixture(id) {
     write(join(OUT, id, twin, 'report.json'), reports[twin]);
     problems.push(...problemsOf(reports[twin], `${id}/${twin}`));
   }
-  return { fixture: id, check: spec.check, plan: spec.plan, ...score(spec, { planted: reports.planted, clean: reports.clean }), problems };
+  return { fixture: id, check: spec.check, plan: spec.form ? `${spec.plan}, ${spec.form}` : spec.plan, ...score(spec, { planted: reports.planted, clean: reports.clean }), problems };
 }
 
 export function run() {

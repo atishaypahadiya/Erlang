@@ -1,0 +1,138 @@
+{
+  "note": "The fixture pair for per-row-writes (L01b in fixtures/PLAN.md), Prisma 7.10.1 form, scanned with per-row-writes alone. Written by hand: each planted defect is fixed in place in the clean twin, line for line, and the twins differ in nothing else. A finding catches a defect when its check matches and its locations name the defect's file, line, column and symbol (every place, when the defect lists several: the call made once per item, then the query inside a helper), with the defect's severity. Decoys are in both twins; reporting one is a false positive. Prisma is pinned at 7.10.1, whose batching research/prisma-batching.md records as observed. Paths are relative to each twin. Nothing here is installed or run.",
+  "check": "per-row-writes",
+  "checks": [
+    "per-row-writes"
+  ],
+  "plan": "L01b",
+  "form": "prisma",
+  "planted": "fixtures/L01b-per-row-writes/prisma/planted",
+  "clean": "fixtures/L01b-per-row-writes/prisma/clean",
+  "defects": [
+    {
+      "id": "L01b-p1",
+      "check": "per-row-writes",
+      "title": "An awaited create per row of the request body, in a for loop",
+      "severity": "warning",
+      "where": {
+        "file": "src/routes/writes.js",
+        "line": 6,
+        "column": 42,
+        "symbol": "importOrders"
+      },
+      "fix": "auto",
+      "fixedInClean": "one createMany"
+    },
+    {
+      "id": "L01b-p2",
+      "check": "per-row-writes",
+      "title": "A create per item in Promise.all: Prisma never batches writes",
+      "severity": "warning",
+      "where": {
+        "file": "src/routes/writes.js",
+        "line": 13,
+        "column": 50,
+        "symbol": "addItems"
+      },
+      "fix": "auto",
+      "fixedInClean": "one createMany"
+    },
+    {
+      "id": "L01b-p3",
+      "check": "per-row-writes",
+      "title": "The same update per id, awaited in a for loop",
+      "severity": "warning",
+      "where": {
+        "file": "src/routes/writes.js",
+        "line": 19,
+        "column": 40,
+        "symbol": "shipOrders"
+      },
+      "fix": "auto",
+      "fixedInClean": "one updateMany with where: { id: { in: ids } }"
+    },
+    {
+      "id": "L01b-p4",
+      "check": "per-row-writes",
+      "title": "A different update per row in a batch $transaction: still one statement per row",
+      "severity": "warning",
+      "where": {
+        "file": "src/routes/writes.js",
+        "line": 25,
+        "column": 56,
+        "symbol": "setPrices"
+      },
+      "fix": "guided",
+      "fixedInClean": "one update from unnest() through $executeRaw"
+    },
+    {
+      "id": "L01b-p5",
+      "check": "per-row-writes",
+      "title": "A helper that writes one event, awaited once per order in a for loop",
+      "severity": "warning",
+      "where": [
+        {
+          "file": "src/routes/writes.js",
+          "line": 32,
+          "column": 40,
+          "symbol": "cancelOrders"
+        },
+        {
+          "file": "src/audit.js",
+          "line": 4,
+          "column": 10,
+          "symbol": "recordEvent"
+        }
+      ],
+      "fix": "guided",
+      "fixedInClean": "one createMany of the events"
+    }
+  ],
+  "decoys": [
+    {
+      "id": "L01b-p-d1",
+      "title": "updateMany once",
+      "where": {
+        "file": "src/routes/writes.js",
+        "line": 31,
+        "column": 9
+      }
+    },
+    {
+      "id": "L01b-p-d2",
+      "title": "A create per label over a fixed list of two",
+      "where": {
+        "file": "src/routes/writes.js",
+        "line": 39,
+        "column": 54
+      }
+    },
+    {
+      "id": "L01b-p-d3",
+      "title": "One create, outside any loop",
+      "where": {
+        "file": "src/routes/writes.js",
+        "line": 38,
+        "column": 26
+      }
+    },
+    {
+      "id": "L01b-p-d4",
+      "title": "deleteMany once",
+      "where": {
+        "file": "src/routes/writes.js",
+        "line": 45,
+        "column": 9
+      }
+    },
+    {
+      "id": "L01b-p-d5",
+      "title": "A create per row in a seed script that no request reaches",
+      "where": {
+        "file": "scripts/seed.js",
+        "line": 5,
+        "column": 9
+      }
+    }
+  ]
+}

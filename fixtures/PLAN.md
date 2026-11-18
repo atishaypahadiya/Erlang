@@ -2,7 +2,7 @@
 
 A test bench for ERLANG's checks: small local services, each with one planted defect, and a clean twin of each with the defect fixed. A check passes when it reports its defect on the planted service and reports nothing on the clean twin. ERLANG publishes its recall and precision on this set, as ITTEN does on its pages.
 
-L07 (`no-timeout`) is built, as a static pair in `L07-no-timeout/`. `scripts/fixture-test.js` scores it, and `scripts/fix-test.js` checks its fixes. The rest is planned. The decisions taken on review are at the end.
+Built as static pairs, source files that are never installed or run: L07 (`no-timeout`) in `L07-no-timeout/`, and L01a (`n-plus-one`) and L01b (`per-row-writes`), each in a `sql/` form (Fastify and `pg`) and a `prisma/` form (Express and Prisma 7.10.1). `scripts/fixture-test.js` scores each pair, and `scripts/fix-test.js` checks its fixes. The rest is planned. The decisions taken on review are at the end.
 
 ## Ground rules
 
@@ -105,6 +105,14 @@ As ITTEN's fixtures do, both twins carry things that look like defects and are n
 - a retry with no jitter in a one-off startup migration that no request waits on;
 - a module-level `Map` with a fixed set of keys filled at startup (bounded);
 - a synchronous file read at startup, outside any handler.
+
+Added while building `n-plus-one` and `per-row-writes` (L01a, L01b):
+
+- `findUnique` once per item, started together in `Promise.all` or a batch `$transaction`, which Prisma 7 sends as one query (`research/prisma-batching.md`);
+- a query per page in a `while` loop (keyset pagination: one query per page, not per row);
+- `Promise.all` over a fixed array of different queries;
+- a helper that queries, called once outside any loop;
+- a per-row query or insert in a script no request handler reaches (a backfill, a seed), including a loop to 1,000.
 
 The list grows as checks are built. Each entry names the check it protects.
 

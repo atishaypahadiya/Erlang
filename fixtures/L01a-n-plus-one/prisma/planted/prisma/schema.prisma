@@ -1,0 +1,71 @@
+// The shop's schema, shared by the Prisma forms of L01a and L01b.
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Customer {
+  id        Int       @id @default(autoincrement())
+  email     String    @unique
+  name      String
+  orders    Order[]
+  invoices  Invoice[]
+  addresses Address[]
+}
+
+model Address {
+  id         Int      @id @default(autoincrement())
+  customerId Int
+  customer   Customer @relation(fields: [customerId], references: [id])
+  label      String
+}
+
+model Order {
+  id         Int          @id @default(autoincrement())
+  customerId Int
+  customer   Customer     @relation(fields: [customerId], references: [id])
+  total      Int
+  status     String       @default("new")
+  items      LineItem[]
+  events     OrderEvent[]
+}
+
+model OrderEvent {
+  id      Int    @id @default(autoincrement())
+  orderId Int
+  order   Order  @relation(fields: [orderId], references: [id])
+  kind    String
+}
+
+model Product {
+  id    Int        @id @default(autoincrement())
+  sku   String     @unique
+  name  String
+  price Int
+  items LineItem[]
+}
+
+model LineItem {
+  id        Int     @id @default(autoincrement())
+  orderId   Int
+  order     Order   @relation(fields: [orderId], references: [id])
+  productId Int
+  product   Product @relation(fields: [productId], references: [id])
+  quantity  Int
+}
+
+model Invoice {
+  id         Int      @id @default(autoincrement())
+  customerId Int
+  customer   Customer @relation(fields: [customerId], references: [id])
+  amount     Int
+  paid       Boolean  @default(false)
+}
+
+model Setting {
+  key   String @id
+  value String
+}
