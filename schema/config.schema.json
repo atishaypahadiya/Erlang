@@ -59,6 +59,21 @@
         "type": "string",
         "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
       }
+    },
+    "database": {
+      "description": "The database the deployed processes share, as its owner states it. pool-sizing compares every pool's connections against maxConnections less the 3 PostgreSQL reserves for superusers; without it, a managed database's limit is unknown and the finding is info.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "maxConnections"
+      ],
+      "properties": {
+        "maxConnections": {
+          "type": "integer",
+          "minimum": 4,
+          "description": "PostgreSQL's max_connections, as set on the server (SHOW max_connections)."
+        }
+      }
     }
   }
 }
