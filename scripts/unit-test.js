@@ -13,6 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { scan } from '../bin/erlang.js';
 import { apply, syntaxErrors } from '../lib/fix.js';
 import { describe, Plain } from '../lib/isolate.js';
+import * as TJ from '../lib/trace-judge.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = join(ROOT, 'dist', 'unit');
@@ -320,6 +321,36 @@ console.log('\nmissing-index: schemas, predicates and fixes');
   expectFindings('Prisma relationMode = "prisma": no foreign keys in the database', { 'prisma/schema.prisma': prisma('postgresql', '  relationMode = "prisma"\n'), 'app.js': express("prisma.user.findMany({ take: 5 })") }, [], MI);
   expectFindings('Prisma @@index(fields: [userId]) in its named form', { 'prisma/schema.prisma': prisma('postgresql', '', '  @@index(fields: [userId], name: "post_user")\n'), 'app.js': express("prisma.post.findMany({ where: { userId: 1 } })") }, [], MI);
   expectFindings('Prisma AND: [...] is read; contains is not indexable', { 'prisma/schema.prisma': prisma('postgresql', '', '  @@index([userId])\n'), 'app.js': express("prisma.post.findMany({ where: { AND: [{ title: { equals: 'a' } }, { userId: { contains: 'x' } }] } })") }, [['warning', 'app.js', 6, 'auto']], MI);
+}
+
+console.log('\nTrace judgements (lib/trace-judge.js)');
+{
+  const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  ok('expand: $n and $i as whole values become numbers, inside strings they are substituted', eq(TJ.expand({ ids: { $repeat: '$n', item: '$i' }, rows: { $repeat: 2, item: { sku: 'sku-$i', n: '$n' } }, path: '/x?limit=$n' }, 3), { ids: [1, 2, 3], rows: [{ sku: 'sku-1', n: 3 }, { sku: 'sku-2', n: 3 }], path: '/x?limit=3' }));
+  const routes = [{ method: 'GET', url: '/products/:id' }, { method: 'GET', url: '/products/prices' }, { method: 'GET', url: '/products/:id/price' }, { method: 'POST', url: '/products/:id' }];
+  ok('routeOf: a static segment wins over a parameter, the method matters, the query is ignored', TJ.routeOf(routes, 'GET', '/products/prices?ids=1,2') === '/products/prices' && TJ.routeOf(routes, 'GET', '/products/7') === '/products/:id' && TJ.routeOf(routes, 'GET', '/products/7/price') === '/products/:id/price' && TJ.routeOf(routes, 'DELETE', '/products/7') === null);
+  ok('growth: one statement per item grows (11 for 10, 51 for 50)', TJ.growth({ n1: 10, n10: 50, c1: 11, c10: 51 }).verdict === 'grows');
+  ok('growth: the same count at both scales is fixed', TJ.growth({ n1: 10, n10: 100, c1: 1, c10: 1 }).verdict === 'fixed');
+  ok('growth: a request with no items is judged on the ratio alone', TJ.growth({ n1: null, n10: null, c1: 3, c10: 3 }).verdict === 'fixed' && TJ.growth({ n1: null, n10: null, c1: 2, c10: 4 }).verdict === 'uncertain');
+  ok('growth: pages of 500 (2 statements, then 3, for 100 then 1,000 rows) are neither: uncertain', TJ.growth({ n1: 100, n10: 1000, c1: 2, c10: 3 }).verdict === 'uncertain');
+  ok('growth: the thresholds are the decided starting values', TJ.SLOPE === 0.5 && TJ.FIXED === 1.2 && TJ.ROWS === 5);
+  ok('rowsGrowth: 10x the rows grows; 200 and 200 is bounded; 0 then some is infinite growth', TJ.rowsGrowth({ r1: 1000, r10: 10000 }).verdict === 'grows' && TJ.rowsGrowth({ r1: 200, r10: 200 }).verdict === 'bounded' && TJ.rowsGrowth({ r1: 0, r10: 5 }).ratio === Infinity);
+  ok('repeated: the statement whose calls grow most; ties go to the first by text', eq(TJ.repeated({ 'select b': { c1: 1, c10: 1 }, 'select a': { c1: 10, c10: 100 }, 'select c': { c1: 10, c10: 100 } }), { query: 'select a', c1: 10, c10: 100 }));
+  const read = new Set();
+  const data = [{ id: 1, name: 'a', description: 'x'.repeat(100), meta: { tags: ['t'], size: 3 } }, { id: 2, name: 'b', description: 'y', meta: { tags: [], size: 4 } }];
+  const view = TJ.track(data, read);
+  const shown = view.map((p) => ({ name: p.name, size: p.meta.size }));
+  ok('track: records the paths a page reads, through map() and nested objects', eq([...read].sort(), ['[].meta', '[].meta.size', '[].name']) && shown[1].size === 4, JSON.stringify([...read]));
+  const unread = TJ.unreadBytes(data, read);
+  const expected = ['"id":1', `"description":"${'x'.repeat(100)}"`, '"tags":["t"]', '"id":2', '"description":"y"', '"tags":[]'].reduce((s, t) => s + t.length, 0);
+  ok('unreadBytes: each unread property, key and value, counted once', unread === expected, `${unread} against ${expected}`);
+  ok('unreadFields: the unread property names of the items', eq(TJ.unreadFields(data, read), ['description', 'id']));
+  ok('routePattern: matches the handler and a templated caller, not a longer route', TJ.routePattern('/products/:id/price').test("app.get('/products/:id/price', h)") && TJ.routePattern('/products/:id/price').test('api.get(`/products/${p.id}/price`)') && !TJ.routePattern('/products').test("app.get('/products/:id', h)") && TJ.routePattern('/products').test("api.get('/products')"));
+  const statics = [{ check: 'n-plus-one', where: { endpoints: [{ method: 'GET', route: '/orders' }], locations: [{ file: 'a.js', line: 2 }] } }];
+  const lines = { 'a.js': ['', "  q('select id, name from customers where id = $1', [x])"] };
+  const lineOf = (f, l) => lines[f]?.[l - 1] ?? null;
+  ok('linkStatic: the same check, route and statement links', TJ.linkStatic({ check: 'n-plus-one', method: 'GET', route: '/orders', statement: 'SELECT id, name FROM customers WHERE id = $1' }, statics, lineOf) === statics[0]);
+  ok('linkStatic: another statement, route or check does not', !TJ.linkStatic({ check: 'n-plus-one', method: 'GET', route: '/orders', statement: 'select id from products where id = $1' }, statics, lineOf) && !TJ.linkStatic({ check: 'n-plus-one', method: 'GET', route: '/stats', statement: 'select id, name from customers where id = $1' }, statics, lineOf) && !TJ.linkStatic({ check: 'per-row-writes', method: 'GET', route: '/orders', statement: 'select id, name from customers where id = $1' }, statics, lineOf));
 }
 
 console.log('\nIsolation and scope');

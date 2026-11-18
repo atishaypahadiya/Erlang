@@ -2,11 +2,10 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/atishaypahadiya/erlang/schema/finding-erlang.schema.json",
   "title": "finding/1, ERLANG's extension",
-  "description": "The erlang object of a finding/1 written by ERLANG. Fields are added as checks need them; see research/finding1-requirements.md.",
+  "description": "The erlang object of a finding/1 written by ERLANG. Fields are added as checks need them; see research/finding1-requirements.md. Every static finding carries a fix; a trace finding carries one when its statement or route is found in the source, and its counts in trace either way.",
   "type": "object",
   "required": [
-    "strength",
-    "fix"
+    "strength"
   ],
   "additionalProperties": false,
   "properties": {
@@ -214,6 +213,133 @@
         "minLength": 1
       },
       "description": "missing-index: the columns (Prisma: fields) of the suggested index, in order."
+    },
+    "trace": {
+      "type": "object",
+      "description": "Trace evidence (research/trace-harness.md): counts recorded on seeded data at 1x and 10x, one request at a time. Counts are exact, so no field here varies between runs.",
+      "required": [
+        "judge",
+        "scales"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "judge": {
+          "enum": [
+            "statements",
+            "rows",
+            "calls",
+            "bytes",
+            "fields"
+          ],
+          "description": "statements: per request, from pg_stat_statements. rows: rows the statements returned. calls: HTTP calls per page view. bytes: a response's bytes as sent. fields: the share of a response's JSON its page never reads."
+        },
+        "scales": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": [
+              "scale"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "scale": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "items": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "statements": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "rows": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "calls": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "bytes": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "jsonBytes": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "unreadBytes": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          }
+        },
+        "slope": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Extra statements or calls per extra item between the two scales."
+        },
+        "ratio": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "The count at 10x over the count at 1x; null when it is infinite."
+        },
+        "statement": {
+          "type": "string",
+          "description": "The statement that grows, as pg_stat_statements records it."
+        },
+        "page": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string",
+          "description": "The request path sent at 10x."
+        },
+        "encoding": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "unreadFields": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "streamed": {
+          "type": "boolean",
+          "description": "The response had no Content-Length: it was streamed."
+        },
+        "unstable": {
+          "type": "boolean",
+          "description": "The two measured runs differed, so nothing is judged."
+        }
+      }
     }
-  }
+  },
+  "anyOf": [
+    {
+      "title": "fix",
+      "required": [
+        "fix"
+      ]
+    },
+    {
+      "title": "trace",
+      "required": [
+        "trace"
+      ]
+    }
+  ]
 }
