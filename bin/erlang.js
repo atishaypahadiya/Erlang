@@ -10,8 +10,10 @@
 //   erlang --version prints the version, so it is not mistaken for the Erlang
 //   runtime (research/naming.md).
 // Scope: erlang.config.json at <dir> may exclude paths that are not part of
-//   the app, such as test fixtures and generated output:
-//     { "exclude": ["fixtures/", "dist/"] }
+//   the app, such as test fixtures and generated output, and name request
+//   handlers ERLANG cannot find itself (lib/handlers.js):
+//     { "exclude": ["fixtures/", "dist/"],
+//       "handlers": [{ "file": "src/worker.js", "function": "handle" }] }
 //   Every report names the config and each excluded path (run.scope); a
 //   config that cannot be read refuses the scan. See lib/scope.js.
 // Exit codes: 0 complete with no findings, 1 findings (whether or not the
@@ -26,11 +28,12 @@ import { report, write } from '../core/report.js';
 import { describe } from '../lib/isolate.js';
 import { readScope, enter, leave } from '../lib/scope.js';
 import * as noTimeout from '../checks/no-timeout.js';
+import * as perItem from '../checks/per-item.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 export const SPECIALIST = 'erlang';
 export const VERSION = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version;
-export const CHECKS = [noTimeout];
+export const CHECKS = [noTimeout, perItem];
 const namesOf = (c) => c.CHECKS ?? [c.CHECK];
 
 // The subject as a path relative to the working directory, so a report never
@@ -55,12 +58,12 @@ export function scan(dir, { started = new Date(), only = null, modules = CHECKS 
   if (scope.error) return report({ ...base, status: 'refused', reason: `${scope.error}; what is in scope is unknown, so nothing was scanned` });
   const findings = [];
   const incomplete = [];
-  const run = { scope: { config: scope.config, exclude: scope.exclude, notes: scope.notes }, checks: {} };
+  const run = { scope: { config: scope.config, exclude: scope.exclude, ...(scope.handlers.length ? { handlers: scope.handlers } : {}), notes: scope.notes }, checks: {} };
   enter(root, scope.exclude);
   try {
     for (const c of only ? modules.filter((x) => namesOf(x).some((n) => only.includes(n))) : modules) {
       let r;
-      try { r = c.run(root, { started }); } catch (e) {
+      try { r = c.run(root, { started, handlers: scope.handlers }); } catch (e) {
         incomplete.push(`${namesOf(c).join('+')}: stopped by an error outside any one file, so nothing it would have found is reported (${describe(e)})`);
         continue;
       }

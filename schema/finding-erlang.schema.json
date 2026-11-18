@@ -4,16 +4,31 @@
   "title": "finding/1, ERLANG's extension",
   "description": "The erlang object of a finding/1 written by ERLANG. Fields are added as checks need them; see research/finding1-requirements.md.",
   "type": "object",
-  "required": ["strength", "fix"],
+  "required": [
+    "strength",
+    "fix"
+  ],
   "additionalProperties": false,
   "properties": {
     "strength": {
-      "enum": ["MUST", "SHOULD", "MAY"],
+      "enum": [
+        "MUST",
+        "SHOULD",
+        "MAY"
+      ],
       "description": "From the rule, as written in reference/."
     },
     "client": {
-      "enum": ["fetch", "axios", "got", "node:http", "node:https", "pg"],
-      "description": "no-timeout: the client making the call, found by where it is imported from."
+      "enum": [
+        "fetch",
+        "axios",
+        "got",
+        "node:http",
+        "node:https",
+        "pg",
+        "prisma"
+      ],
+      "description": "The client making the call, found by where it is imported from: for no-timeout the outbound client, for n-plus-one and per-row-writes the database client."
     },
     "unresolved": {
       "const": true,
@@ -24,54 +39,113 @@
       "minimum": 1,
       "description": "no-timeout on an instance: how many calls on it set no timeout; each is listed in where.locations after the instance."
     },
+    "over": {
+      "enum": [
+        "query result",
+        "request input",
+        "fixed count",
+        "unknown"
+      ],
+      "description": "n-plus-one and per-row-writes: what the list the statement runs once per item of comes from: a query, request input, or a count written in the code above ten (a loop to 1,000). unknown goes with unresolved."
+    },
+    "sequential": {
+      "type": "boolean",
+      "description": "n-plus-one and per-row-writes: whether each item's statement waits for the one before (an await in the loop), rather than all starting together."
+    },
     "fix": {
       "description": "The suggested fix (lib/fix.js). auto: edits a program can apply, re-checked by scripts/fix-test.js. guided: every place a person must change, and a note.",
       "oneOf": [
         {
           "type": "object",
-          "required": ["kind", "edits"],
+          "required": [
+            "kind",
+            "edits"
+          ],
           "additionalProperties": false,
           "properties": {
-            "kind": { "const": "auto" },
+            "kind": {
+              "const": "auto"
+            },
             "edits": {
               "type": "array",
               "minItems": 1,
               "items": {
                 "type": "object",
-                "required": ["file", "line", "column", "length", "replace"],
+                "required": [
+                  "file",
+                  "line",
+                  "column",
+                  "length",
+                  "replace"
+                ],
                 "additionalProperties": false,
                 "properties": {
-                  "file": { "type": "string", "minLength": 1 },
-                  "line": { "type": "integer", "minimum": 1 },
-                  "column": { "type": "integer", "minimum": 1 },
-                  "length": { "type": "integer", "minimum": 0 },
-                  "replace": { "type": "string" }
+                  "file": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "line": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "column": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "length": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "replace": {
+                    "type": "string"
+                  }
                 }
               }
             },
-            "note": { "type": "string", "minLength": 1 }
+            "note": {
+              "type": "string",
+              "minLength": 1
+            }
           }
         },
         {
           "type": "object",
-          "required": ["kind", "locations", "note"],
+          "required": [
+            "kind",
+            "locations",
+            "note"
+          ],
           "additionalProperties": false,
           "properties": {
-            "kind": { "const": "guided" },
+            "kind": {
+              "const": "guided"
+            },
             "locations": {
               "type": "array",
               "minItems": 1,
               "items": {
                 "type": "object",
-                "required": ["file", "line"],
+                "required": [
+                  "file",
+                  "line"
+                ],
                 "additionalProperties": false,
                 "properties": {
-                  "file": { "type": "string", "minLength": 1 },
-                  "line": { "type": "integer", "minimum": 1 }
+                  "file": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "line": {
+                    "type": "integer",
+                    "minimum": 1
+                  }
                 }
               }
             },
-            "note": { "type": "string", "minLength": 1 }
+            "note": {
+              "type": "string",
+              "minLength": 1
+            }
           }
         }
       ]
