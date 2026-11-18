@@ -1,6 +1,6 @@
 # ERLANG run contract
 
-What a caller, a CI job or another tool can rely on when it runs ERLANG. It describes ERLANG 0.0.1. A change to anything here is a change to the contract and is recorded in this file.
+What a caller, a CI job or another tool can rely on when it runs ERLANG. It describes ERLANG 0.0.1: the command `erlang`, below, and the trace harness, in its own section at the end. A change to anything here is a change to the contract and is recorded in this file.
 
 ## Invocation
 
@@ -66,7 +66,7 @@ Each finding is also printed to standard output, one line per finding. A last li
 
 ## Suggested fixes
 
-Every finding carries a suggested fix in `erlang.fix`, of one of two kinds:
+Every finding of `erlang` carries a suggested fix in `erlang.fix`, of one of two kinds:
 
 - **`auto`**: complete edits, `{ file, line, column, length, replace }`. Replace `length` characters at a 1-based line and column, with columns in UTF-16 code units. An insert at 1:1 of a file that does not exist creates it, as when the fix is a new migration. A `note` may add context, such as building an index concurrently in production.
 - **`guided`**: `locations` and a `note`, for fixes that need judgement. No edits are given.
@@ -87,7 +87,7 @@ A refused or partial report is still written. An error inside one check stops on
 
 ## Network
 
-None. ERLANG opens no socket, sends no request, starts no process and generates no load. The only network use is `npm install`, which fetches TypeScript from the npm registry once.
+None. `erlang` opens no socket, sends no request, starts no process and generates no load. The only network use is `npm install`, which fetches TypeScript from the npm registry once.
 
 ## Writes
 
@@ -108,3 +108,59 @@ None. ERLANG opens no socket, sends no request, starts no process and generates 
 - Request handlers are found in Express, Fastify, `node:http` and Next.js. Database access is read through `pg` and Prisma.
 - Known false negatives and positives are listed in `fixtures/PLAN.md`, under Known gaps.
 - ERLANG is for the owner's own code and services only.
+
+## The trace harness
+
+A separate program, for ERLANG's own fixtures: `scripts/trace.sh` (`npm run trace`). It confirms static findings by counts, on a real database. It is not part of `erlang` or `npm test`. Design and decisions: `research/trace-harness.md`.
+
+```
+scripts/trace.sh [form ...]      e.g. scripts/trace.sh L01a-n-plus-one/sql
+```
+
+With no form, it runs every `fixtures/<id>/<form>/trace/trace.json`: today the `sql/` forms of L01a, L01b, L02 and L04.
+
+**Inputs**
+
+| Input | Needed | Notes |
+|---|---|---|
+| Docker | Yes | Runs `postgres:17.11@sha256:ff87138949ad9a46f32ff23bd6852b52ce024a13dffe9b4087be98292cdd3b4f`, the image KERCKHOFFS pins. |
+| A fixture form | Yes | Its twins, and `trace/`: `trace.json` (the requests or page views, and the expected defects), `seed.sql`, a schema (`schema.sql`, or the twins' own migrations), and `package-lock.json`. |
+| Seed size | Fixed | Each form's `seed.sql`, at 1x and 10x. For example, L02 has 10,000 orders and events at 1x, and 100,000 at 10x. The seed is deterministic, and its SHA-256 is recorded. |
+| URL | No | Each twin is started by the harness, on 127.0.0.1, on a port the system picks. |
+| Test logins | No | The fixtures have no authentication. The database passwords are made for each run. |
+
+**Output.** For each twin, in `dist/trace/<id>/<form>/<twin>/`:
+- `raw.json`: every count;
+- `report.json`: a report/1;
+- `twin.log`: the twin's own log.
+
+Trace findings are finding/1:
+- `detection` includes `trace`.
+- `erlang.trace` holds the counts at each scale, and the slope or ratio judged.
+- `measured` is `[]`, since counts do not vary between runs.
+- A finding that agrees with a static finding (same check, method and route, and the statement that grows is on one of its lines) is that static finding, with `trace` added to its `detection` and the counts added to its message. Its fingerprint, locations and fix stay the static finding's.
+- A trace finding with no static match names its endpoint. It carries a guided fix when its statement or route is found in the source.
+
+**Exit codes**
+
+| Code | Meaning |
+|---|---|
+| 0 | Every form as expected: each planted twin reports exactly its defects, linked where `trace.json` says, and each clean twin reports no error or warning |
+| 1 | A form was not as expected, or its run failed |
+| 2 | Cannot run: Docker is not running, PostgreSQL did not start, or the port is bound beyond 127.0.0.1 |
+| 64 | Bad usage |
+| 75 | ITTEN's inspector is running, so a timing run may be under way (`EX_TEMPFAIL`). Checked at start and before each twin. |
+
+**Network**
+- PostgreSQL publishes its port on 127.0.0.1 only. Each twin listens on 127.0.0.1 only. Requests go only to the twin, one at a time, at most 5 a second, three per request per scale.
+- No load is generated.
+- The first run pulls the image from Docker Hub, and installs each form's packages from the npm registry with `npm ci --ignore-scripts`, from its committed lockfile. Later runs reuse both.
+
+**Writes**
+- `dist/trace/`: results; installs, in `dist/trace/install/`; and the run's passwords, in a mode-700 directory, `dist/trace/run/<pid>/`, removed on exit.
+- One Docker container, removed on exit, including on failure. The image stays in Docker's store.
+- Nothing in `fixtures/`: each twin is copied to `dist/` before it runs.
+
+**Determinism.** The seeds use no randomness, and the counts are exact. In the runs so far, L01a's and L01b's reports were identical across two runs, apart from `started`. Timings are written to the twin's log but never judged.
+
+**Load on the machine.** Everything runs at `nice -n 15`. The container is held to one CPU and 1 GB. A full run of the four forms takes about 90 seconds.

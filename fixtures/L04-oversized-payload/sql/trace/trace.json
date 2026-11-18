@@ -1,0 +1,64 @@
+{
+  "note": "Trace form of L04 (research/trace-harness.md), count-based: bytes and calls, no timings. There is no static form yet. The twins' web/pages.js is the pages' own data loading; the harness runs each page view against the twin at 1x and 10x (n products at 1x, ten times that at 10x), offering gzip and br on every call, and records each call's route, bytes as sent, Content-Encoding, and which fields of the JSON the page reads. items: the length of the list a page view returns; null when it returns one thing. defects: what the planted twin must report and the clean twin must not, by rule and endpoint; the rest are decoys in both twins.",
+  "fixture": "L04",
+  "form": "sql",
+  "judge": "page",
+  "scales": [
+    1,
+    10
+  ],
+  "n": 10,
+  "pages": [
+    {
+      "id": "productList",
+      "module": "web/pages.js",
+      "export": "productList",
+      "args": []
+    },
+    {
+      "id": "productPage",
+      "module": "web/pages.js",
+      "export": "productPage",
+      "args": [
+        1
+      ]
+    },
+    {
+      "id": "status",
+      "module": "web/pages.js",
+      "export": "status",
+      "args": []
+    }
+  ],
+  "defects": [
+    {
+      "check": "oversized-payload",
+      "rule": "DAT-01",
+      "method": "GET",
+      "route": "/products/:id/price",
+      "page": "productList",
+      "linked": false
+    },
+    {
+      "check": "oversized-payload",
+      "rule": "DAT-04",
+      "method": "GET",
+      "route": "/products",
+      "linked": false
+    },
+    {
+      "check": "oversized-payload",
+      "rule": "DAT-08",
+      "method": "GET",
+      "route": "/products",
+      "linked": false
+    },
+    {
+      "check": "oversized-payload",
+      "rule": "DAT-08",
+      "method": "GET",
+      "route": "/products/:id",
+      "linked": false
+    }
+  ]
+}
