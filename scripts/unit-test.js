@@ -226,6 +226,34 @@ console.log('\nunbounded-query: sinks, caps and statements');
   expectFindings('A table named in smallTables is not reported', { 'db.js': PRISMA, 'erlang.config.json': JSON.stringify({ smallTables: ['Country'] }), 'app.js': express("app.get('/c', async (req, res) => {\n  res.json(await prisma.country.findMany());\n});\n") }, [], UQ);
 }
 
+console.log('\npool-sizing: deployments, limits and lifetimes');
+{
+  const PS = ['pool-sizing'];
+  const pg = (max) => `import pg from 'pg';\nexport const pool = new pg.Pool(${max === null ? '' : `{ ${max} }`});\n`;
+  const server = "import Fastify from 'fastify';\nimport { pool } from './db.js';\nconst app = Fastify();\napp.get('/x', async function x() { return (await pool.query('select 1')).rows; });\napp.listen({ port: 3000 });\n";
+  const compose = (api, db = 'image: postgres:16') => `services:\n  api:\n    build: .\n${api}  db:\n    ${db}\n`;
+  expectFindings('Compose replicas × pool max within max_connections: nothing', { 'src/db.js': pg('max: 20'), 'src/server.js': server, 'docker-compose.yml': compose('    command: node src/server.js\n    deploy:\n      replicas: 4\n') }, [], PS);
+  expectFindings('A pool with no max (pg default 10) past the limit: error, max inserted', { 'src/db.js': pg('connectionString: process.env.DATABASE_URL'), 'src/server.js': server, 'docker-compose.yml': compose('    command: node src/server.js\n    deploy:\n      replicas: 12\n') }, [['error', 'src/db.js', 2, 'auto']], PS);
+  expectAutoFixHolds('  max: 8 inserted: 12 × 8 = 96 of 97', { 'src/db.js': pg('connectionString: process.env.DATABASE_URL'), 'src/server.js': server, 'docker-compose.yml': compose('    command: node src/server.js\n    deploy:\n      replicas: 12\n') }, PS);
+  expectFindings('Dockerfile CMD npm start, through package.json, to the entry', { 'src/db.js': pg('max: 40'), 'src/server.js': server, 'package.json': JSON.stringify({ scripts: { start: 'node src/server.js' } }), 'Dockerfile': 'FROM node:22\nCOPY . .\nCMD ["npm", "start"]\n', 'docker-compose.yml': compose('    deploy:\n      replicas: 3\n') }, [['error', 'src/db.js', 2, 'auto']], PS);
+  expectFindings('PM2 instances max: the count is unknown, but 2 × 60 already passes 97: error, unresolved, guided', { 'src/db.js': pg('max: 60'), 'src/server.js': server, 'ecosystem.config.cjs': "module.exports = { apps: [{ name: 'api', script: 'src/server.js', instances: 'max' }] };\n", 'docker-compose.yml': compose('    command: pm2-runtime ecosystem.config.cjs\n    deploy:\n      replicas: 2\n') }, [['error', 'src/db.js', 2, 'guided']], PS);
+  expectFindings('node:cluster in the entry: the count is unknown and the floor fits: info', { 'src/db.js': pg('max: 10'), 'src/server.js': "import cluster from 'node:cluster';\n" + server, 'docker-compose.yml': compose('    command: node src/server.js\n') }, [['info', 'src/db.js', 2, 'guided']], PS);
+  expectFindings('A PgBouncer service in front: info, the database limit is not what the pools meet', { 'src/db.js': pg('max: 50'), 'src/server.js': server, 'docker-compose.yml': compose('    command: node src/server.js\n    deploy:\n      replicas: 4\n  bouncer:\n    image: edoburu/pgbouncer:1.23\n') }, [['info', 'src/db.js', 2, 'guided']], PS);
+  expectFindings('max_connections raised on the db service: 4 × 50 within 297', { 'src/db.js': pg('max: 50'), 'src/server.js': server, 'docker-compose.yml': compose('    command: node src/server.js\n    deploy:\n      replicas: 4\n', 'image: postgres:16\n    command: ["postgres", "-c", "max_connections=300"]') }, [], PS);
+  const k8s = (replicas) => `apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: api\nspec:\n  replicas: ${replicas}\n  template:\n    spec:\n      containers:\n        - name: api\n          image: example.test/api:1\n          command: ["node", "src/server.js"]\n`;
+  expectFindings('Kubernetes with no limit in the repository: info', { 'src/db.js': pg('max: 10'), 'src/server.js': server, 'k8s/api.yaml': k8s(3) }, [['info', 'src/db.js', 2, 'guided']], PS);
+  expectFindings('  the limit named in erlang.config.json: 3 × 10 within 97, nothing', { 'src/db.js': pg('max: 10'), 'src/server.js': server, 'k8s/api.yaml': k8s(3), 'erlang.config.json': JSON.stringify({ database: { maxConnections: 100 } }) }, [], PS);
+  expectFindings('Helm-templated replicas are unknown: info', { 'src/db.js': pg('max: 10'), 'src/server.js': server, 'k8s/api.yaml': k8s('"{{ .Values.replicas }}"'), 'erlang.config.json': JSON.stringify({ database: { maxConnections: 100 } }) }, [['info', 'src/db.js', 2, 'guided']], PS);
+  expectFindings('A pool from a max ERLANG cannot read (an env variable): info', { 'src/db.js': pg('max: Number(process.env.PG_MAX)'), 'src/server.js': server, 'docker-compose.yml': compose('    command: node src/server.js\n') }, [['info', 'src/db.js', 2, 'guided']], PS);
+  expectFindings('vercel.json: instances unbounded, info', { 'src/db.js': pg('max: 5'), 'src/server.js': server, 'vercel.json': '{}' }, [['info', 'src/db.js', 2, 'guided']], PS);
+  expectFindings('No deployment file: nothing to count', { 'src/db.js': pg('max: 500'), 'src/server.js': server }, [], PS);
+  const handler = (body) => `import Fastify from 'fastify';\nimport pg from 'pg';\nconst app = Fastify();\nlet cached;\n${body}\napp.listen({ port: 3000 });\n`;
+  expectFindings('A pool kept in a module variable on first use (if (!x) x = ...) is not per request', { 'src/server.js': handler("app.get('/x', async function x() {\n  if (!cached) cached = new pg.Pool({ max: 2 });\n  return (await cached.query('select 1')).rows;\n});") }, [], PS);
+  expectFindings('A pool kept on globalThis is not per request', { 'src/server.js': handler("app.get('/x', async function x() {\n  const pool = (globalThis.pool ??= new pg.Pool({ max: 2 }));\n  return (await pool.query('select 1')).rows;\n});") }, [], PS);
+  expectFindings('A pool returned by a factory each handler calls: per request', { 'src/server.js': handler("function makePool() {\n  return new pg.Pool({ max: 2 });\n}\napp.get('/x', async function x() {\n  return (await makePool().query('select 1')).rows;\n});") }, [['error', 'src/server.js', 6, 'guided']], PS);
+  expectFindings('A pg Client per request, ended in finally: still per request', { 'src/server.js': handler("app.get('/x', async function x() {\n  const c = new pg.Client();\n  await c.connect();\n  try { return (await c.query('select 1')).rows; } finally { await c.end(); }\n});") }, [['error', 'src/server.js', 6, 'guided']], PS);
+}
+
 console.log('\nIsolation and scope');
 {
   const dir = subject({

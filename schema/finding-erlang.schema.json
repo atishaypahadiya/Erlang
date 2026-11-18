@@ -60,6 +60,15 @@
       ],
       "description": "unbounded-query: sent when the rows go into a response, loaded when every row is read to compute something, client page size when the client chooses how many rows with no cap."
     },
+    "connections": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "pool-sizing: the connections every deployed process can open at once (a floor when a count is unknown)."
+    },
+    "limit": {
+      "type": "integer",
+      "description": "pool-sizing: the connections the database accepts, max_connections less the reserved."
+    },
     "fix": {
       "description": "The suggested fix (lib/fix.js). auto: edits a program can apply, re-checked by scripts/fix-test.js. guided: every place a person must change, and a note.",
       "oneOf": [

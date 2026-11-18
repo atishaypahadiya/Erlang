@@ -30,11 +30,12 @@ import { readScope, enter, leave } from '../lib/scope.js';
 import * as noTimeout from '../checks/no-timeout.js';
 import * as perItem from '../checks/per-item.js';
 import * as unboundedQuery from '../checks/unbounded-query.js';
+import * as poolSizing from '../checks/pool-sizing.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 export const SPECIALIST = 'erlang';
 export const VERSION = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version;
-export const CHECKS = [noTimeout, perItem, unboundedQuery];
+export const CHECKS = [noTimeout, perItem, unboundedQuery, poolSizing];
 const namesOf = (c) => c.CHECKS ?? [c.CHECK];
 
 // The subject as a path relative to the working directory, so a report never
@@ -59,12 +60,12 @@ export function scan(dir, { started = new Date(), only = null, modules = CHECKS 
   if (scope.error) return report({ ...base, status: 'refused', reason: `${scope.error}; what is in scope is unknown, so nothing was scanned` });
   const findings = [];
   const incomplete = [];
-  const run = { scope: { config: scope.config, exclude: scope.exclude, ...(scope.handlers.length ? { handlers: scope.handlers } : {}), ...(scope.smallTables.length ? { smallTables: scope.smallTables } : {}), notes: scope.notes }, checks: {} };
+  const run = { scope: { config: scope.config, exclude: scope.exclude, ...(scope.handlers.length ? { handlers: scope.handlers } : {}), ...(scope.smallTables.length ? { smallTables: scope.smallTables } : {}), ...(scope.database ? { database: scope.database } : {}), notes: scope.notes }, checks: {} };
   enter(root, scope.exclude);
   try {
     for (const c of only ? modules.filter((x) => namesOf(x).some((n) => only.includes(n))) : modules) {
       let r;
-      try { r = c.run(root, { started, handlers: scope.handlers, smallTables: scope.smallTables }); } catch (e) {
+      try { r = c.run(root, { started, handlers: scope.handlers, smallTables: scope.smallTables, database: scope.database }); } catch (e) {
         incomplete.push(`${namesOf(c).join('+')}: stopped by an error outside any one file, so nothing it would have found is reported (${describe(e)})`);
         continue;
       }
