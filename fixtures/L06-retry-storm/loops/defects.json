@@ -1,0 +1,116 @@
+{
+  "note": "The fixture pair for retry-policy (L06 in fixtures/PLAN.md), hand-written retry loops with axios and fetch, under Fastify form, scanned with retry-policy alone. Written by hand: each planted defect is fixed in place in the clean twin, line for line, and the twins differ in nothing else. A finding catches a defect when its check matches and its locations name the defect's file, line, column and symbol (every place, when the defect lists several), with the defect's severity. Decoys are in both twins; reporting one is a false positive. Paths are relative to each twin. Nothing here is installed or run.",
+  "check": "retry-policy",
+  "checks": [
+    "retry-policy"
+  ],
+  "plan": "L06",
+  "form": "loops",
+  "planted": "fixtures/L06-retry-storm/loops/planted",
+  "clean": "fixtures/L06-retry-storm/loops/clean",
+  "defects": [
+    {
+      "id": "L06-l1",
+      "check": "retry-policy",
+      "title": "A retry loop with no wait between attempts",
+      "severity": "error",
+      "where": {
+        "file": "src/upstream.js",
+        "line": 6,
+        "column": 3,
+        "symbol": "profile"
+      },
+      "fix": "guided",
+      "fixedInClean": "a jittered, capped exponential wait"
+    },
+    {
+      "id": "L06-l2",
+      "check": "retry-policy",
+      "title": "A retry loop with a fixed 1 s wait",
+      "severity": "error",
+      "where": {
+        "file": "src/upstream.js",
+        "line": 17,
+        "column": 3,
+        "symbol": "recommendations"
+      },
+      "fix": "auto",
+      "fixedInClean": "Math.random() * Math.min(10_000, 1000 * 2 ** attempt)"
+    },
+    {
+      "id": "L06-l3",
+      "check": "retry-policy",
+      "title": "while (true) retrying until the service answers",
+      "severity": "error",
+      "where": {
+        "file": "src/upstream.js",
+        "line": 30,
+        "column": 3,
+        "symbol": "fraudScore"
+      },
+      "fix": "guided",
+      "fixedInClean": "attempt >= 3 ends it"
+    },
+    {
+      "id": "L06-l4",
+      "check": "retry-policy",
+      "title": "A fetch loop that retries every non-2xx reply, 400 and 404 included",
+      "severity": "warning",
+      "where": {
+        "file": "src/upstream.js",
+        "line": 43,
+        "column": 3,
+        "symbol": "tax"
+      },
+      "fix": "guided",
+      "fixedInClean": "4xx other than 429 thrown at once"
+    }
+  ],
+  "decoys": [
+    {
+      "id": "L06-l-d1",
+      "title": "A loop with jittered, capped backoff, a cap on attempts and no retry on 4xx",
+      "where": {
+        "file": "src/upstream.js",
+        "line": 53,
+        "column": 3
+      }
+    },
+    {
+      "id": "L06-l-d2",
+      "title": "A polling loop (for (;;)) that ends on the job being done, not on a reply succeeding",
+      "where": {
+        "file": "src/upstream.js",
+        "line": 65,
+        "column": 3
+      }
+    },
+    {
+      "id": "L06-l-d3",
+      "title": "Pagination whose catch ends the loop",
+      "where": {
+        "file": "src/upstream.js",
+        "line": 76,
+        "column": 3
+      }
+    },
+    {
+      "id": "L06-l-d4",
+      "title": "A for-of over items: one call per item, not a retry",
+      "where": {
+        "file": "src/upstream.js",
+        "line": 91,
+        "column": 3
+      }
+    },
+    {
+      "id": "L06-l-d5",
+      "title": "A fixed-delay retry in a script no request waits on",
+      "where": {
+        "file": "scripts/warm-cache.js",
+        "line": 4,
+        "column": 1
+      }
+    }
+  ]
+}

@@ -1,0 +1,106 @@
+{
+  "note": "The fixture pair for retry-policy (L06 in fixtures/PLAN.md), axios-retry 4.5.0, p-retry 9.0.0 and got 16.2.0, under Express form, scanned with retry-policy alone. Written by hand: each planted defect is fixed in place in the clean twin, line for line, and the twins differ in nothing else. A finding catches a defect when its check matches and its locations name the defect's file, line, column and symbol (every place, when the defect lists several), with the defect's severity. Decoys are in both twins; reporting one is a false positive. Library defaults are from their published source (research/first-check.md, C9 to C11). Paths are relative to each twin. Nothing here is installed or run.",
+  "check": "retry-policy",
+  "checks": [
+    "retry-policy"
+  ],
+  "plan": "L06",
+  "form": "libraries",
+  "planted": "fixtures/L06-retry-storm/libraries/planted",
+  "clean": "fixtures/L06-retry-storm/libraries/clean",
+  "defects": [
+    {
+      "id": "L06-a1",
+      "check": "retry-policy",
+      "title": "axios-retry with no retryDelay: three retries with no wait between them",
+      "severity": "error",
+      "where": {
+        "file": "src/clients.js",
+        "line": 7,
+        "column": 1
+      },
+      "fix": "auto",
+      "fixedInClean": "retryDelay: axiosRetry.exponentialDelay"
+    },
+    {
+      "id": "L06-a2",
+      "check": "retry-policy",
+      "title": "p-retry with its default randomize: false: exponential backoff, every client in step",
+      "severity": "error",
+      "where": {
+        "file": "src/pricing.js",
+        "line": 5,
+        "column": 10,
+        "symbol": "quote"
+      },
+      "fix": "auto",
+      "fixedInClean": "randomize: true"
+    },
+    {
+      "id": "L06-a3",
+      "check": "retry-policy",
+      "title": "got retry limit Infinity: a failing service is called forever",
+      "severity": "error",
+      "where": {
+        "file": "src/clients.js",
+        "line": 14,
+        "column": 25,
+        "symbol": "shipping"
+      },
+      "fix": "auto",
+      "fixedInClean": "limit: 2"
+    },
+    {
+      "id": "L06-a4",
+      "check": "retry-policy",
+      "title": "p-retry around a call that throws on every non-2xx: 400 and 404 retried",
+      "severity": "warning",
+      "where": {
+        "file": "src/pricing.js",
+        "line": 15,
+        "column": 24,
+        "symbol": "stock"
+      },
+      "fix": "guided",
+      "fixedInClean": "4xx other than 429 thrown as AbortError"
+    }
+  ],
+  "decoys": [
+    {
+      "id": "L06-a-d1",
+      "title": "axios-retry with exponentialDelay (jittered 0 to 20%, honours Retry-After)",
+      "where": {
+        "file": "src/clients.js",
+        "line": 11,
+        "column": 1
+      }
+    },
+    {
+      "id": "L06-a-d2",
+      "title": "got's default retry",
+      "where": {
+        "file": "src/clients.js",
+        "line": 17,
+        "column": 24
+      }
+    },
+    {
+      "id": "L06-a-d3",
+      "title": "p-retry with randomize, maxTimeout and AbortError on 4xx",
+      "where": {
+        "file": "src/pricing.js",
+        "line": 25,
+        "column": 16
+      }
+    },
+    {
+      "id": "L06-a-d4",
+      "title": "p-retry without jitter in a startup migration no request waits on",
+      "where": {
+        "file": "scripts/migrate.js",
+        "line": 6,
+        "column": 7
+      }
+    }
+  ]
+}

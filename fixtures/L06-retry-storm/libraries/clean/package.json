@@ -1,0 +1,12 @@
+{
+  "name": "l06-shop-libraries",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "axios": "1.21.1",
+    "axios-retry": "4.5.0",
+    "express": "5.2.1",
+    "got": "16.2.0",
+    "p-retry": "9.0.0"
+  }
+}

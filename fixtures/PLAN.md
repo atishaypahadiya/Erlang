@@ -2,7 +2,7 @@
 
 A test bench for ERLANG's checks: small local services, each with one planted defect, and a clean twin of each with the defect fixed. A check passes when it reports its defect on the planted service and reports nothing on the clean twin. ERLANG publishes its recall and precision on this set, as ITTEN does on its pages.
 
-Built as static pairs, source files that are never installed or run: L07 (`no-timeout`) in `L07-no-timeout/`, and L01a (`n-plus-one`), L01b (`per-row-writes`) and L02 (`unbounded-query`), each in a `sql/` form (Fastify and `pg`) and a `prisma/` form (Express and Prisma 7.10.1); and L13 (`pool-sizing`), a configuration fixture in a `compose/` form (Docker Compose, PM2, `pg`) and a `kubernetes/` form (a Deployment with an HPA, a worker, a CronJob, Prisma 7.10.1 with `@prisma/adapter-pg`). `scripts/fixture-test.js` scores each pair, and `scripts/fix-test.js` checks its fixes. The rest is planned. The decisions taken on review are at the end.
+Built as static pairs, source files that are never installed or run: L07 (`no-timeout`) in `L07-no-timeout/`; L06 (`retry-policy`) in a `libraries/` form (axios-retry 4.5.0, p-retry 9.0.0, got 16.2.0) and a `loops/` form (hand-written retries around axios and fetch); and L01a (`n-plus-one`), L01b (`per-row-writes`) and L02 (`unbounded-query`), each in a `sql/` form (Fastify and `pg`) and a `prisma/` form (Express and Prisma 7.10.1); and L13 (`pool-sizing`), a configuration fixture in a `compose/` form (Docker Compose, PM2, `pg`) and a `kubernetes/` form (a Deployment with an HPA, a worker, a CronJob, Prisma 7.10.1 with `@prisma/adapter-pg`). `scripts/fixture-test.js` scores each pair, and `scripts/fix-test.js` checks its fixes. The rest is planned. The decisions taken on review are at the end.
 
 ## Ground rules
 
@@ -129,6 +129,14 @@ Added while building `pool-sizing` (L13):
 - a CronJob's or a one-off service's pool, which is counted in the total but not reported itself;
 - the `globalThis` Prisma singleton.
 
+Added while building `retry-policy` (L06):
+
+- axios-retry with `exponentialDelay`, got's default retry, and p-retry with `randomize`, `maxTimeout` and `AbortError` on 4xx;
+- a loop with jittered, capped exponential backoff, a cap on attempts, and no retry on 4xx;
+- a polling loop that ends on the job being done, not on a reply succeeding;
+- pagination whose `catch` ends the loop, and a `for`-`of` with one call per item;
+- a retry, with no jitter, in a migration or script no request waits on.
+
 The list grows as checks are built. Each entry names the check it protects.
 
 ## Known gaps
@@ -149,6 +157,12 @@ Known false negatives:
 - **Processes ERLANG cannot follow** (`pool-sizing`). A service with no `build:` whose image is not the project's, a command that names no project file, or a `node:cluster` fork count leaves that process uncounted or counted at its least (1). A total that passes the limit even so is still reported; otherwise the finding is `info`.
 - **Drivers other than `pg` and Prisma** (`pool-sizing`). postgres.js, mysql2 and Knex pools are not counted, so their connections are missing from the total.
 - **Surge** (`pool-sizing`). A rolling deploy's extra pods, and kustomize overlays that change replicas, are not read; the auto fix's note says to leave room.
+- **Retries of anything but outbound HTTP** (`retry-policy`). A loop retrying a database query or a queue publish is not judged.
+- **Other retry libraries** (`retry-policy`). async-retry, cockatiel, ky's `retry` and fetch-retry are not read; got's `calculateDelay` and an axios-retry `retryDelay` function ERLANG cannot read are skipped.
+- **Partial jitter** (`retry-policy`). axios-retry's `exponentialDelay` (0 to 20 %), p-retry's `randomize` (×1 to 2) and got's 100 ms noise count as jitter; RTY-04's preference for full jitter is not reported.
+- **Uncapped jittered loops** (`retry-policy`). A hand-written loop with jittered exponential backoff and no `Math.min` is not reported: its longest wait cannot be read from the code.
+- **Layers, budgets, idempotency** (`retry-policy`). RTY-02 (retrying at one layer), RTY-05 (a retry budget) and RTY-07 (retrying a POST without an idempotency key) are not checked.
+- **Readiness waits** (`retry-policy`, a false positive). A loop that waits for a server the code itself started has the shape of a retry with a fixed wait. In a project with handlers, it is reported only if a handler reaches it; with none found, it is `info`.
 - **Unknown Prisma version** (`n-plus-one`). When neither a lockfile nor `package.json` names `@prisma/client`, batching is assumed, as in Prisma 6 and 7, so `findUnique` calls started together are not reported. Under Prisma 8, which drops the batching, they would be one query each. To revisit when Prisma 8 reaches general availability.
 
 ## Acceptance test
