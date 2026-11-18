@@ -1,0 +1,100 @@
+{
+  "note": "Trace form (research/trace-harness.md): the L01b SQL twins, run against PostgreSQL with the data seed.sql makes at 1x and 10x, by scripts/trace.sh. Each request is sent three times, one after another (a warm-up, then two measured), with pg_stat_statements reset before each. n is the items a request handles at 1x; at 10x it is ten times that. items says where the harness counts them: in the response, in the request body, or as lines of a streamed response; null when the request handles a fixed number. defects are what the planted twin must report and the clean twin must not; every other request is a decoy, in both twins. linked: the trace finding must agree with a static finding on the route and the statement.",
+  "fixture": "L01b",
+  "form": "sql",
+  "judge": "statements",
+  "scales": [
+    1,
+    10
+  ],
+  "n": 10,
+  "requests": [
+    {
+      "id": "importOrders",
+      "method": "POST",
+      "path": "/api/orders/import",
+      "body": {
+        "rows": {
+          "$repeat": "$n",
+          "item": {
+            "customerId": "$i",
+            "total": 100
+          }
+        }
+      },
+      "items": "body.rows"
+    },
+    {
+      "id": "addItems",
+      "method": "POST",
+      "path": "/api/orders/1/items",
+      "body": {
+        "items": {
+          "$repeat": "$n",
+          "item": {
+            "productId": "$i",
+            "quantity": 1
+          }
+        }
+      },
+      "items": "body.items"
+    },
+    {
+      "id": "updateStock",
+      "method": "PUT",
+      "path": "/api/stock",
+      "body": {
+        "levels": {
+          "$repeat": "$n",
+          "item": {
+            "sku": "sku-$i",
+            "quantity": 5
+          }
+        }
+      },
+      "items": "body.levels"
+    },
+    {
+      "id": "addTags",
+      "method": "POST",
+      "path": "/api/tags",
+      "body": {
+        "productId": 1,
+        "tags": {
+          "$repeat": "$n",
+          "item": "tag-$i"
+        }
+      },
+      "items": "body.tags"
+    },
+    {
+      "id": "createTeam",
+      "method": "POST",
+      "path": "/api/teams",
+      "body": {
+        "name": "Support"
+      },
+      "items": null
+    }
+  ],
+  "defects": [
+    {
+      "check": "per-row-writes",
+      "method": "POST",
+      "route": "/api/orders/import",
+      "linked": true
+    },
+    {
+      "check": "per-row-writes",
+      "method": "POST",
+      "route": "/api/orders/:id/items",
+      "linked": true
+    },
+    {
+      "check": "per-row-writes",
+      "method": "PUT",
+      "route": "/api/stock",
+      "linked": true
+    }
+  ]
+}

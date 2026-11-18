@@ -1,6 +1,6 @@
 # Trace harness for L01 to L04: a proposal
 
-Status: proposal, 17 November 2026, with the owner's decisions at the end. Nothing here is built yet.
+Status: proposal, 17 November 2026, with the owner's decisions at the end. Built for decision 6's scope: `scripts/trace.sh`, with the trace forms of L01a, L01b, L02 and L04. Where the build changed the proposal, the change and its reason are written in place.
 
 The static checks read code and schema. They cannot see how many statements a request really sends, how many rows come back, or which plan the database picks. The trace harness runs each fixture twin against a real PostgreSQL with seeded data. It sends a few requests one at a time and measures each at two data sizes, 1× and 10×. A defect that grows with data shows up as a ratio. This is DAT-07, "judge data access at production scale", and it is the Trace column of `fixtures/PLAN.md` for L01 to L04.
 
@@ -24,16 +24,18 @@ Findings follow finding/1 with `detection: ["trace"]`, written to `dist/trace/<f
 **Recommended: count at the database.** `pg_stat_statements` and `auto_explain` both ship with the official image, so nothing is installed. The server starts with:
 
 ```
--c shared_preload_libraries=pg_stat_statements,auto_explain
--c pg_stat_statements.track=all -c pg_stat_statements.track_utility=off
--c auto_explain.log_min_duration=0 -c auto_explain.log_format=json
+-c shared_preload_libraries=pg_stat_statements
+-c pg_stat_statements.track=top -c pg_stat_statements.track_utility=off
 ```
+
+`auto_explain` joins them when L03's plans are read (decision 6).
 
 How a request is attributed:
 - Requests are sent one at a time, so everything between a reset and a read belongs to one request.
 - The harness calls `pg_stat_statements_reset()`, sends the request, waits for the response, then reads `sum(calls)` and `sum(rows)`.
 - Only statements from the app's role are counted. The fixture connects as `erlang_app` and the harness as `postgres`, so the harness's own reads stay out of the count.
 - `track_utility=off` leaves out `BEGIN`, `COMMIT` and `SET`, as the Prisma probe did.
+- Only top-level statements count (`track=top`, and `toplevel` when reading). This proposal first said `track=all`. The first run showed why that is wrong: PostgreSQL checks each foreign key of each inserted row with a statement of its own (`SELECT 1 FROM ONLY ... FOR KEY SHARE`). With `track=all` those were counted as statements the request sent, and L01b's clean twin, whose single batched insert sends one statement for 100 rows, read as 101 statements.
 
 Why the database and not the driver:
 - **It covers every client the same way.** Raw `pg`, Prisma, Knex, TypeORM and Drizzle are all counted, with no reader per client.

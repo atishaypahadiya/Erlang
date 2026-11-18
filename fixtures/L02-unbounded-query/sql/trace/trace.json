@@ -1,0 +1,118 @@
+{
+  "note": "Trace form (research/trace-harness.md): the L02 SQL twins, run against PostgreSQL with the data seed.sql makes at 1x and 10x, by scripts/trace.sh. Each request is sent three times, one after another (a warm-up, then two measured), with pg_stat_statements reset before each. n is the items a request handles at 1x; at 10x it is ten times that. items says where the harness counts them: in the response, in the request body, or as lines of a streamed response; null when the request handles a fixed number. defects are what the planted twin must report and the clean twin must not; every other request is a decoy, in both twins. linked: the trace finding must agree with a static finding on the route and the statement. schema twin:migrations applies each twin's own migrations, in name order. Judged on rows: those the statements a request runs return, at 1x against 10x.",
+  "fixture": "L02",
+  "form": "sql",
+  "judge": "rows",
+  "schema": "twin:migrations",
+  "scales": [
+    1,
+    10
+  ],
+  "n": 10,
+  "requests": [
+    {
+      "id": "listEvents",
+      "method": "GET",
+      "path": "/events",
+      "items": "response"
+    },
+    {
+      "id": "listCustomers",
+      "method": "GET",
+      "path": "/customers?limit=1000000",
+      "items": "response"
+    },
+    {
+      "id": "revenue",
+      "method": "GET",
+      "path": "/stats/revenue",
+      "items": null
+    },
+    {
+      "id": "products",
+      "method": "GET",
+      "path": "/products",
+      "items": "response"
+    },
+    {
+      "id": "listOrders",
+      "method": "GET",
+      "path": "/orders?limit=1000000",
+      "items": "response"
+    },
+    {
+      "id": "recentOrders",
+      "method": "GET",
+      "path": "/orders/recent",
+      "items": "response"
+    },
+    {
+      "id": "oneOrder",
+      "method": "GET",
+      "path": "/orders/1",
+      "items": null
+    },
+    {
+      "id": "ordersByIds",
+      "method": "GET",
+      "path": "/orders/batch?ids=1,2,3,4,5,6,7,8,9,10",
+      "items": "response"
+    },
+    {
+      "id": "customerByEmail",
+      "method": "GET",
+      "path": "/customers/by-email?email=c1%40example.test",
+      "items": "response"
+    },
+    {
+      "id": "productBySku",
+      "method": "GET",
+      "path": "/products/by-sku/sku-1",
+      "items": "response"
+    },
+    {
+      "id": "orderCount",
+      "method": "GET",
+      "path": "/stats/orders",
+      "items": null
+    },
+    {
+      "id": "settings",
+      "method": "GET",
+      "path": "/settings",
+      "items": "response"
+    },
+    {
+      "id": "exportEvents",
+      "method": "GET",
+      "path": "/export/events",
+      "items": "ndjson"
+    }
+  ],
+  "defects": [
+    {
+      "check": "unbounded-query",
+      "method": "GET",
+      "route": "/events",
+      "linked": true
+    },
+    {
+      "check": "unbounded-query",
+      "method": "GET",
+      "route": "/customers",
+      "linked": true
+    },
+    {
+      "check": "unbounded-query",
+      "method": "GET",
+      "route": "/stats/revenue",
+      "linked": true
+    },
+    {
+      "check": "unbounded-query",
+      "method": "GET",
+      "route": "/products",
+      "linked": true
+    }
+  ]
+}

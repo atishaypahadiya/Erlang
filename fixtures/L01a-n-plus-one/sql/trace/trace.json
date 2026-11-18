@@ -1,0 +1,87 @@
+{
+  "note": "Trace form (research/trace-harness.md): the L01a SQL twins, run against PostgreSQL with the data seed.sql makes at 1x and 10x, by scripts/trace.sh. Each request is sent three times, one after another (a warm-up, then two measured), with pg_stat_statements reset before each. n is the items a request handles at 1x; at 10x it is ten times that. items says where the harness counts them: in the response, in the request body, or as lines of a streamed response; null when the request handles a fixed number. defects are what the planted twin must report and the clean twin must not; every other request is a decoy, in both twins. linked: the trace finding must agree with a static finding on the route and the statement.",
+  "fixture": "L01a",
+  "form": "sql",
+  "judge": "statements",
+  "scales": [
+    1,
+    10
+  ],
+  "n": 10,
+  "requests": [
+    {
+      "id": "listOrders",
+      "method": "GET",
+      "path": "/orders",
+      "items": "response"
+    },
+    {
+      "id": "orderItems",
+      "method": "GET",
+      "path": "/orders/1/items",
+      "items": "response"
+    },
+    {
+      "id": "lookupOrders",
+      "method": "POST",
+      "path": "/orders/lookup",
+      "body": {
+        "ids": {
+          "$repeat": "$n",
+          "item": "$i"
+        }
+      },
+      "items": "body.ids"
+    },
+    {
+      "id": "orderCustomers",
+      "method": "GET",
+      "path": "/orders/customers",
+      "items": "response"
+    },
+    {
+      "id": "getSettings",
+      "method": "GET",
+      "path": "/settings",
+      "items": null
+    },
+    {
+      "id": "stats",
+      "method": "GET",
+      "path": "/stats",
+      "items": null
+    },
+    {
+      "id": "exportOrders",
+      "method": "GET",
+      "path": "/export",
+      "items": "ndjson"
+    },
+    {
+      "id": "product",
+      "method": "GET",
+      "path": "/catalog/products/1",
+      "items": null
+    }
+  ],
+  "defects": [
+    {
+      "check": "n-plus-one",
+      "method": "GET",
+      "route": "/orders",
+      "linked": true
+    },
+    {
+      "check": "n-plus-one",
+      "method": "GET",
+      "route": "/orders/:id/items",
+      "linked": true
+    },
+    {
+      "check": "n-plus-one",
+      "method": "POST",
+      "route": "/orders/lookup",
+      "linked": true
+    }
+  ]
+}

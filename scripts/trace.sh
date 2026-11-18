@@ -1,0 +1,143 @@
+#!/usr/bin/env bash
+# The trace harness (research/trace-harness.md): runs each fixture form's
+# twins against PostgreSQL with seeded data at 1x and 10x, counts what every
+# request does, and judges the counts. Low-rate requests only, one at a time,
+# no load; development and CI only, not part of npm test, since it needs
+# Docker and, the first time, the npm registry and Docker Hub.
+#
+# Usage: scripts/trace.sh [form ...]   a form is e.g. L01a-n-plus-one/sql;
+#        with none, every fixtures/<id>/<form>/trace/trace.json.
+# Outputs: dist/trace/<id>/<form>/<twin>/{raw.json,report.json,twin.log}.
+# Exit codes: 0 every form as expected; 1 a form was not; 2 cannot run
+# (Docker, or Postgres did not start); 64 bad usage; 75 ITTEN's inspector is
+# running.
+#
+# Safety, as decided (research/trace-harness.md, Decisions):
+# - Everything here runs at nice 15; the container is held to one CPU.
+# - Refuses while ITTEN's inspector runs: a timing run may be under way.
+#   Temporary, until ITTEN writes its lock file (0.5).
+# - PostgreSQL publishes its port on 127.0.0.1 only, never 0.0.0.0, with
+#   passwords made for this run and kept in a mode-700 directory under
+#   dist/trace/run/; the container and that directory are removed on exit.
+#   The superuser is used only through docker exec, never over the port.
+# - Each twin listens on 127.0.0.1 only, and requests go only to it.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
+
+# KERCKHOFFS's pin, per the owner: both projects run the same PostgreSQL.
+# A change to it is agreed for both.
+IMAGE="postgres:17.11@sha256:ff87138949ad9a46f32ff23bd6852b52ce024a13dffe9b4087be98292cdd3b4f"
+
+current="$(ps -o nice= -p $$ | tr -d ' ')"
+if [ "$current" -lt 15 ]; then
+  exec nice -n "$((15 - current))" "$0" "$@"
+fi
+
+for a in "$@"; do
+  case "$a" in
+    -*) echo "usage: scripts/trace.sh [form ...]   e.g. L01a-n-plus-one/sql" >&2; exit 64 ;;
+  esac
+  if [ ! -f "fixtures/$a/trace/trace.json" ]; then
+    echo "trace: fixtures/$a/trace/trace.json does not exist" >&2
+    exit 64
+  fi
+done
+
+if pgrep -f 'inspector/inspect\.js' >/dev/null 2>&1; then
+  echo "trace: ITTEN's inspector is running, so a timing run may be under way; refusing to start" >&2
+  exit 75
+fi
+if ! docker info >/dev/null 2>&1; then
+  echo "trace: Docker is not running" >&2
+  exit 2
+fi
+
+if [ "$#" -gt 0 ]; then
+  forms=("$@")
+else
+  forms=()
+  while IFS= read -r f; do forms+=("$f"); done < <(cd fixtures && find . -path '*/trace/trace.json' | sed -e 's|^\./||' -e 's|/trace/trace.json$||' | sort)
+fi
+
+NAME="erlang-trace-$$"
+RUN="$ROOT/dist/trace/run/$$"
+umask 077
+mkdir -p "$RUN"
+chmod 700 "$RUN"
+cleanup() {
+  docker rm -f "$NAME" >/dev/null 2>&1 || true
+  rm -rf "$RUN"
+}
+trap cleanup EXIT
+
+secret() { od -An -tx1 -N24 /dev/urandom | tr -d ' \n'; }
+printf 'POSTGRES_PASSWORD=%s\n' "$(secret)" > "$RUN/pg.env"
+secret > "$RUN/app-password"
+
+docker run -d --rm --name "$NAME" --cpus 1 --memory 1g \
+  -p 127.0.0.1::5432 --env-file "$RUN/pg.env" \
+  "$IMAGE" \
+  -c shared_preload_libraries=pg_stat_statements \
+  -c pg_stat_statements.track=top \
+  -c pg_stat_statements.track_utility=off >/dev/null
+
+ready=0
+for _ in $(seq 1 90); do
+  # The image initialises with a temporary server, then restarts; only the
+  # server after "init process complete" is the one to use.
+  if docker logs "$NAME" 2>&1 | grep -q 'PostgreSQL init process complete' \
+    && docker exec "$NAME" pg_isready -U postgres -q 2>/dev/null \
+    && docker exec "$NAME" psql -U postgres -XAtqc 'select 1' >/dev/null 2>&1; then
+    ready=1
+    break
+  fi
+  sleep 1
+done
+if [ "$ready" != "1" ]; then
+  echo "trace: PostgreSQL did not start" >&2
+  docker logs "$NAME" >&2 || true
+  exit 2
+fi
+
+bindings="$(docker port "$NAME" 5432/tcp)"
+if [ -z "$bindings" ] || printf '%s\n' "$bindings" | grep -qv '^127\.0\.0\.1:'; then
+  echo "trace: the port is bound to something other than 127.0.0.1 ($bindings); stopping" >&2
+  exit 2
+fi
+PORT="$(printf '%s\n' "$bindings" | head -n 1 | cut -d: -f2)"
+
+# The app's role, its password on stdin, never on a command line.
+printf "create role erlang_app login password '%s';\n" "$(cat "$RUN/app-password")" \
+  | docker exec -i "$NAME" psql -X -q -v ON_ERROR_STOP=1 -U postgres >/dev/null
+
+failed=0
+for form in "${forms[@]}"; do
+  id="$(printf '%s' "$form" | tr '/' '-')"
+  install="$ROOT/dist/trace/install/$id"
+  stamp="$(cat "fixtures/$form/planted/package.json" "fixtures/$form/trace/package-lock.json" | shasum -a 256 | cut -d' ' -f1)"
+  if [ ! -f "$install/.stamp" ] || [ "$(cat "$install/.stamp")" != "$stamp" ]; then
+    rm -rf "$install"
+    mkdir -p "$install"
+    cp "fixtures/$form/planted/package.json" "$install/package.json"
+    cp "fixtures/$form/trace/package-lock.json" "$install/package-lock.json"
+    (cd "$install" && npm ci --ignore-scripts --no-audit --no-fund --loglevel=error)
+    printf '%s\n' "$stamp" > "$install/.stamp"
+  fi
+
+  set +e
+  ERLANG_TRACE_CONTAINER="$NAME" ERLANG_TRACE_PORT="$PORT" ERLANG_TRACE_IMAGE="$IMAGE" \
+    ERLANG_TRACE_APP_PASSWORD_FILE="$RUN/app-password" \
+    node scripts/trace/run.js "fixtures/$form" "dist/trace/$form" "$install/node_modules"
+  rc=$?
+  set -e
+  if [ "$rc" = "75" ]; then exit 75; fi
+  if [ "$rc" != "0" ]; then
+    echo "trace: $form: the run failed (exit $rc)" >&2
+    failed=1
+    continue
+  fi
+  node scripts/trace/judge.js "fixtures/$form" "dist/trace/$form" || failed=1
+done
+exit "$failed"
