@@ -37,14 +37,13 @@
 // createMany, updateMany or deleteMany), guided otherwise, listing the
 // per-item call and the query the list comes from.
 
-import { readFileSync, existsSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
 import { ts, build, position, relOf } from '../lib/program.js';
-import { MAX_DEPTH, unwrap, declOf, origin, isLib, nameOf, symbolAt } from '../lib/resolve.js';
+import { unwrap, nameOf, symbolAt } from '../lib/resolve.js';
 import { readSources } from '../lib/sources.js';
-import { perFile, decode } from '../lib/isolate.js';
-import { excluded } from '../lib/scope.js';
-import { findHandlers, functionOf } from '../lib/handlers.js';
+import { perFile } from '../lib/isolate.js';
+import { databases, prismaFacts, BATCHABLE } from '../lib/db.js';
+import { indexCalls, tracer, short, FIXED_MAX } from '../lib/trace.js';
+import { findHandlers } from '../lib/handlers.js';
 import { finding, fingerprint } from '../core/finding.js';
 import { replaceNode } from '../lib/fix.js';
 
@@ -54,19 +53,7 @@ const STRENGTH = { 'n-plus-one': 'MUST', 'per-row-writes': 'SHOULD' };
 const SEVERITY = { 'n-plus-one': 'error', 'per-row-writes': 'warning' };
 const MAX_CALLER_DEPTH = 3;
 
-const PRISMA_READ = new Set(['findUnique', 'findUniqueOrThrow', 'findFirst', 'findFirstOrThrow', 'findMany', 'count', 'aggregate', 'groupBy']);
-const PRISMA_WRITE = new Set(['create', 'createMany', 'createManyAndReturn', 'update', 'updateMany', 'updateManyAndReturn', 'upsert', 'delete', 'deleteMany']);
-const PRISMA_RAW = { $queryRaw: 'read', $queryRawUnsafe: 'read', $executeRaw: 'write', $executeRawUnsafe: 'write' };
-const BATCHABLE = new Set(['findUnique', 'findUniqueOrThrow']);
 const NESTED_WRITES = new Set(['create', 'createMany', 'connect', 'connectOrCreate', 'upsert', 'update', 'updateMany', 'delete', 'deleteMany', 'set', 'disconnect']);
-// Array methods whose callback runs once per element.
-const PER_ELEMENT = new Set(['map', 'forEach', 'flatMap', 'filter', 'reduce', 'reduceRight', 'some', 'every', 'find', 'findIndex', 'findLast', 'findLastIndex']);
-// Array methods whose result has as many elements as the receiver, or fewer.
-const SAME_LIST = new Set(['map', 'filter', 'flatMap', 'flat', 'slice', 'concat', 'sort', 'toSorted', 'reverse', 'toReversed', 'entries', 'values', 'keys', 'split', 'splice', 'toSpliced']);
-const RANK = { fixed: 0, unknown: 1, count: 2, request: 2, query: 3 };
-// A list this short, written in the code, is fixed: three settings rows, two
-// default roles. A literal bound above it (1,000 seed rows) is a count.
-const FIXED_MAX = 10;
 
 export function run(root, { handlers: brief = [] } = {}) {
   const { files, gaps } = readSources(root);
@@ -84,122 +71,15 @@ export function run(root, { handlers: brief = [] } = {}) {
     notes: H.notes,
   };
   const findings = [];
-
-  // Every call to a project function, and every function passed by name to
-  // an array method (items.map(productById)).
-  const callers = new Map();
-  const passes = new Map();
+  const { dbCall, isPrisma } = databases(cx);
   const dbCalls = [];
-  for (const rel of rels) {
-    perFile(gaps, rel, () => {
-      const visit = (n) => {
-        if (ts.isCallExpression(n)) {
-          const fn = functionOf(cx, n.expression);
-          if (fn) { if (!callers.has(fn)) callers.set(fn, []); callers.get(fn).push(n); }
-          const callee = unwrap(n.expression);
-          if (ts.isPropertyAccessExpression(callee) && PER_ELEMENT.has(callee.name.text)) {
-            const a = unwrap(n.arguments[0]);
-            const f = a && ts.isIdentifier(a) ? functionOf(cx, a) : null;
-            if (f) { if (!passes.has(f)) passes.set(f, []); passes.get(f).push({ call: n, arg: a, method: callee.name.text }); }
-          }
-        }
-        if (ts.isCallExpression(n) || ts.isTaggedTemplateExpression(n)) {
-          const d = dbCall(n);
-          if (d) { dbCalls.push(d); stats.calls[d.db]++; }
-        }
-        ts.forEachChild(n, visit);
-      };
-      visit(cx.sourceFile(rel));
-    });
-  }
-
-  // ---- Database calls ----
-
-  function dbCall(n) {
-    const tagged = ts.isTaggedTemplateExpression(n);
-    const callee = unwrap(tagged ? n.tag : n.expression);
-    if (!ts.isPropertyAccessExpression(callee)) return null;
-    const method = callee.name.text;
-    if (PRISMA_RAW[method] && isPrisma(callee.expression)) return { db: 'prisma', method, op: PRISMA_RAW[method], node: n, callee, text: callee.getText() };
-    if (tagged) return null;
-    const model = unwrap(callee.expression);
-    if ((PRISMA_READ.has(method) || PRISMA_WRITE.has(method)) && ts.isPropertyAccessExpression(model) && isPrisma(model.expression)) {
-      return { db: 'prisma', method, model: model.name.text, op: PRISMA_READ.has(method) ? 'read' : 'write', node: n, callee, text: callee.getText() };
+  const { callers, passes } = indexCalls(cx, rels, gaps, (n) => {
+    if (ts.isCallExpression(n) || ts.isTaggedTemplateExpression(n)) {
+      const d = dbCall(n);
+      if (d) { dbCalls.push(d); stats.calls[d.db]++; }
     }
-    if (method === 'query' && isPg(callee.expression)) return { db: 'pg', method, op: sqlOp(n.arguments[0]), node: n, callee, text: callee.getText() };
-    return null;
-  }
-
-  function isPrisma(e, depth = 0) {
-    e = unwrap(e);
-    if (!e || depth > MAX_DEPTH) return false;
-    if (ts.isAwaitExpression(e)) return isPrisma(e.expression, depth + 1);
-    if (ts.isNewExpression(e)) {
-      const c = unwrap(e.expression);
-      const o = origin(cx, c);
-      return (ts.isIdentifier(c) && c.text === 'PrismaClient') || (o.k === 'import' && o.path.at(-1) === 'PrismaClient') || (o.k === 'member' && o.name === 'PrismaClient');
-    }
-    if (ts.isBinaryExpression(e) && [ts.SyntaxKind.QuestionQuestionToken, ts.SyntaxKind.BarBarToken].includes(e.operatorToken.kind)) return isPrisma(e.left, depth + 1) || isPrisma(e.right, depth + 1);
-    if (ts.isCallExpression(e)) { const c = unwrap(e.expression); return ts.isPropertyAccessExpression(c) && c.name.text === '$extends' && isPrisma(c.expression, depth + 1); }
-    if (!ts.isIdentifier(e)) return false;
-    const d = declOf(cx, e)?.decl;
-    if (!d) return false;
-    if (ts.isVariableDeclaration(d) && d.initializer) return isPrisma(d.initializer, depth + 1);
-    if (ts.isParameter(d)) {
-      if (d.type && /\b(PrismaClient|TransactionClient)\b/.test(d.type.getText())) return true;
-      const fn = d.parent;
-      const call = fn.parent;
-      if (call && ts.isCallExpression(call) && call.arguments.some((a) => unwrap(a) === fn)) {
-        const c = unwrap(call.expression);
-        return ts.isPropertyAccessExpression(c) && c.name.text === '$transaction' && isPrisma(c.expression, depth + 1);
-      }
-    }
-    return false;
-  }
-
-  function isPg(e, depth = 0) {
-    e = unwrap(e);
-    if (!e || depth > MAX_DEPTH) return false;
-    if (ts.isAwaitExpression(e)) return isPg(e.expression, depth + 1);
-    if (ts.isNewExpression(e)) {
-      const o = origin(cx, e.expression);
-      return isLib(o, 'pg', 'Pool') || isLib(o, 'pg', 'Client') || (o.k === 'import' && o.module === 'pg' && ['Pool', 'Client'].includes(o.path.join('.'))) || isLib(o, 'pg-pool');
-    }
-    if (ts.isCallExpression(e)) { const c = unwrap(e.expression); return ts.isPropertyAccessExpression(c) && c.name.text === 'connect' && isPg(c.expression, depth + 1); }
-    if (!ts.isIdentifier(e)) return false;
-    const d = declOf(cx, e)?.decl;
-    if (d && ts.isVariableDeclaration(d) && d.initializer) return isPg(d.initializer, depth + 1);
-    return !!(d && ts.isParameter(d) && d.type && /\b(Pool|PoolClient|Client)\b/.test(d.type.getText()));
-  }
-
-  // The statement a pg query sends, as far as its text can be read.
-  function sqlText(a, depth = 0) {
-    a = unwrap(a);
-    if (!a || depth > 3) return null;
-    if (ts.isStringLiteralLike(a)) return a.text;
-    if (ts.isTemplateExpression(a)) return a.head.text;
-    if (ts.isBinaryExpression(a) && a.operatorToken.kind === ts.SyntaxKind.PlusToken) return sqlText(a.left, depth + 1);
-    if (ts.isObjectLiteralExpression(a)) {
-      const t = a.properties.find((p) => ts.isPropertyAssignment(p) && nameOf(p.name) === 'text');
-      return t ? sqlText(t.initializer, depth + 1) : null;
-    }
-    if (ts.isIdentifier(a)) {
-      const d = declOf(cx, a)?.decl;
-      if (d && ts.isVariableDeclaration(d) && d.initializer) return sqlText(d.initializer, depth + 1);
-    }
-    return null;
-  }
-  function sqlOp(a) {
-    const t = sqlText(a);
-    if (t === null) return 'unknown';
-    const s = t.replace(/--[^\n]*|\/\*[\s\S]*?\*\//g, ' ').trim().replace(/^\(+\s*/, '').toLowerCase();
-    const w = s.split(/\s+/)[0];
-    if (['select', 'values', 'table', 'show', 'explain'].includes(w)) return 'read';
-    if (['insert', 'update', 'delete', 'merge', 'copy'].includes(w)) return 'write';
-    if (w === 'with') return /\b(insert|update|delete|merge)\b/.test(s) ? 'write' : 'read';
-    if (['begin', 'commit', 'rollback', 'savepoint', 'release', 'start', 'set', 'end', 'abort'].includes(w)) return 'tx';
-    return 'unknown';
-  }
+  });
+  const { sizeOf, most, callbackOf } = tracer(cx, { H, callers, dbCall });
 
   // ---- Once per item ----
 
@@ -218,15 +98,6 @@ export function run(root, { handlers: brief = [] } = {}) {
     }
     return out;
   }
-  function callbackOf(fn) {
-    const call = fn.parent;
-    if (!call || !ts.isCallExpression(call) || unwrap(call.arguments[0]) !== fn && unwrap(call.arguments[1]) !== fn) return null;
-    const callee = unwrap(call.expression);
-    if (!ts.isPropertyAccessExpression(callee)) return null;
-    if (PER_ELEMENT.has(callee.name.text) && unwrap(call.arguments[0]) === fn) return { form: 'callback', fn, call, over: callee.expression, method: callee.name.text };
-    if (callee.name.text === 'from' && ts.isIdentifier(callee.expression) && callee.expression.text === 'Array' && unwrap(call.arguments[1]) === fn) return { form: 'callback', fn, call, over: call.arguments[0], method: 'Array.from' };
-    return null;
-  }
   const enclosingFunction = (node) => { for (let n = node.parent; n; n = n.parent) if (ts.isFunctionLike(n)) return n; return null; };
 
   // Where a database call runs once per item: [{ chain, cs }], chain from the
@@ -243,74 +114,6 @@ export function run(root, { handlers: brief = [] } = {}) {
     return out;
   }
 
-  // How many items a list has, as far as it can be traced: { kind, node,
-  // text } with kind fixed, unknown, request or query; node is the query a
-  // list of rows comes from.
-  function sizeOf(e, depth = 0) {
-    e = unwrap(e);
-    const unknown = { kind: 'unknown', text: e ? short(e) : '' };
-    if (!e || depth > MAX_DEPTH) return unknown;
-    if (ts.isAwaitExpression(e)) return sizeOf(e.expression, depth + 1);
-    if (ts.isArrayLiteralExpression(e)) return most(e.elements.filter(ts.isSpreadElement).map((s) => sizeOf(s.expression, depth + 1)), e.elements.length > FIXED_MAX ? { kind: 'count', text: `${e.elements.length} items` } : { kind: 'fixed' });
-    if (ts.isObjectLiteralExpression(e) || ts.isStringLiteralLike(e) || ts.isNumericLiteral(e) || ts.isTemplateExpression(e)) return { kind: 'fixed' };
-    if (ts.isConditionalExpression(e)) return most([sizeOf(e.whenTrue, depth + 1), sizeOf(e.whenFalse, depth + 1)]);
-    if (ts.isBinaryExpression(e) && [ts.SyntaxKind.QuestionQuestionToken, ts.SyntaxKind.BarBarToken].includes(e.operatorToken.kind)) return most([sizeOf(e.left, depth + 1), sizeOf(e.right, depth + 1)]);
-    if (ts.isPropertyAccessExpression(e) || ts.isElementAccessExpression(e)) {
-      const base = sizeOf(e.expression, depth + 1);
-      return base.kind === 'fixed' ? unknown : { ...base, text: base.kind === 'request' ? short(e) : base.text };
-    }
-    if (ts.isCallExpression(e) || ts.isTaggedTemplateExpression(e)) {
-      const d = dbCall(e);
-      if (d) return d.op === 'read' ? { kind: 'query', node: e, text: d.text } : unknown;
-      if (ts.isTaggedTemplateExpression(e)) return unknown;
-      const callee = unwrap(e.expression);
-      if (ts.isPropertyAccessExpression(callee)) {
-        const recv = unwrap(callee.expression);
-        if (ts.isIdentifier(recv) && ['Object', 'Array'].includes(recv.text) && declOf(cx, recv) === null) {
-          if (callee.name.text === 'from' && e.arguments[0] && ts.isObjectLiteralExpression(unwrap(e.arguments[0]))) return { kind: 'fixed' };
-          return e.arguments[0] ? sizeOf(e.arguments[0], depth + 1) : unknown;
-        }
-        if (SAME_LIST.has(callee.name.text)) return sizeOf(callee.expression, depth + 1);
-        const base = sizeOf(callee.expression, depth + 1);
-        if (base.kind === 'request') return { ...base, text: short(e) };
-      }
-      if (ts.isIdentifier(callee) && ['String', 'Number', 'Array'].includes(callee.text) && declOf(cx, callee) === null) return e.arguments[0] ? sizeOf(e.arguments[0], depth + 1) : unknown;
-      const fn = functionOf(cx, callee);
-      if (fn && fn.body) {
-        if (!ts.isBlock(fn.body)) return sizeOf(fn.body, depth + 1);
-        const rets = [];
-        const visit = (n) => { if (n !== fn.body && ts.isFunctionLike(n)) return; if (ts.isReturnStatement(n) && n.expression) rets.push(sizeOf(n.expression, depth + 1)); ts.forEachChild(n, visit); };
-        visit(fn.body);
-        return rets.length ? most(rets) : unknown;
-      }
-      return unknown;
-    }
-    if (!ts.isIdentifier(e)) return unknown;
-    const r = declOf(cx, e);
-    if (!r || r.import || !r.decl) return unknown;
-    let d = r.decl;
-    while (d && (ts.isBindingElement(d) || ts.isObjectBindingPattern(d) || ts.isArrayBindingPattern(d))) d = d.parent;
-    if (!d) return unknown;
-    if (ts.isVariableDeclaration(d)) {
-      const stmt = d.parent?.parent;
-      if (stmt && (ts.isForOfStatement(stmt) || ts.isForInStatement(stmt)) && stmt.initializer === d.parent) return sizeOf(stmt.expression, depth + 1);
-      return d.initializer ? sizeOf(d.initializer, depth + 1) : unknown;
-    }
-    if (ts.isParameter(d)) {
-      if (H.requestParam(d)) return { kind: 'request', text: short(e) };
-      const fn = d.parent;
-      const cb = callbackOf(fn);
-      if (cb && fn.parameters[0] === d) return sizeOf(cb.over, depth + 1);
-      const i = fn.parameters.indexOf(d);
-      const sites = callers.get(fn) ?? [];
-      return sites.length ? most(sites.map((c) => (c.arguments[i] ? sizeOf(c.arguments[i], depth + 1) : { kind: 'fixed' }))) : unknown;
-    }
-    return unknown;
-  }
-  function most(list, empty = { kind: 'unknown' }) {
-    if (!list.length) return empty;
-    return list.reduce((a, b) => (RANK[b.kind] > RANK[a.kind] ? b : a));
-  }
   function forBound(loop) {
     const c = loop.condition && unwrap(loop.condition);
     if (!c || !ts.isBinaryExpression(c) || ![ts.SyntaxKind.LessThanToken, ts.SyntaxKind.LessThanEqualsToken].includes(c.operatorToken.kind)) return { kind: 'unknown', text: c ? short(c) : 'an unbounded for loop' };
@@ -540,7 +343,6 @@ export function run(root, { handlers: brief = [] } = {}) {
     return { file: fileOf(node), line: p.line, column: p.column, ...(symbol ? { symbol } : {}) };
   }
   function calleeName(node) { return ts.isCallExpression(node) ? short(node.expression) : short(node); }
-  function short(n) { const t = n.getText().replace(/\s+/g, ' '); return t.length > 60 ? `${t.slice(0, 57)}...` : t; }
   const key = (l) => `${l.file}#${l.symbol ?? '<module>'}`;
   function guided(nodes, note) {
     const seen = new Set();
@@ -577,46 +379,4 @@ export function run(root, { handlers: brief = [] } = {}) {
     });
   });
   return { findings: out, run: stats, incomplete: gaps };
-}
-
-// The Prisma version a project resolves (lockfile first, then package.json's
-// range), and the unique fields of each model in its schema. Batching is
-// assumed, as in Prisma 6 and 7, when the version cannot be read.
-function prismaFacts(root, gaps) {
-  const read = (rel) => {
-    const abs = join(root, rel);
-    if (!existsSync(abs) || excluded(abs)) return null;
-    let text = null;
-    perFile(gaps, rel, () => { text = decode(readFileSync(abs)).replace(/^﻿/, ''); });
-    return text;
-  };
-  const json = (t) => { try { return t ? JSON.parse(t) : null; } catch { return null; } };
-  let version = null;
-  let from = null;
-  const lock = json(read('package-lock.json'));
-  const locked = lock?.packages?.['node_modules/@prisma/client']?.version ?? lock?.dependencies?.['@prisma/client']?.version;
-  if (locked) { version = locked; from = 'package-lock.json'; }
-  if (!version) { const m = read('pnpm-lock.yaml')?.match(/@prisma\/client@(\d+\.\d+\.\d+[^\s:()'"]*)/); if (m) { version = m[1]; from = 'pnpm-lock.yaml'; } }
-  if (!version) { const m = read('yarn.lock')?.match(/@prisma\/client@[^\n]*:\n\s+version:? "?(\d+\.\d+\.\d+[^"\n]*)/); if (m) { version = m[1]; from = 'yarn.lock'; } }
-  if (!version) {
-    const pkg = json(read('package.json'));
-    const range = pkg?.dependencies?.['@prisma/client'] ?? pkg?.devDependencies?.['@prisma/client'];
-    if (range) { version = range; from = 'package.json'; }
-  }
-  const major = version ? Number(version.match(/(\d+)/)?.[1]) : null;
-  const unique = new Map();
-  const schemas = ['prisma/schema.prisma', 'schema.prisma'];
-  const dir = join(root, 'prisma', 'schema');
-  if (existsSync(dir) && !excluded(dir)) { try { for (const f of readdirSync(dir)) if (f.endsWith('.prisma')) schemas.push(`prisma/schema/${f}`); } catch { /* unreadable: no unique fields known */ } }
-  for (const rel of schemas) {
-    const text = read(rel);
-    if (!text) continue;
-    for (const m of text.matchAll(/^\s*model\s+(\w+)\s*\{([\s\S]*?)^\s*\}/gm)) {
-      const accessor = m[1][0].toLowerCase() + m[1].slice(1);
-      const set = unique.get(accessor) ?? new Set();
-      for (const line of m[2].split('\n')) { const f = line.trim().match(/^(\w+)\s+\S+.*?@(id|unique)\b/); if (f) set.add(f[1]); }
-      unique.set(accessor, set);
-    }
-  }
-  return { version: version ?? 'unknown', from, batching: major === null || Number.isNaN(major) || major < 8, unique };
 }
