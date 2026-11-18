@@ -1,0 +1,10 @@
+{
+  "name": "l02-shop-sql",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "fastify": "5.6.2",
+    "pg": "8.23.1",
+    "pg-cursor": "2.15.3"
+  }
+}

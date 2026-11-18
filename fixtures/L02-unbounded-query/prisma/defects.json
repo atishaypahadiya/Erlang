@@ -1,0 +1,148 @@
+{
+  "note": "The fixture pair for unbounded-query (L02 in fixtures/PLAN.md), Prisma 7.10.1 form, scanned with unbounded-query alone. Written by hand: each planted defect is fixed in place in the clean twin, line for line, and the twins differ in nothing else. A finding catches a defect when its check matches and its locations name the defect's file, line, column and symbol (every place, when the defect lists several), with the defect's severity. Decoys are in both twins; reporting one is a false positive. erlang.config.json names the settings table as small, so reading all of it is not reported. Paths are relative to each twin. Nothing here is installed or run.",
+  "check": "unbounded-query",
+  "checks": [
+    "unbounded-query"
+  ],
+  "plan": "L02",
+  "form": "prisma",
+  "planted": "fixtures/L02-unbounded-query/prisma/planted",
+  "clean": "fixtures/L02-unbounded-query/prisma/clean",
+  "defects": [
+    {
+      "id": "L02-p1",
+      "check": "unbounded-query",
+      "title": "findMany with no take, every row of a growing table sent in the response",
+      "severity": "error",
+      "where": {
+        "file": "src/routes/reads.js",
+        "line": 5,
+        "column": 18,
+        "symbol": "listEvents"
+      },
+      "fix": "guided",
+      "fixedInClean": "a page of 50 (at most 200) with a cursor"
+    },
+    {
+      "id": "L02-p2",
+      "check": "unbounded-query",
+      "title": "take from the query string with no maximum",
+      "severity": "error",
+      "where": {
+        "file": "src/routes/reads.js",
+        "line": 10,
+        "column": 18,
+        "symbol": "listCustomers"
+      },
+      "fix": "auto",
+      "fixedInClean": "take capped at 200, default 50"
+    },
+    {
+      "id": "L02-p3",
+      "check": "unbounded-query",
+      "title": "Every paid order loaded to add up one number",
+      "severity": "warning",
+      "where": {
+        "file": "src/routes/reads.js",
+        "line": 20,
+        "column": 22,
+        "symbol": "revenue"
+      },
+      "fix": "guided",
+      "fixedInClean": "one aggregate with _sum"
+    },
+    {
+      "id": "L02-p4",
+      "check": "unbounded-query",
+      "title": "A helper returning every product, sent in the response",
+      "severity": "error",
+      "where": {
+        "file": "src/catalog.js",
+        "line": 4,
+        "column": 10,
+        "symbol": "allProducts"
+      },
+      "fix": "guided",
+      "fixedInClean": "take: 200"
+    },
+    {
+      "id": "L02-p5",
+      "check": "unbounded-query",
+      "title": "A grouped $queryRaw with no LIMIT, sent in the response",
+      "severity": "error",
+      "where": {
+        "file": "src/routes/catalog.js",
+        "line": 11,
+        "column": 18,
+        "symbol": "topCustomers"
+      },
+      "fix": "guided",
+      "fixedInClean": "limit 20"
+    }
+  ],
+  "decoys": [
+    {
+      "id": "L02-p-d1",
+      "title": "take from the query string, capped with Math.min",
+      "where": {
+        "file": "src/routes/reads.js",
+        "line": 15,
+        "column": 18
+      }
+    },
+    {
+      "id": "L02-p-d2",
+      "title": "findMany by the primary key",
+      "where": {
+        "file": "src/routes/reads.js",
+        "line": 26,
+        "column": 18
+      }
+    },
+    {
+      "id": "L02-p-d3",
+      "title": "findMany by a list of keys the server caps",
+      "where": {
+        "file": "src/routes/reads.js",
+        "line": 32,
+        "column": 18
+      }
+    },
+    {
+      "id": "L02-p-d4",
+      "title": "findMany by a field the schema marks @unique",
+      "where": {
+        "file": "src/routes/reads.js",
+        "line": 37,
+        "column": 18
+      }
+    },
+    {
+      "id": "L02-p-d5",
+      "title": "Every row of a table named as small in erlang.config.json",
+      "where": {
+        "file": "src/routes/reads.js",
+        "line": 42,
+        "column": 18
+      }
+    },
+    {
+      "id": "L02-p-d6",
+      "title": "A count",
+      "where": {
+        "file": "src/routes/reads.js",
+        "line": 47,
+        "column": 28
+      }
+    },
+    {
+      "id": "L02-p-d7",
+      "title": "An unbounded read in a script no request reaches",
+      "where": {
+        "file": "scripts/export.js",
+        "line": 4,
+        "column": 22
+      }
+    }
+  ]
+}

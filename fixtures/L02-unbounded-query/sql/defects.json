@@ -1,0 +1,161 @@
+{
+  "note": "The fixture pair for unbounded-query (L02 in fixtures/PLAN.md), raw SQL through pg form, scanned with unbounded-query alone. Written by hand: each planted defect is fixed in place in the clean twin, line for line, and the twins differ in nothing else. A finding catches a defect when its check matches and its locations name the defect's file, line, column and symbol (every place, when the defect lists several), with the defect's severity. Decoys are in both twins; reporting one is a false positive. erlang.config.json names the settings table as small, so reading all of it is not reported. Unique columns are read from migrations/001_init.sql. Paths are relative to each twin. Nothing here is installed or run.",
+  "check": "unbounded-query",
+  "checks": [
+    "unbounded-query"
+  ],
+  "plan": "L02",
+  "form": "sql",
+  "planted": "fixtures/L02-unbounded-query/sql/planted",
+  "clean": "fixtures/L02-unbounded-query/sql/clean",
+  "defects": [
+    {
+      "id": "L02-s1",
+      "check": "unbounded-query",
+      "title": "SELECT with no LIMIT, every row of a growing table returned from the handler",
+      "severity": "error",
+      "where": {
+        "file": "src/routes/reads.js",
+        "line": 8,
+        "column": 19,
+        "symbol": "listEvents"
+      },
+      "fix": "guided",
+      "fixedInClean": "keyset page of 50"
+    },
+    {
+      "id": "L02-s2",
+      "check": "unbounded-query",
+      "title": "LIMIT $1 bound to the query string with no maximum",
+      "severity": "error",
+      "where": {
+        "file": "src/routes/reads.js",
+        "line": 13,
+        "column": 19,
+        "symbol": "listCustomers"
+      },
+      "fix": "auto",
+      "fixedInClean": "the bound value capped at 200, default 50"
+    },
+    {
+      "id": "L02-s3",
+      "check": "unbounded-query",
+      "title": "Every paid order loaded to add up one number",
+      "severity": "warning",
+      "where": {
+        "file": "src/routes/reads.js",
+        "line": 18,
+        "column": 28,
+        "symbol": "revenue"
+      },
+      "fix": "guided",
+      "fixedInClean": "sum() in SQL"
+    },
+    {
+      "id": "L02-s4",
+      "check": "unbounded-query",
+      "title": "A helper returning every product, returned from the handler",
+      "severity": "error",
+      "where": {
+        "file": "src/repo.js",
+        "line": 4,
+        "column": 26,
+        "symbol": "allProducts"
+      },
+      "fix": "guided",
+      "fixedInClean": "limit 200"
+    }
+  ],
+  "decoys": [
+    {
+      "id": "L02-s-d1",
+      "title": "LIMIT $1 bound to the query string, capped with Math.min",
+      "where": {
+        "file": "src/routes/reads.js",
+        "line": 29,
+        "column": 19
+      }
+    },
+    {
+      "id": "L02-s-d2",
+      "title": "A literal LIMIT",
+      "where": {
+        "file": "src/routes/reads.js",
+        "line": 34,
+        "column": 19
+      }
+    },
+    {
+      "id": "L02-s-d3",
+      "title": "A join filtered by the primary key, through a table alias",
+      "where": {
+        "file": "src/routes/reads.js",
+        "line": 39,
+        "column": 19
+      }
+    },
+    {
+      "id": "L02-s-d4",
+      "title": "Rows by a list of keys the server caps",
+      "where": {
+        "file": "src/routes/reads.js",
+        "line": 45,
+        "column": 19
+      }
+    },
+    {
+      "id": "L02-s-d5",
+      "title": "Rows by a column the migration declares unique",
+      "where": {
+        "file": "src/routes/reads.js",
+        "line": 50,
+        "column": 19
+      }
+    },
+    {
+      "id": "L02-s-d6",
+      "title": "Rows by a column with a unique index",
+      "where": {
+        "file": "src/routes/reads.js",
+        "line": 55,
+        "column": 19
+      }
+    },
+    {
+      "id": "L02-s-d7",
+      "title": "A count",
+      "where": {
+        "file": "src/routes/reads.js",
+        "line": 60,
+        "column": 19
+      }
+    },
+    {
+      "id": "L02-s-d8",
+      "title": "Every row of a table named as small in erlang.config.json",
+      "where": {
+        "file": "src/routes/reads.js",
+        "line": 65,
+        "column": 19
+      }
+    },
+    {
+      "id": "L02-s-d9",
+      "title": "Every row, streamed through a cursor",
+      "where": {
+        "file": "src/routes/reads.js",
+        "line": 71,
+        "column": 20
+      }
+    },
+    {
+      "id": "L02-s-d10",
+      "title": "An unbounded read in a script no request reaches",
+      "where": {
+        "file": "scripts/export.js",
+        "line": 4,
+        "column": 24
+      }
+    }
+  ]
+}

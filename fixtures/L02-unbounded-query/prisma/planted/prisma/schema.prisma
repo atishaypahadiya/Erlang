@@ -1,0 +1,40 @@
+// The shop's schema for the Prisma form of L02.
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Customer {
+  id     Int     @id @default(autoincrement())
+  email  String  @unique
+  name   String
+  orders Order[]
+}
+
+model Order {
+  id         Int      @id @default(autoincrement())
+  customerId Int
+  customer   Customer @relation(fields: [customerId], references: [id])
+  total      Int
+  status     String   @default("new")
+}
+
+model Event {
+  id        BigInt   @id @default(autoincrement())
+  kind      String
+  createdAt DateTime @default(now())
+}
+
+model Product {
+  id   Int    @id @default(autoincrement())
+  sku  String @unique
+  name String
+}
+
+model Setting {
+  key   String @id
+  value String
+}

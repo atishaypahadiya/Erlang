@@ -2,7 +2,7 @@
 
 A test bench for ERLANG's checks: small local services, each with one planted defect, and a clean twin of each with the defect fixed. A check passes when it reports its defect on the planted service and reports nothing on the clean twin. ERLANG publishes its recall and precision on this set, as ITTEN does on its pages.
 
-Built as static pairs, source files that are never installed or run: L07 (`no-timeout`) in `L07-no-timeout/`, and L01a (`n-plus-one`) and L01b (`per-row-writes`), each in a `sql/` form (Fastify and `pg`) and a `prisma/` form (Express and Prisma 7.10.1). `scripts/fixture-test.js` scores each pair, and `scripts/fix-test.js` checks its fixes. The rest is planned. The decisions taken on review are at the end.
+Built as static pairs, source files that are never installed or run: L07 (`no-timeout`) in `L07-no-timeout/`, and L01a (`n-plus-one`), L01b (`per-row-writes`) and L02 (`unbounded-query`), each in a `sql/` form (Fastify and `pg`) and a `prisma/` form (Express and Prisma 7.10.1). `scripts/fixture-test.js` scores each pair, and `scripts/fix-test.js` checks its fixes. The rest is planned. The decisions taken on review are at the end.
 
 ## Ground rules
 
@@ -114,6 +114,12 @@ Added while building `n-plus-one` and `per-row-writes` (L01a, L01b):
 - a helper that queries, called once outside any loop;
 - a per-row query or insert in a script no request handler reaches (a backfill, a seed), including a loop to 1,000.
 
+Added while building `unbounded-query` (L02):
+
+- a read by primary key, by a column the Prisma schema marks `@unique`, by a column the SQL migration declares unique or indexes uniquely, or by a list of keys (`in: ids`, `= any($1)`);
+- a page size from the client capped with `Math.min`;
+- a literal `LIMIT`, a count, a cursor stream, and a table the owner names under `smallTables`.
+
 The list grows as checks are built. Each entry names the check it protects.
 
 ## Known gaps
@@ -126,6 +132,10 @@ Known false negatives:
 
 - **Queue-draining `while` loops** (`n-plus-one`, `per-row-writes`). A `while (queue.length) { await query(queue.shift()) }` runs one statement per item, and is missed: `while` loops are not counted as per-item, so that keyset pagination (one query per page, not per row) is not reported.
 - **Literal lists of ten or fewer** (`n-plus-one`, `per-row-writes`). A list or loop bound written in the code with at most 10 items is treated as fixed and not reported. This is a precision choice: three settings rows are not an N+1. Ten queries per request from such a list are missed.
+- **A list of keys from the client** (`unbounded-query`). `where: { id: { in: ids } }` and `= any($1)` count as bounded by the list, so a list of ids the client sends with no cap is missed.
+- **Statements built at run time** (`unbounded-query`). A query whose text comes from a function or a variable ERLANG cannot read is not judged; the run data counts them as unreadable. Prisma options spread from code it cannot read are skipped the same way.
+- **Validated page sizes** (`unbounded-query`). A page size that passes through a schema validator (zod, joi) cannot be traced back to request input, so it counts as bounded, whether or not the schema sets a maximum.
+- **Deep offsets and eager loading** (`unbounded-query`). `skip`/`OFFSET` from the client, and an `include` of a to-many relation with no `take` (DAT-05), are not checked.
 - **Unknown Prisma version** (`n-plus-one`). When neither a lockfile nor `package.json` names `@prisma/client`, batching is assumed, as in Prisma 6 and 7, so `findUnique` calls started together are not reported. Under Prisma 8, which drops the batching, they would be one query each. To revisit when Prisma 8 reaches general availability.
 
 ## Acceptance test
