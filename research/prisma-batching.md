@@ -71,5 +71,5 @@ Ten items per case. "1" means one statement for all ten; "10" means one per item
 ## Not covered
 
 - PostgreSQL. SQLite was enough to count statements: the batching happens in Prisma's client before the driver adapter. A PostgreSQL run would only change the SQL dialect in the shapes.
-- Drizzle, which comes after the Prisma form passes (`fixtures/PLAN.md`).
+- Drizzle: out of scope (scope frozen; `fixtures/PLAN.md`, Known gaps).
 - `upsert`, `delete` and `deleteMany` were not run. They are treated as `update` and `updateMany`.

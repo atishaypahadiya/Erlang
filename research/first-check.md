@@ -201,6 +201,7 @@ Taken on review, 17 November 2026.
    See `fixtures/PLAN.md`.
 4. **Prisma.** Fixtures pin Prisma 7.10.1. Prisma 8 forms come only after 8.0 is generally available.
 5. **Handlers.** Not needed for A, which checks every outbound call in scope. For D: detect Express, Fastify, `node:http` and Next.js route handlers, and let a project override them in a brief.
+6. **Scope frozen** (later the same day). No Drizzle: the Drizzle forms named above are not built. Known gaps and false negatives are kept in `fixtures/PLAN.md`.
 
 ## Sources
 

@@ -42,7 +42,7 @@ Counts are preferred to timings wherever a defect has a count: queries per reque
 
 - **Node.js 22 LTS, plain `node:http` or Express, and PostgreSQL 16**, with `pg` as the driver and its built-in pool. Node matches ITTEN's toolchain. PostgreSQL gives a real network connection pool and real query plans (`EXPLAIN`, `pg_stat_statements`), which an embedded database such as SQLite does not. In CI it runs as a service container. Locally it runs in Docker.
 - **An upstream stub**: a local HTTP service whose latency, error rate and hang behaviour are set per request by a header or a control endpoint. Fixtures that call another service call this. It counts every attempt it receives, so retry amplification is a count, not a guess.
-- **Raw SQL and an ORM.** L01a, L01b, L02 and L03 each come in two forms: raw SQL through `pg`, and Prisma. The static check is entirely different between the two (a SQL string sent inside a loop, against a Prisma `findUnique` called inside a loop over a `findMany` result), while the trace and load checks should not care. Drizzle follows as a third form once the Prisma form passes. The other fixtures use raw SQL, since their defect is not in how the query is written.
+- **Raw SQL and an ORM.** L01a, L01b, L02 and L03 each come in two forms: raw SQL through `pg`, and Prisma. The static check is entirely different between the two (a SQL string sent inside a loop, against a Prisma `findUnique` called inside a loop over a `findMany` result), while the trace and load checks should not care. There is no Drizzle form: scope is frozen at these two (see Known gaps). The other fixtures use raw SQL, since their defect is not in how the query is written.
 - **k6 as the load driver, installed separately.** k6 is AGPL-3.0. ERLANG runs the `k6` program the user or CI installed, as a separate process, and reads its JSON output. It never vendors, bundles, modifies or links k6 code, and its scenarios are generated at run time. ERLANG checks for `k6` on the path and stops with an install hint if it is missing; it does not install it. CI installs k6 from Grafana's release in a workflow step. ERLANG keeps its own guard in front of k6: the target must be loopback or a CI service container, rate and duration are capped, and the ITTEN timing lock is honoured.
 - **A second language later.** One Python set (FastAPI with SQLAlchemy) for the static and trace checks, once the Node set passes, to show the checks are not tied to one stack.
 
@@ -69,7 +69,7 @@ fixtures/
     clean/
 ```
 
-`defects.json` lists, for each fixture and form: its ID, the form (`sql`, `prisma`, later `drizzle`), the check expected to fire, the evidence channels expected to see it, the route that shows it, what is planted, and what the twin does instead. The fixture test reads it and fails on any miss, any finding on a twin, and any finding on a planted service other than the one planted. Planted and clean code are written by hand rather than generated from one table, as ITTEN's `make.js` does for its pages: a service's defect lives in control flow, which a table cannot hold.
+`defects.json` lists, for each fixture and form: its ID, the form (`sql` or `prisma`), the check expected to fire, the evidence channels expected to see it, the route that shows it, what is planted, and what the twin does instead. The fixture test reads it and fails on any miss, any finding on a twin, and any finding on a planted service other than the one planted. Planted and clean code are written by hand rather than generated from one table, as ITTEN's `make.js` does for its pages: a service's defect lives in control flow, which a table cannot hold.
 
 ## Planted defects
 
@@ -116,6 +116,18 @@ Added while building `n-plus-one` and `per-row-writes` (L01a, L01b):
 
 The list grows as checks are built. Each entry names the check it protects.
 
+## Known gaps
+
+What the built checks do not cover, by decision. None of these is planned work; each is recorded so a clean report is not read as covering it.
+
+- **Drizzle.** Scope is frozen at raw SQL through `pg` and Prisma. Drizzle queries are not recognised by any check, so code that uses only Drizzle gets no `n-plus-one`, `per-row-writes` or `unbounded-query` findings.
+
+Known false negatives:
+
+- **Queue-draining `while` loops** (`n-plus-one`, `per-row-writes`). A `while (queue.length) { await query(queue.shift()) }` runs one statement per item, and is missed: `while` loops are not counted as per-item, so that keyset pagination (one query per page, not per row) is not reported.
+- **Literal lists of ten or fewer** (`n-plus-one`, `per-row-writes`). A list or loop bound written in the code with at most 10 items is treated as fixed and not reported. This is a precision choice: three settings rows are not an N+1. Ten queries per request from such a list are missed.
+- **Unknown Prisma version** (`n-plus-one`). When neither a lockfile nor `package.json` names `@prisma/client`, batching is assumed, as in Prisma 6 and 7, so `findUnique` calls started together are not reported. Under Prisma 8, which drops the batching, they would be one query each. To revisit when Prisma 8 reaches general availability.
+
 ## Acceptance test
 
 - Every planted defect is reported by its check, through every channel the registry lists for it. Recall 100%.
@@ -130,7 +142,7 @@ Taken on review, 17 November 2026.
 
 1. **Stack.** Node 22 and PostgreSQL first; Python later.
 2. **Load driver.** k6, run as an external program installed by the user or CI; never vendored, modified or embedded. The licence boundary is in `research/prior-art.md`.
-3. **ORM forms.** L01a, L01b, L02 and L03 in raw SQL and Prisma; Drizzle later.
+3. **ORM forms.** L01a, L01b, L02 and L03 in raw SQL and Prisma. Scope frozen on 17 November 2026: no Drizzle form (see Known gaps).
 4. **Timing guard.** A lock file written by ITTEN during each serial timing phase, with its pid and an expiry. ERLANG refuses to generate load while one exists and its pid is alive. The spec is `research/itten-lock.md`, for ITTEN to implement.
 5. **finding/1.** Released with report/1 at ITTEN's `v0.3.5`. ERLANG uses a pinned copy of KERCKHOFFS's `core/`, which carries both, until the shared core is extracted (`research/first-check.md`). The fixture scorer is the core's `fixture-score.js`.
 6. **Static checks first** (`research/first-check.md`). L07 (`no-timeout`) is built first, as a static fixture of source files that are never installed or run. Then L01a and L01b (D), then L02 (C). Prisma is pinned at 7.10.1.
