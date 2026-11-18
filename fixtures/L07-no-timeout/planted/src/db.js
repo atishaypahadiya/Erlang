@@ -10,5 +10,5 @@ export const reporting = new pg.Pool({
 });
 
 export function orders(userId) {
-  return pool.query('select id, total from orders where user_id = $1', [userId]);
+  return pool.query('select id, total from orders where user_id = $1 order by id desc limit 50', [userId]);
 }

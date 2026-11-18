@@ -52,6 +52,14 @@
       "type": "boolean",
       "description": "n-plus-one and per-row-writes: whether each item's statement waits for the one before (an await in the loop), rather than all starting together."
     },
+    "rows": {
+      "enum": [
+        "sent",
+        "loaded",
+        "client page size"
+      ],
+      "description": "unbounded-query: sent when the rows go into a response, loaded when every row is read to compute something, client page size when the client chooses how many rows with no cap."
+    },
     "fix": {
       "description": "The suggested fix (lib/fix.js). auto: edits a program can apply, re-checked by scripts/fix-test.js. guided: every place a person must change, and a note.",
       "oneOf": [

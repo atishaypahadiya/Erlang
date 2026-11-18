@@ -200,6 +200,32 @@ console.log('\nn-plus-one and per-row-writes: handlers, versions and shapes');
   expectFindings('A pg statement built at run time: read or write is unknown, so info under n-plus-one', { 'app.js': sqlFor }, [['info', 'app.js', 7, 'guided']], DB);
 }
 
+console.log('\nunbounded-query: sinks, caps and statements');
+{
+  const UQ = ['unbounded-query'];
+  const PRISMA = "import { PrismaClient } from '@prisma/client';\nexport const prisma = new PrismaClient();\n";
+  const next = "import { prisma } from '../../db.js';\nexport async function GET() {\n  const events = await prisma.event.findMany();\n  return Response.json(events);\n}\n";
+  expectFindings('Next.js route returning Response.json(rows) of a findMany with no take: error', { 'db.js': PRISMA, 'app/events/route.ts': next }, [['error', 'app/events/route.ts', 3, 'guided']], UQ);
+  const http = "import http from 'node:http';\nimport pg from 'pg';\nconst pool = new pg.Pool();\nhttp.createServer(async (req, res) => {\n  const { rows } = await pool.query('select * from events');\n  res.end(JSON.stringify(rows));\n}).listen(3000);\n";
+  expectFindings('node:http: rows written with res.end(JSON.stringify(rows)): error', { 'server.js': http }, [['error', 'server.js', 5, 'guided']], UQ);
+  const fastify = (body) => `import Fastify from 'fastify';\nimport pg from 'pg';\nconst pool = new pg.Pool();\nconst app = Fastify();\n${body}`;
+  expectFindings('A LIMIT interpolated from the query string with no cap: error, auto', { 'app.js': fastify("app.get('/e', async function e(request) {\n  return (await pool.query(`select * from events limit ${request.query.n}`)).rows;\n});\n") }, [['error', 'app.js', 6, 'auto']], UQ);
+  expectAutoFixHolds('  the cap applied to the interpolated value holds', { 'app.js': fastify("app.get('/e', async function e(request) {\n  return (await pool.query(`select * from events limit ${request.query.n}`)).rows;\n});\n") }, UQ);
+  expectFindings('A page size through a helper that clamps with a comparison is capped', { 'app.js': fastify("const pageOf = (n) => (Number(n) > 100 ? 100 : Number(n) || 20);\napp.get('/e', async function e(request) {\n  return (await pool.query('select * from events limit $1', [pageOf(request.query.n)])).rows;\n});\n") }, [], UQ);
+  expectFindings('A page size behind a conditional cap is capped', { 'app.js': fastify("app.get('/e', async function e(request) {\n  const n = Number(request.query.n);\n  const size = n > 100 ? 100 : n;\n  return (await pool.query('select * from events limit $1', [size])).rows;\n});\n") }, [], UQ);
+  expectFindings('FETCH FIRST 20 ROWS ONLY is a limit', { 'app.js': fastify("app.get('/e', async function e() {\n  return (await pool.query('select * from events order by id fetch first 20 rows only')).rows;\n});\n") }, [], UQ);
+  expectFindings('json_agg packs every row into one: its rows[0] sent is every row, an error', { 'app.js': fastify("app.get('/e', async function e() {\n  return (await pool.query('select json_agg(e) as all from events e')).rows[0];\n});\n") }, [['error', 'app.js', 6, 'guided']], UQ);
+  expectFindings('count(*) with GROUP BY returns a row per group: reported', { 'app.js': fastify("app.get('/e', async function e() {\n  return (await pool.query('select kind, count(*) from events group by kind')).rows;\n});\n") }, [['error', 'app.js', 6, 'guided']], UQ);
+  expectFindings('A statement built at run time is not judged', { 'app.js': fastify("import { sqlFor } from './sql.js';\napp.get('/e', async function e(request) {\n  return (await pool.query(sqlFor(request.query.t))).rows;\n});\n") }, [], UQ);
+  const express = (body) => `import express from 'express';\nimport { prisma } from './db.js';\nconst app = express();\n${body}`;
+  expectFindings('findMany with a range filter on the key is not bounded by it', { 'db.js': PRISMA, 'app.js': express("app.get('/e', async (req, res) => {\n  res.json(await prisma.event.findMany({ where: { id: { gt: Number(req.query.after) } } }));\n});\n") }, [['error', 'app.js', 5, 'guided']], UQ);
+  expectFindings('findMany options spread from code ERLANG cannot read are not judged', { 'db.js': PRISMA, 'app.js': express("import { listOptions } from 'shared-config';\napp.get('/e', async (req, res) => {\n  res.json(await prisma.event.findMany({ ...listOptions }));\n});\n") }, [], UQ);
+  expectFindings('Rows whose length alone is sent: a warning, not an error', { 'db.js': PRISMA, 'app.js': express("app.get('/e', async (req, res) => {\n  const all = await prisma.event.findMany();\n  res.json({ total: all.length });\n});\n") }, [['warning', 'app.js', 5, 'guided']], UQ);
+  const job = "import { prisma } from './db.js';\nexport async function report() {\n  return prisma.event.findMany();\n}\n";
+  expectFindings('No handler found: info', { 'db.js': PRISMA, 'jobs.js': job }, [['info', 'jobs.js', 3, 'guided']], UQ);
+  expectFindings('A table named in smallTables is not reported', { 'db.js': PRISMA, 'erlang.config.json': JSON.stringify({ smallTables: ['Country'] }), 'app.js': express("app.get('/c', async (req, res) => {\n  res.json(await prisma.country.findMany());\n});\n") }, [], UQ);
+}
+
 console.log('\nIsolation and scope');
 {
   const dir = subject({
