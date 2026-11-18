@@ -1,0 +1,10 @@
+{
+  "name": "l08-shop",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "axios": "1.21.1",
+    "fastify": "5.6.2",
+    "pg": "8.23.1"
+  }
+}

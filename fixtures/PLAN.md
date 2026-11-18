@@ -2,7 +2,7 @@
 
 A test bench for ERLANG's checks: small local services, each with one planted defect, and a clean twin of each with the defect fixed. A check passes when it reports its defect on the planted service and reports nothing on the clean twin. ERLANG publishes its recall and precision on this set, as ITTEN does on its pages.
 
-Built as static pairs, source files that are never installed or run: L07 (`no-timeout`) in `L07-no-timeout/`; L06 (`retry-policy`) in a `libraries/` form (axios-retry 4.5.0, p-retry 9.0.0, got 16.2.0) and a `loops/` form (hand-written retries around axios and fetch); and L01a (`n-plus-one`), L01b (`per-row-writes`), L02 (`unbounded-query`) and L03 (`missing-index`), each in a `sql/` form (Fastify and `pg`) and a `prisma/` form (Express and Prisma 7.10.1); and L13 (`pool-sizing`), a configuration fixture in a `compose/` form (Docker Compose, PM2, `pg`) and a `kubernetes/` form (a Deployment with an HPA, a worker, a CronJob, Prisma 7.10.1 with `@prisma/adapter-pg`). `scripts/fixture-test.js` scores each pair, and `scripts/fix-test.js` checks its fixes.
+Built as static pairs, source files that are never installed or run: L07 (`no-timeout`) in `L07-no-timeout/`; L06 (`retry-policy`) in a `libraries/` form (axios-retry 4.5.0, p-retry 9.0.0, got 16.2.0) and a `loops/` form (hand-written retries around axios and fetch); and L01a (`n-plus-one`), L01b (`per-row-writes`), L02 (`unbounded-query`) and L03 (`missing-index`), each in a `sql/` form (Fastify and `pg`) and a `prisma/` form (Express and Prisma 7.10.1); L08 (`pool-exhaustion`) in `L08-pool-exhaustion/` (Fastify and `pg`, a pool of 5); and L13 (`pool-sizing`), a configuration fixture in a `compose/` form (Docker Compose, PM2, `pg`) and a `kubernetes/` form (a Deployment with an HPA, a worker, a CronJob, Prisma 7.10.1 with `@prisma/adapter-pg`). `scripts/fixture-test.js` scores each pair, and `scripts/fix-test.js` checks its fixes.
 
 Built as trace forms (`scripts/trace.sh`, `research/trace-harness.md`): the `sql/` forms of L01a, L01b and L02, whose twins are run as they are, with a `trace/` folder beside them (the schema, a seed at 1x and 10x, the requests, the expected defects, and a pinned lockfile); and L04 (`oversized-payload`), new, as a `sql/` form with the pages' own data loading in `web/pages.js`, traced only, with no static check yet. Each planted twin reports exactly its defects and each clean twin none; every L01a, L01b and L02 defect is linked to the static finding it confirms.
 
@@ -148,6 +148,15 @@ Added while building `missing-index` (L03):
 - a filter on a boolean or an enum column, too unselective for an index to help;
 - a table the owner names under `smallTables`, and a query in a script no request handler reaches.
 
+Added while building `pool-exhaustion` (L08):
+
+- `pool.query`, which takes and returns its own connection;
+- a transaction helper that hands the client to a callback and releases it in `finally`;
+- a call to another service made before the connection is taken, and an awaited local function with no I/O while one is held;
+- a release chained with `.finally()`, and a release at the end of the `try` and in the `catch`, with no return before it;
+- a `pg.Client` of its own, opened and closed with `end()`;
+- a script that never releases its connection, which no request runs.
+
 L03's SQL fixes add a migration rather than edit one, so its clean twin has a file the planted twin lacks; each such defect names it under `fixedIn` in `defects.json`, and `scripts/fixture-test.js` accepts that difference.
 
 The list grows as checks are built. Each entry names the check it protects.
@@ -180,6 +189,9 @@ Known false negatives:
 - **Queries it does not read** (`missing-index`). Filters joined with `OR`, subqueries, CTEs, `UNION`, statements built at run time, `LIKE`, and Prisma relation filters are not judged. A partial index counts as serving every query on its column.
 - **Schemas it does not read** (`missing-index`). Only SQL DDL and `schema.prisma`: Knex, TypeORM and Sequelize migrations written in JavaScript are not read, so their tables are unknown and not judged. SQL queries on a Prisma-managed table are not matched against `schema.prisma`, whose names are fields, not columns.
 - **Trace forms** (`scripts/trace.sh`). Only the `sql/` forms are traced; the Prisma forms are not yet. The harness serves a Fastify twin that exports `app` from `src/server.js`; another framework needs its own few lines in `scripts/trace/serve.js`. A read that grows with the table but streams its response (a cursor) is reported as uncertain: counts cannot tell whether its rows are held in memory at once. Calls per page view are counted only through the page code a fixture provides; nothing renders a page. L03's plans are not read yet.
+- **Checkouts it does not judge** (`pool-exhaustion`). The callback form, `pool.connect((err, client, done) => ...)`, and a checkout not assigned to a variable are counted, not judged. A client that is not released on every path but is passed to a function or returned is taken to be released by the code that receives it, so a leak there is missed.
+- **Other pools** (`pool-exhaustion`). Only `pg`'s `Pool` and `pg-pool`, made with `new` or reached through a parameter typed `Pool`. mysql2's `getConnection`, generic-pool, Knex's `acquireConnection` and Prisma's interactive transactions (`$transaction(async (tx) => ...)`, where a slow call holds the transaction's connection) are not read.
+- **Other services** (`pool-exhaustion`). A connection held across a call is reported only when the call is fetch, axios, got or `node:http`, made directly or through at most three of the project's own functions. SDK clients (AWS, Stripe), gRPC, Redis and message queues are not recognised, and a call chained with `.then()` rather than awaited is not seen.
 - **Unknown Prisma version** (`n-plus-one`). When neither a lockfile nor `package.json` names `@prisma/client`, batching is assumed, as in Prisma 6 and 7, so `findUnique` calls started together are not reported. Under Prisma 8, which drops the batching, they would be one query each. To revisit when Prisma 8 reaches general availability.
 
 ## Acceptance test

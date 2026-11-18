@@ -1,0 +1,174 @@
+{
+  "note": "The fixture pair for pool-exhaustion (L08 in fixtures/PLAN.md), Fastify and pg, a pool of 5 form, scanned with pool-exhaustion alone. Written by hand: each planted defect is fixed in place in the clean twin, line for line, and the twins differ in nothing else. A finding catches a defect when its check matches and its locations name the defect's file, line, column and symbol (every place, when the defect lists several), with the defect's severity. Decoys are in both twins; reporting one is a false positive. The auto fixes for a missing release wrap the code after the checkout in try with the release in finally, so the clean twin's reports.js and imports.js are longer than the planted ones; the guided fixes move a call before the checkout, and list every line from one to the other. Paths are relative to each twin. Nothing here is installed or run.",
+  "check": "pool-exhaustion",
+  "checks": [
+    "pool-exhaustion"
+  ],
+  "plan": "L08",
+  "planted": "fixtures/L08-pool-exhaustion/planted",
+  "clean": "fixtures/L08-pool-exhaustion/clean",
+  "defects": [
+    {
+      "id": "L08-1",
+      "check": "pool-exhaustion",
+      "title": "A connection held while the payment service is called, through a helper that uses fetch",
+      "severity": "warning",
+      "where": [
+        {
+          "file": "src/routes/orders.js",
+          "line": 25,
+          "column": 28,
+          "symbol": "payOrder"
+        },
+        {
+          "file": "src/routes/orders.js",
+          "line": 24,
+          "column": 22,
+          "symbol": "payOrder"
+        }
+      ],
+      "fix": "guided",
+      "fixedInClean": "the card is charged before the connection is taken"
+    },
+    {
+      "id": "L08-2",
+      "check": "pool-exhaustion",
+      "title": "A connection held while the warehouse is called with axios, inside the transaction",
+      "severity": "warning",
+      "where": [
+        {
+          "file": "src/routes/orders.js",
+          "line": 37,
+          "column": 30,
+          "symbol": "shipOrder"
+        },
+        {
+          "file": "src/routes/orders.js",
+          "line": 35,
+          "column": 26,
+          "symbol": "shipOrder"
+        }
+      ],
+      "fix": "guided",
+      "fixedInClean": "the reservation is made before the connection is taken"
+    },
+    {
+      "id": "L08-3",
+      "check": "pool-exhaustion",
+      "title": "Released after the queries with no try: an error in any of them keeps the connection",
+      "severity": "error",
+      "where": [
+        {
+          "file": "src/routes/reports.js",
+          "line": 6,
+          "column": 26,
+          "symbol": "dailyReport"
+        },
+        {
+          "file": "src/routes/reports.js",
+          "line": 11,
+          "column": 5,
+          "symbol": "dailyReport"
+        }
+      ],
+      "fix": "auto",
+      "fixedInClean": "released in finally"
+    },
+    {
+      "id": "L08-4",
+      "check": "pool-exhaustion",
+      "title": "Released after a try/catch that rethrows: a failed import keeps the connection",
+      "severity": "error",
+      "where": [
+        {
+          "file": "src/routes/imports.js",
+          "line": 6,
+          "column": 26,
+          "symbol": "importRows"
+        },
+        {
+          "file": "src/routes/imports.js",
+          "line": 15,
+          "column": 5,
+          "symbol": "importRows"
+        }
+      ],
+      "fix": "auto",
+      "fixedInClean": "released in finally"
+    }
+  ],
+  "decoys": [
+    {
+      "id": "L08-d1",
+      "title": "pool.query, which checks a connection out and returns it itself",
+      "where": {
+        "file": "src/routes/orders.js",
+        "line": 8,
+        "column": 19
+      }
+    },
+    {
+      "id": "L08-d2",
+      "title": "withTransaction gives the client to a callback and releases it in finally",
+      "where": {
+        "file": "src/db.js",
+        "line": 8,
+        "column": 24
+      }
+    },
+    {
+      "id": "L08-d3",
+      "title": "The refund is made before the connection is taken",
+      "where": {
+        "file": "src/routes/orders.js",
+        "line": 53,
+        "column": 26
+      }
+    },
+    {
+      "id": "L08-d4",
+      "title": "A local check with no I/O awaited while the connection is held",
+      "where": {
+        "file": "src/routes/orders.js",
+        "line": 67,
+        "column": 27
+      }
+    },
+    {
+      "id": "L08-d5",
+      "title": "Released through .finally() on the query promise",
+      "where": {
+        "file": "src/routes/reports.js",
+        "line": 18,
+        "column": 103
+      }
+    },
+    {
+      "id": "L08-d6",
+      "title": "Released at the end of the try and in the catch, with no return before it",
+      "where": {
+        "file": "src/routes/imports.js",
+        "line": 22,
+        "column": 26
+      }
+    },
+    {
+      "id": "L08-d7",
+      "title": "A pg Client of its own, closed with end(): not a pool's connection",
+      "where": {
+        "file": "src/routes/health.js",
+        "line": 7,
+        "column": 11
+      }
+    },
+    {
+      "id": "L08-d8",
+      "title": "A script that never releases its connection, then ends the pool: no request runs it",
+      "where": {
+        "file": "scripts/purge.js",
+        "line": 5,
+        "column": 22
+      }
+    }
+  ]
+}
