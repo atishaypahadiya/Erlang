@@ -1,0 +1,110 @@
+# ERLANG run contract
+
+What a caller, a CI job or another tool can rely on when it runs ERLANG. It describes ERLANG 0.0.1. A change to anything here is a change to the contract and is recorded in this file.
+
+## Invocation
+
+```
+node bin/erlang.js <dir> [--out <file>]
+node bin/erlang.js --version
+```
+
+- `<dir>` is the root of the code to check, absolute or relative to the working directory. `--out <file>` may come before or after it.
+- `--version` (or `-v`), alone, prints one line and exits 0:
+  `erlang 0.0.1 (commit <40-hex SHA>): load and resilience checks (not the Erlang runtime)`.
+  The SHA is the commit ERLANG runs from, read from its `.git` without running git. It is `unknown` outside a git checkout. It does not show changes that are not yet committed.
+- Requirements: Node.js 22 or later, and `npm install` once in the ERLANG directory, which installs its one dependency, TypeScript 6.0.3.
+
+Every form above is run by `scripts/cli-test.js`.
+
+## Inputs
+
+| Input | Needed | Notes |
+|---|---|---|
+| Path to the code | Yes | A directory. Source, SQL, `schema.prisma`, `package.json`, lockfiles, Dockerfiles and deployment files (Compose, Kubernetes, PM2, fly.toml, serverless.yml) under it are read. |
+| `erlang.config.json` at the root of `<dir>` | No | `exclude` (paths not part of the app), `handlers` (entry points ERLANG cannot find), `smallTables`, `database.maxConnections`. Schema: `schema/config.schema.json`. A config that cannot be read refuses the scan. |
+| URL of a running service | No | ERLANG runs nothing and sends no request. |
+| Test logins | No | None are read or used. |
+| Seed size | No | No database or data is used by the checks. |
+
+No environment variable changes what ERLANG does.
+
+What is not read:
+- `node_modules`, `.git`, and build output: `dist`, `build`, `out`, `.next`, `.nuxt`, `.svelte-kit`, `.output`, `.vercel`, `.netlify`, `.astro`, `.turbo`, `.cache`, `coverage`;
+- whatever the config excludes;
+- symbolic links, which are never followed;
+- files over 1 MiB, which are named in the report, which is then partial.
+
+## Output
+
+One file, a report/1 in JSON (UTF-8, two-space indent, trailing newline):
+- at `<file>` when `--out` is given;
+- otherwise at `dist/reports/<name of dir>/report.json` inside the ERLANG directory, not the working directory.
+
+Each finding is also printed to standard output, one line per finding. A last line gives the status, the count and the report's path. Standard output is for people; the report is the interface.
+
+**report/1** (`core/schema/report.schema.json`, a copy of ITTEN's at release v0.3.5):
+- `schema`: `"report/1"`. `specialist`: `"erlang"`. `version`. `subject`: the scanned directory, relative to the working directory, so a report does not carry an absolute path such as a home directory.
+- `started`: UTC, to the second.
+- `status`, one of:
+  - `complete`: every check ran on every file;
+  - `partial`: something could not be read, and `reason` names each file and why;
+  - `refused`: nothing was judged, and `reason` says why.
+- `findings`: a list of finding/1.
+- `erlang`: the run data. `scope` holds the config, the excluded paths and notes. `checks` holds, per check, the counts of files, handlers and queries read, and of what was skipped and why.
+
+**finding/1** (`core/schema/finding.schema.json`, ITTEN's at v0.3.5):
+- `check`: one of `no-timeout`, `n-plus-one`, `per-row-writes`, `unbounded-query`, `pool-sizing`, `retry-policy`, `missing-index`.
+- `severity`: `error`, `warning` or `info`. A MUST rule gives `error` and a SHOULD rule gives `warning`. `info` with `erlang.unresolved` means ERLANG could not decide, for example when no request handler was found or the database's limit is unknown.
+- `fingerprint`: built from the check, the file and enclosing function (or table and column), and the kind of defect, with no line number, so it survives edits that move lines. Several of the same kind in one function are told apart by their order (`|2`, `|3`). Renaming the file or function changes it.
+- `message`: what is wrong, why it matters and what it rests on.
+- `measured: []` and `floor: null`: nothing is measured by static checks.
+- `detection`: `static`, and `config` when deployment or configuration files were read.
+- `rules`: ids from `reference/`, such as `DAT-03`.
+- `where.locations`: `{ file, line, column }`, with `file` relative to `<dir>`. The first location is where to act.
+- `erlang`: ERLANG's own fields (`schema/finding-erlang.schema.json`). `strength` (MUST or SHOULD) and `fix` are always present; the rest depend on the check.
+
+## Suggested fixes
+
+Every finding carries a suggested fix in `erlang.fix`, of one of two kinds:
+
+- **`auto`**: complete edits, `{ file, line, column, length, replace }`. Replace `length` characters at a 1-based line and column, with columns in UTF-16 code units. An insert at 1:1 of a file that does not exist creates it, as when the fix is a new migration. A `note` may add context, such as building an index concurrently in production.
+- **`guided`**: `locations` and a `note`, for fixes that need judgement. No edits are given.
+
+ERLANG never applies a fix. Applying one is the caller's step. Every auto fix in the fixtures is applied and re-checked by `scripts/fix-test.js`: it must clear its finding, add none, and leave the code parsing. The edit shape is the same as KERCKHOFFS's, so one fix step can apply either specialist's.
+
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | Complete, no findings |
+| 1 | Findings, whether or not the report is also partial |
+| 2 | Refused: `<dir>` is not a readable directory, or its config cannot be read |
+| 3 | Partial with no findings: a file could not be read, so the silence vouches for nothing |
+| 64 | Bad usage (`EX_USAGE`) |
+
+A refused or partial report is still written. An error inside one check stops only that check, and the report is partial and names it.
+
+## Network
+
+None. ERLANG opens no socket, sends no request, starts no process and generates no load. The only network use is `npm install`, which fetches TypeScript from the npm registry once.
+
+## Writes
+
+- **The report file only:** at `--out <file>`, wherever that is, or else under `dist/reports/` in the ERLANG directory. Its parent directories are created.
+- **Nothing in `<dir>`:** ERLANG does not write, create or modify anything there, and suggested fixes are not applied.
+- **Nothing else:** no cache, temporary file, log or home-directory state.
+
+## Determinism
+
+- Two runs on the same files give the same report apart from `started`: the same findings, in the same order, with the same fingerprints, messages and fixes. Checks run in a fixed order, and files are read in sorted order.
+- The working directory changes only `subject`.
+- No clock, randomness, network or environment variable enters a finding.
+- The report changes when the files change, or when ERLANG's version or commit does.
+
+## Scope and limits
+
+- Static checks only: ERLANG reads source and configuration and judges what they say.
+- Request handlers are found in Express, Fastify, `node:http` and Next.js. Database access is read through `pg` and Prisma.
+- Known false negatives and positives are listed in `fixtures/PLAN.md`, under Known gaps.
+- ERLANG is for the owner's own code and services only.
