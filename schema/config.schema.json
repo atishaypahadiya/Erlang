@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/atishaypahadiya/erlang/schema/config.schema.json",
   "title": "erlang.config.json",
-  "description": "How ERLANG scans a subject, read from the scan root only (lib/scope.js). Every report names the config and what it excludes.",
+  "description": "How ERLANG scans a subject, read from the scan root only (lib/scope.js). Every report names the config, what it excludes and the handlers it names.",
   "type": "object",
   "additionalProperties": false,
   "properties": {
@@ -14,6 +14,41 @@
         "type": "string",
         "minLength": 1,
         "pattern": "^(?!/)(?!.*\\\\)(?!.*(?:^|/)\\.\\.?(?:/|$))(?!.*//)[^*?\\[\\]{}]+$"
+      }
+    },
+    "handlers": {
+      "description": "Request handlers ERLANG cannot find in the source, or entry points that are not HTTP routes (a queue consumer, a job). Each names a function by its name in a file; its code, and what it calls, is in the request path for the checks that judge what a request costs (lib/handlers.js). An entry that names nothing is a note in the report.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "file",
+          "function"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "file": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^(?!/)(?!.*\\\\)(?!.*(?:^|/)\\.\\.?(?:/|$))(?!.*//)[^*?\\[\\]{}]+$",
+            "description": "Relative to the scan root, with / separators."
+          },
+          "function": {
+            "type": "string",
+            "pattern": "^[A-Za-z_$][A-Za-z0-9_$]*$",
+            "description": "A function declared in the file, by name."
+          },
+          "method": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9_-]*$",
+            "description": "The HTTP method, or the operation in capitals for other protocols."
+          },
+          "route": {
+            "type": "string",
+            "minLength": 1,
+            "description": "A route template, such as /orders/:id; for a queue, its name."
+          }
+        }
       }
     }
   }
