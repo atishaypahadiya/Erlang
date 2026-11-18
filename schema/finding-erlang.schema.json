@@ -326,6 +326,15 @@
           "description": "The two measured runs differed, so nothing is judged."
         }
       }
+    },
+    "across": {
+      "enum": [
+        "fetch",
+        "axios",
+        "got",
+        "node:http"
+      ],
+      "description": "pool-exhaustion: the client of the other service a connection is held across."
     }
   },
   "anyOf": [

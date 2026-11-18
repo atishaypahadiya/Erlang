@@ -353,6 +353,39 @@ console.log('\nTrace judgements (lib/trace-judge.js)');
   ok('linkStatic: another statement, route or check does not', !TJ.linkStatic({ check: 'n-plus-one', method: 'GET', route: '/orders', statement: 'select id from products where id = $1' }, statics, lineOf) && !TJ.linkStatic({ check: 'n-plus-one', method: 'GET', route: '/stats', statement: 'select id, name from customers where id = $1' }, statics, lineOf) && !TJ.linkStatic({ check: 'per-row-writes', method: 'GET', route: '/orders', statement: 'select id, name from customers where id = $1' }, statics, lineOf));
 }
 
+console.log('\npool-exhaustion: checkouts, releases and calls held across');
+{
+  const PE = ['pool-exhaustion'];
+  const app = (body, head = "import pg from 'pg';\nconst pool = new pg.Pool({ max: 4 });") => `import express from 'express';\n${head}\nconst app = express();\napp.get('/x', async (req, res) => {\n${body}\n});\napp.listen(3000);\n`;
+  const peCase = (name, body, want, extra = {}, head) => expectFindings(name, { 'app.js': app(body, head), ...extra }, want, PE);
+  const q = "  await client.query('select 1');";
+  peCase('Released in finally: nothing', `  const client = await pool.connect();\n  try {\n  ${q}\n  } finally {\n    client.release();\n  }`, []);
+  peCase('Released after the queries, with no try: an error, fixed automatically', `  const client = await pool.connect();\n${q}\n  client.release();\n  res.json({});`, [['error', 'app.js', 6, 'auto']]);
+  peCase('Never released: an error, fixed automatically', `  const client = await pool.connect();\n${q}\n  res.json({});`, [['error', 'app.js', 6, 'auto']]);
+  peCase('Released in the catch and the try, but a return comes first in the try: an error', `  const client = await pool.connect();\n  try {\n  ${q}\n    if (req.query.x) return res.json({});\n    client.release();\n  } catch (e) {\n    client.release();\n    throw e;\n  }`, [['error', 'app.js', 6, 'guided']]);
+  peCase('A finally that starts after a query: the query can throw first, so an error', `  const client = await pool.connect();\n${q}\n  try {\n  ${q}\n  } finally {\n    client.release();\n  }`, [['error', 'app.js', 6, 'guided']]);
+  peCase('Released through .finally() on the promise: nothing', "  const client = await pool.connect();\n  res.json(await client.query('select 1').finally(() => client.release()));", []);
+  peCase('The callback form is not judged', "  pool.connect((err, client, done) => { res.json({}); });", []);
+  peCase('A pg Client, not a pool: nothing', `  const client = new pg.Client();\n  await client.connect();\n${q}`, []);
+  peCase("pg's named Pool export is a pool", `  const client = await pool.connect();\n${q}`, [['error', 'app.js', 6, 'auto']], {}, "import { Pool } from 'pg';\nconst pool = new Pool();");
+  peCase('pg-pool is a pool', `  const client = await pool.connect();\n${q}`, [['error', 'app.js', 6, 'auto']], {}, "import Pool from 'pg-pool';\nconst pool = new Pool();");
+  peCase('A client returned to the caller is the caller\'s to release: not judged', "  const client = await pool.connect();\n  return client;", []);
+  const held = (call) => `  const client = await pool.connect();\n  try {\n    const r = await ${call};\n  ${q}\n  } finally {\n    client.release();\n  }`;
+  peCase('Held across a got call: a warning, guided', held("got.post('http://svc/a').json()"), [['warning', 'app.js', 9, 'guided']], {}, "import pg from 'pg';\nimport got from 'got';\nconst pool = new pg.Pool();");
+  peCase('Held across a helper that calls a helper that uses node:http: a warning', held('notify(req.query.id)'), [['warning', 'app.js', 9, 'guided']],
+    { 'notify.js': "import { send } from './send.js';\nexport async function notify(id) { return send(id); }\n", 'send.js': "import https from 'node:https';\nexport const send = (id) => new Promise((ok) => https.request(`https://svc/${id}`, { timeout: 5000 }, ok).end());\n" },
+    "import pg from 'pg';\nimport { notify } from './notify.js';\nconst pool = new pg.Pool();");
+  peCase('Held across a helper with no I/O: nothing', held('check(req.query)'), [], { 'check.js': 'export async function check(q) { return q.id > 0; }\n' }, "import pg from 'pg';\nimport { check } from './check.js';\nconst pool = new pg.Pool();");
+  peCase('A fetch before the checkout: nothing', `  const r = await fetch('http://svc/a', { signal: AbortSignal.timeout(5000) });\n${held('Promise.resolve(r)')}`, []);
+  {
+    const r = scanOf(subject({ 'app.js': app(`  const client = await pool.connect();\n${q}`, "import pg from 'pg';\nconst pool = new pg.Pool();") }), PE);
+    ok('With no max, the message names pg\'s default of 10, and an anonymous handler by its route', r.findings[0]?.message.startsWith('The GET /x handler checks') && r.findings[0]?.message.includes("its 10 connections (pg's default)"), r.findings[0]?.message);
+  }
+  expectFindings('No handler: a leak is info, unresolved', { 'job.js': "import pg from 'pg';\nconst pool = new pg.Pool();\nexport async function run() {\n  const c = await pool.connect();\n  await c.query('select 1');\n}\n" }, [['info', 'job.js', 4, 'auto']], PE);
+  expectAutoFixHolds('  the auto fix wraps the rest in try and releases in finally (release moved)', { 'app.js': app(`  const client = await pool.connect();\n${q}\n  client.release();\n  res.json({});`) }, PE);
+  expectAutoFixHolds('  the auto fix adds the missing release', { 'app.js': app(`  const client = await pool.connect();\n${q}\n  res.json({});`) }, PE);
+}
+
 console.log('\nIsolation and scope');
 {
   const dir = subject({
