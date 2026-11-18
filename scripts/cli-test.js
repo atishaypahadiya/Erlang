@@ -11,7 +11,8 @@
 //
 // Usage: node scripts/cli-test.js            exit 0 when every case holds
 
-import { spawnSync } from 'node:child_process';
+import { spawnSync, execFileSync } from 'node:child_process';
+import { VERSION, commit } from '../bin/erlang.js';
 import { readFileSync, writeFileSync, rmSync, existsSync, mkdirSync, cpSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -76,7 +77,22 @@ writeFileSync(join(refusedConfig, 'erlang.config.json'), '{ "exclude": ["../outs
 }
 {
   const r = cli('--version');
-  ok('--version: says what it is and that it is not the Erlang runtime, exit 0', r.status === 0 && /^erlang \d+\.\d+\.\d+: load and resilience checks \(not the Erlang runtime\)$/.test(r.stdout.trim()), r.stdout.trim());
+  const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: ROOT, encoding: 'utf8' }).trim();
+  // commit() on hand-made .git layouts: packed refs, a worktree's .git file,
+  // a detached HEAD, and no checkout at all.
+  const A = 'a'.repeat(40), B = 'b'.repeat(40), C = 'c'.repeat(40);
+  const g = (p, text) => { mkdirSync(dirname(join(OUT, 'git', p)), { recursive: true }); writeFileSync(join(OUT, 'git', p), text); };
+  rmSync(join(OUT, 'git'), { recursive: true, force: true });
+  g('packed/.git/HEAD', 'ref: refs/heads/main\n'); g('packed/.git/packed-refs', `# pack-refs with: peeled\n${B} refs/heads/mainline\n${A} refs/heads/main\n`);
+  g('main/.git/HEAD', 'ref: refs/heads/main\n'); g('main/.git/refs/heads/main', `${A}\n`);
+  g('main/.git/worktrees/wt/HEAD', 'ref: refs/heads/side\n'); g('main/.git/worktrees/wt/commondir', '../..\n'); g('main/.git/refs/heads/side', `${B}\n`);
+  g('wt/.git', `gitdir: ${join(OUT, 'git', 'main', '.git', 'worktrees', 'wt')}\n`);
+  g('detached/.git/HEAD', `${C}\n`);
+  g('none/x', '');
+  g('escape/.git/HEAD', 'ref: refs/../../HEAD\n');
+  const got = ['packed', 'main', 'wt', 'detached', 'none', 'escape'].map((d) => commit(join(OUT, 'git', d)));
+  ok('commit(): packed ref, loose ref, worktree, detached, no checkout, a ref that leaves .git', JSON.stringify(got) === JSON.stringify([A, A, B, C, null, null]), JSON.stringify(got.map((x) => x && x[0])));
+  ok('--version: the version, the commit (as git names HEAD), and that it is not the Erlang runtime, exit 0', r.status === 0 && r.stdout.trim() === `erlang ${VERSION} (commit ${head}): load and resilience checks (not the Erlang runtime)`, r.stdout.trim());
 }
 for (const [label, args] of [['no arguments', []], ['--out with no file', [clean, '--out']], ['--out alone', ['--out', join(OUT, 'x.json')]], ['an unknown flag', [clean, '--fast']]]) {
   const r = cli(...args);

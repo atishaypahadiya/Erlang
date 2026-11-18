@@ -7,8 +7,8 @@
 //   The report goes to <file>, or dist/reports/<dir name>/report.json. The
 //   flag may come before or after <dir>. Every form is run by
 //   scripts/cli-test.js.
-//   erlang --version prints the version, so it is not mistaken for the Erlang
-//   runtime (research/naming.md).
+//   erlang --version prints the version and the commit it runs from, so it is
+//   not mistaken for the Erlang runtime (research/naming.md).
 // Scope: erlang.config.json at <dir> may exclude paths that are not part of
 //   the app, such as test fixtures and generated output, and name request
 //   handlers ERLANG cannot find itself (lib/handlers.js):
@@ -21,7 +21,7 @@
 // could not be read, so the silence vouches for nothing; the report's reason
 // names each file and why), 64 bad usage (EX_USAGE in sysexits.h).
 
-import { readFileSync, statSync, realpathSync } from 'node:fs';
+import { readFileSync, statSync, realpathSync, existsSync } from 'node:fs';
 import { resolve, relative, basename, join, dirname, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { report, write } from '../core/report.js';
@@ -37,6 +37,40 @@ import * as missingIndex from '../checks/missing-index.js';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 export const SPECIALIST = 'erlang';
 export const VERSION = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version;
+// The commit ERLANG runs from, read from .git without running git: HEAD, a
+// ref it names (loose or packed), or a worktree's .git file pointing at its
+// git directory. A change not yet committed does not show. null outside a
+// checkout, such as an installed copy.
+export function commit(root = ROOT) {
+  try {
+    let git = join(root, '.git');
+    if (!existsSync(git)) return null;
+    let common = git;
+    if (statSync(git).isFile()) {
+      const m = /^gitdir: (.+)$/m.exec(readFileSync(git, 'utf8'));
+      if (!m) return null;
+      git = resolve(root, m[1].trim());
+      const c = join(git, 'commondir');
+      common = existsSync(c) ? resolve(git, readFileSync(c, 'utf8').trim()) : git;
+    }
+    const head = readFileSync(join(git, 'HEAD'), 'utf8').trim();
+    if (/^[0-9a-f]{40}$/.test(head)) return head;
+    const ref = /^ref: (refs\/[\w./-]+)$/.exec(head)?.[1];
+    if (!ref || ref.includes('..')) return null;
+    for (const dir of [git, common]) {
+      const loose = join(dir, ref);
+      if (existsSync(loose)) { const sha = readFileSync(loose, 'utf8').trim(); return /^[0-9a-f]{40}$/.test(sha) ? sha : null; }
+    }
+    const packed = join(common, 'packed-refs');
+    if (!existsSync(packed)) return null;
+    for (const line of readFileSync(packed, 'utf8').split('\n')) {
+      const sp = line.indexOf(' ');
+      if (sp === 40 && line.slice(sp + 1) === ref && /^[0-9a-f]{40}$/.test(line.slice(0, 40))) return line.slice(0, 40);
+    }
+    return null;
+  } catch { return null; }
+}
+
 export const CHECKS = [noTimeout, perItem, unboundedQuery, poolSizing, retryPolicy, missingIndex];
 const namesOf = (c) => c.CHECKS ?? [c.CHECK];
 
@@ -83,7 +117,7 @@ export function scan(dir, { started = new Date(), only = null, modules = CHECKS 
 if (process.argv[1] && realpathSync(resolve(process.argv[1])) === fileURLToPath(import.meta.url)) {
   const args = process.argv.slice(2);
   if (args.length === 1 && (args[0] === '--version' || args[0] === '-v')) {
-    console.log(`erlang ${VERSION}: load and resilience checks (not the Erlang runtime)`);
+    console.log(`erlang ${VERSION} (commit ${commit() ?? 'unknown'}): load and resilience checks (not the Erlang runtime)`);
     process.exit(0);
   }
   const outAt = args.indexOf('--out');
