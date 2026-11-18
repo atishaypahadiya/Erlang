@@ -21,6 +21,14 @@
 #
 # Writing about automated tools as a subject is fine; the terms should match
 # claims of authorship (trailers, "generated with ...") and nothing broader.
+# Lines starting with "subject " are the exception: bare names banned even as
+# a subject. A repository may allow some of them where it must name them, by
+# listing them in .private-terms-allow at its root (in the working tree), one
+# per line, written exactly as after "subject " in the terms file; blank lines
+# and lines starting with # are ignored. Only subject terms can be allowed. An
+# authorship pattern listed there stays enforced, and the run fails, saying
+# so. An entry that matches no term is reported and ignored. The allowlist
+# applies to every mode.
 #
 # The hooks in scripts/hooks call it; run scripts/setup.sh once per clone to
 # enable them. Whether or not the terms file exists, no commit may hold a
@@ -49,14 +57,42 @@ if [[ ! -f $terms_file ]]; then
   fi
 else
   # A leading "subject " marks a pattern banned even as a subject, not only as
-  # an authorship claim. Repositories with an allowlist may relax those; this one
-  # has none, so they are enforced like the rest, with the marker removed.
-  terms=$(grep -v -E '^[[:space:]]*(#|$)' "$terms_file" | grep -v -E '^private ' | sed -E 's/^[[:space:]]*subject[[:space:]]+//' || true)
+  # an authorship claim; only those may be allowed (above).
+  patterns=$(grep -v -E '^[[:space:]]*(#|$)' "$terms_file" | grep -v -E '^private ' || true)
+  subjects=$(grep -E '^[[:space:]]*subject[[:space:]]+' <<< "$patterns" | sed -E 's/^[[:space:]]*subject[[:space:]]+//' || true)
+  authorship=$(grep -v -E '^[[:space:]]*subject[[:space:]]+' <<< "$patterns" || true)
   private=$(grep -E '^private ' "$terms_file" | sed -e 's/^private //' || true)
 fi
 
 failed=0
 fail() { echo "hygiene: $*" >&2; failed=1; }
+
+# The allowlist. Entries are compared as whole lines, and reported by line
+# number, so this output does not repeat the terms.
+allow_file="$root/.private-terms-allow"
+allowed=""
+if [[ -f $allow_file && -f $terms_file ]]; then
+  n=0
+  while IFS= read -r entry || [[ -n $entry ]]; do
+    n=$((n + 1))
+    entry=$(sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//' <<< "$entry")
+    [[ -z $entry || $entry == \#* ]] && continue
+    if grep -q -x -F -e "$entry" <<< "$subjects"; then
+      allowed+="$entry"$'\n'
+    elif grep -q -x -F -e "$entry" <<< "$authorship"; then
+      fail ".private-terms-allow line $n lists an authorship pattern; authorship patterns are never allowed, so it stays enforced"
+    else
+      echo "hygiene: .private-terms-allow line $n matches no subject term in the terms file; ignored" >&2
+    fi
+  done < "$allow_file"
+fi
+
+# The patterns enforced: every authorship pattern, and every subject term not
+# allowed.
+if [[ -f $terms_file ]]; then
+  terms=$( { printf '%s\n' "$authorship"; grep -v -x -F -f <(printf '%s' "$allowed") <<< "$subjects" || true; } | grep -v -E '^$' || true)
+  [[ -n $allowed ]] || terms=$(printf '%s\n%s\n' "$authorship" "$subjects" | grep -v -E '^$' || true)
+fi
 
 # Report each matching line of the text on stdin, labelled with $1. Callers
 # redirect into it rather than pipe, so that fail runs in this shell.
