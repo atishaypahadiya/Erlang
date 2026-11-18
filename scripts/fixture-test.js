@@ -49,11 +49,12 @@ const filesOf = (dir) => readdirSync(dir, { recursive: true, withFileTypes: true
   .map((e) => relative(dir, join(e.parentPath, e.name)).split(sep).join('/'))
   .sort();
 
-// Files that differ between the twins and hold no planted defect.
+// Files that differ between the twins and hold no planted defect. A defect
+// may name files its fix adds in the clean twin (fixedIn: a new migration).
 function strayDifferences(id, spec) {
   const planted = join(ROOT, 'fixtures', id, 'planted');
   const clean = join(ROOT, 'fixtures', id, 'clean');
-  const planting = new Set(spec.defects.flatMap((d) => [d.where].flat().map((w) => w.file)));
+  const planting = new Set(spec.defects.flatMap((d) => [...[d.where].flat().map((w) => w.file), ...(d.fixedIn ?? [])]));
   const all = [...new Set([...filesOf(planted), ...filesOf(clean)])];
   return all.filter((f) => {
     const a = existsSync(join(planted, f)) ? readFileSync(join(planted, f), 'utf8') : null;
