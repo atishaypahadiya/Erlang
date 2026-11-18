@@ -1,0 +1,9 @@
+{
+  "name": "l09-accounts",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "bcryptjs": "3.0.3",
+    "express": "5.2.1"
+  }
+}

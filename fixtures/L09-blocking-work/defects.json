@@ -1,0 +1,142 @@
+{
+  "note": "The fixture pair for blocking-work (L09 in fixtures/PLAN.md), Express and bcryptjs form, scanned with blocking-work alone. Written by hand: each planted defect is fixed in place in the clean twin, line for line, and the twins differ in nothing else. A finding catches a defect when its check matches and its locations name the defect's file, line, column and symbol (every place, when the defect lists several), with the defect's severity. Decoys are in both twins; reporting one is a false positive. The clean twin holds each auto fix as ERLANG writes it, so its lines are long; the guided fix changes the import as well as the call. Paths are relative to each twin. Nothing here is installed or run.",
+  "check": "blocking-work",
+  "checks": [
+    "blocking-work"
+  ],
+  "plan": "L09",
+  "planted": "fixtures/L09-blocking-work/planted",
+  "clean": "fixtures/L09-blocking-work/clean",
+  "defects": [
+    {
+      "id": "L09-1",
+      "check": "blocking-work",
+      "title": "PBKDF2 at 600,000 iterations, synchronous, on every signup",
+      "severity": "warning",
+      "where": {
+        "file": "src/routes/accounts.js",
+        "line": 11,
+        "column": 16,
+        "symbol": "signup"
+      },
+      "fix": "auto",
+      "fixedInClean": "crypto.pbkdf2, awaited"
+    },
+    {
+      "id": "L09-2",
+      "check": "blocking-work",
+      "title": "bcrypt's synchronous compare on every login",
+      "severity": "warning",
+      "where": {
+        "file": "src/routes/accounts.js",
+        "line": 19,
+        "column": 34,
+        "symbol": "login"
+      },
+      "fix": "auto",
+      "fixedInClean": "bcrypt.compare, awaited"
+    },
+    {
+      "id": "L09-3",
+      "check": "blocking-work",
+      "title": "The whole export gzipped synchronously",
+      "severity": "warning",
+      "where": {
+        "file": "src/routes/exports.js",
+        "line": 12,
+        "column": 16,
+        "symbol": "exportOrders"
+      },
+      "fix": "auto",
+      "fixedInClean": "zlib.gzip, awaited"
+    },
+    {
+      "id": "L09-4",
+      "check": "blocking-work",
+      "title": "A file read synchronously on every avatar request",
+      "severity": "warning",
+      "where": {
+        "file": "src/routes/avatars.js",
+        "line": 13,
+        "column": 11,
+        "symbol": "avatar"
+      },
+      "fix": "guided",
+      "fixedInClean": "readFile from node:fs/promises, awaited"
+    }
+  ],
+  "decoys": [
+    {
+      "id": "L09-d1",
+      "title": "randomBytes(16), synchronous but 16 bytes",
+      "where": {
+        "file": "src/routes/accounts.js",
+        "line": 10,
+        "column": 16
+      }
+    },
+    {
+      "id": "L09-d2",
+      "title": "randomUUID, which has no asynchronous form and is quick",
+      "where": {
+        "file": "src/routes/accounts.js",
+        "line": 13,
+        "column": 30
+      }
+    },
+    {
+      "id": "L09-d3",
+      "title": "bcrypt's asynchronous hash",
+      "where": {
+        "file": "src/routes/accounts.js",
+        "line": 25,
+        "column": 28
+      }
+    },
+    {
+      "id": "L09-d4",
+      "title": "A SHA-256 of the response for its ETag: one fast pass",
+      "where": {
+        "file": "src/routes/exports.js",
+        "line": 11,
+        "column": 16
+      }
+    },
+    {
+      "id": "L09-d5",
+      "title": "A file read once when the module loads",
+      "where": {
+        "file": "src/assets.js",
+        "line": 4,
+        "column": 28
+      }
+    },
+    {
+      "id": "L09-d6",
+      "title": "Templates read synchronously at startup, by a function no request calls",
+      "where": {
+        "file": "src/assets.js",
+        "line": 8,
+        "column": 29
+      }
+    },
+    {
+      "id": "L09-d7",
+      "title": "Synchronous compression in a worker thread",
+      "where": {
+        "file": "src/workers/archive.js",
+        "line": 6,
+        "column": 26
+      }
+    },
+    {
+      "id": "L09-d8",
+      "title": "bcrypt's synchronous hash in a script no request runs",
+      "where": {
+        "file": "scripts/seed.js",
+        "line": 5,
+        "column": 63
+      }
+    }
+  ]
+}
