@@ -1,6 +1,6 @@
 # A held-out set for ERLANG's checks: a proposal
 
-Status: proposal, 17 November 2026. Nothing is built. The decisions it needs from the owner are at the end.
+Status: proposal, 17 November 2026, with the owner's decisions at the end. Where a decision changed the proposal, the change is written in place. The set's home exists: a private held-out repository, made locally, with no remote yet. It holds the exclusion list, the curation rules, and a copy of ERLANG's rules. No case has been collected.
 
 The fixtures are written by whoever writes the checks. They show that each check finds what it was built to find, not that it finds what real services get wrong: the planted forms and the check's patterns come from the same head. Today every check scores recall and precision 1.00 on its fixtures, and that number says little about the wild.
 
@@ -38,14 +38,14 @@ Each case is a public commit that fixes one of ERLANG's defect classes, with its
 - **Sampled titles.** In 15 titles from each of three narrow queries, about a third looked like real candidates by title alone. Examples: a database connection leak fixed in an indexer, passwords hashed off the event loop, an N+1 fixed in a timeline endpoint. The rest were unrelated, or their changes sat in another language.
 - **Limits.** GitHub's language filter is the repository's main language, not the diff's, so every case must be screened at the diff.
 - **What this establishes.** Cases exist for at least `pool-exhaustion`, `blocking-work` and `n-plus-one`; how many qualify per class is unknown until screened.
-- **Exclusions.** Those 45 results, from 42 repositories, were seen while the checks were developed. They are excluded from the set (decision 2). The list is kept outside ERLANG's repository, at `dist/held-out/pilot-seen.txt` until the set's home exists, so strangers' repositories are not named in ERLANG's docs.
+- **Exclusions.** Those 45 results, from 42 repositories, were seen while the checks were developed. They are excluded from the set (decision 2). The list is the first file of the set's own repository (`pilot-seen.txt`), not in ERLANG's, so strangers' repositories are not named in ERLANG's docs.
 
 **Existing datasets.** The studies behind the failure model are of Rails applications, Java ORMs and general software (`research/failure-model.md`, F1 to F3). None gives Node cases, so ERLANG mines its own.
 
 ### Blind planting
 
 Defects are planted blind, without access to the checks. Planting works from:
-- the rules (`reference/`);
+- the rules, as a copy of `reference/rules/` and `reference/README.md` in the set's repository, so planting never opens ERLANG's;
 - the defect classes, in plain words, from the failure model's ranking (names and descriptions only, not its "Cheapest reliable detection" column);
 - the stacks in scope;
 - this protocol;
@@ -98,7 +98,7 @@ Real fixes have no single defect line, so this is looser than the fixtures' file
 ## Keeping it held out
 
 - **Where it lives.** In a private repository of the owner's, not in ERLANG's. The checks are developed without access to the held-out set; read access to it is denied by configuration. ERLANG's repository receives only the published numbers, and per-case results by id and class, with no code and no locations.
-- **Curation.** Real cases are screened and defects planted without access to ERLANG's checks, as above. Nothing done with access to the checks screens cases or plants defects.
+- **Curation.** Real cases are screened and defects planted without access to ERLANG's checks, from the set's README, reading only the set's repository and public GitHub, never ERLANG's. A sample is reviewed by the owner. Nothing done with access to the checks screens cases or plants defects.
 - **Burning.** A check is not changed to pass a held-out case. When a miss shows a real gap:
   - the gap is recorded under Known gaps, by class;
   - any fix is driven by a new fixture, written from the class, not from the case;
@@ -117,26 +117,29 @@ Real fixes have no single defect line, so this is looser than the fixtures' file
 
 ## First round
 
-**Real cases.** Five per built check, in scope, plus whatever out-of-scope cases turn up while screening. The built checks are `no-timeout`, `n-plus-one`, `per-row-writes`, `unbounded-query`, `missing-index`, `retry-policy`, `pool-sizing`, `pool-exhaustion` and `blocking-work`.
-- `pool-sizing` needs deployment files beside the code, so its cases may be scarce. If fewer than five qualify, the shortfall is reported, not filled.
+Decided (decisions 3 and 6), narrower than first proposed.
 
-**Planted cases.**
-- Five defects and three decoys per built check.
-- Across three or four services written for the set.
-- Some are planted into after commits.
+**Classes.** Four checks only: `n-plus-one`, `unbounded-query`, `missing-index` and `no-timeout`.
 
-**Size and growth.**
-- That is about 45 real and 45 planted defects.
-- Grow to 15 of each per check before ERLANG 1.0.
+**Cases per check.**
+- 5 real cases, in scope or out of it: both are recorded, and the scope is decided at scoring.
+- 5 planted defects, with 3 decoys.
 
-**Unbuilt classes.** Collect cases now for the classes with no check yet: L04 payloads, L05 memory, L10 caching, L11 cold starts and L12 load shedding. Cases collected before a check exists are as held out as it gets.
+**Size.** That is 20 real and 20 planted defects. Growth comes in later rounds, toward 15 of each per check before ERLANG 1.0.
+
+**Not in round 1.** Every other check, built or not, stays out. Classes with no check are not collected ahead of their checks.
 
 ## Decisions
 
-1. **Home.** A private repository of the owner's, outside ERLANG, with read access to it denied by configuration wherever the checks are developed (recommended). Or a private folder inside ERLANG's repository, gitignored, which is simpler but easier to leak into the checks' development.
-2. **Curation.** Screening and planting are done in isolation from the checks, and a sample is spot-checked by the owner (recommended). Or curation by hand.
-3. **Size of the first round.** 5 real and 5 planted per built check (recommended), or more.
-4. **Precision on real after-commits.** Scoped to what the fix changed, with the rest judged by the owner and reported apart (recommended). Or ITTEN's rule, where any finding on the after commit counts.
-5. **Out-of-scope stratum.** Collected and reported apart (recommended), or left out.
-6. **Unbuilt classes.** Collected now, before their checks exist (recommended), or later.
-7. **Cadence.** Scored at releases only (recommended), or on demand.
+Taken on review, 17 November 2026.
+
+1. **Home.** A private held-out repository, made locally with no GitHub repository yet.
+   - Its first commit is the exclusion list.
+   - It holds a copy of ERLANG's rules (`reference/rules/` and `reference/README.md`, as of the set's proposal), so curation never opens ERLANG.
+   - The checks are developed without access to the held-out set; read access to it is denied by configuration.
+2. **Curation.** Real cases are screened and defects planted without access to ERLANG's checks, reading only the set's repository and public GitHub. A sample is reviewed by the owner.
+3. **First round.** 5 real and 5 planted cases for each of `n-plus-one`, `unbounded-query`, `missing-index` and `no-timeout`, and no other check.
+4. **Precision on real after-commits.** Scoped to the files and functions the fix changed. Findings elsewhere are judged by the owner and reported apart.
+5. **Out-of-scope stratum.** Kept, and reported apart.
+6. **Unbuilt classes.** Not collected: built checks only.
+7. **Cadence.** Scored at releases only.
