@@ -8,7 +8,8 @@
 //   flag may come before or after <dir>. Every form is run by
 //   scripts/cli-test.js.
 //   erlang --version prints the version and the commit it runs from, so it is
-//   not mistaken for the Erlang runtime (research/naming.md).
+//   not mistaken for the Erlang runtime (research/naming.md), and
+//   "(uncommitted changes)" when tracked files differ from that commit.
 // Scope: erlang.config.json at <dir> may exclude paths that are not part of
 //   the app, such as test fixtures and generated output, and name request
 //   handlers ERLANG cannot find itself (lib/handlers.js):
@@ -24,6 +25,7 @@
 import { readFileSync, statSync, realpathSync, existsSync } from 'node:fs';
 import { resolve, relative, basename, join, dirname, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
 import { report, write } from '../core/report.js';
 import { describe } from '../lib/isolate.js';
 import { readScope, enter, leave } from '../lib/scope.js';
@@ -69,6 +71,14 @@ export function commit(root = ROOT) {
     }
     return null;
   } catch { return null; }
+}
+
+// Whether tracked files, staged or not, differ from HEAD: git diff --quiet
+// HEAD exits 1 when they do, 0 when not. Untracked files do not count. null
+// when git cannot say (no git, not a checkout), so nothing is claimed.
+export function uncommitted(root = ROOT) {
+  const r = spawnSync('git', ['-C', root, 'diff', '--quiet', 'HEAD', '--'], { stdio: 'ignore', timeout: 10_000 });
+  return r.status === 1 ? true : r.status === 0 ? false : null;
 }
 
 export const CHECKS = [noTimeout, perItem, unboundedQuery, poolSizing, retryPolicy, missingIndex];
@@ -117,7 +127,8 @@ export function scan(dir, { started = new Date(), only = null, modules = CHECKS 
 if (process.argv[1] && realpathSync(resolve(process.argv[1])) === fileURLToPath(import.meta.url)) {
   const args = process.argv.slice(2);
   if (args.length === 1 && (args[0] === '--version' || args[0] === '-v')) {
-    console.log(`erlang ${VERSION} (commit ${commit() ?? 'unknown'}): load and resilience checks (not the Erlang runtime)`);
+    const sha = commit();
+    console.log(`erlang ${VERSION} (commit ${sha ?? 'unknown'}): load and resilience checks (not the Erlang runtime)${sha && uncommitted() ? ' (uncommitted changes)' : ''}`);
     process.exit(0);
   }
   const outAt = args.indexOf('--out');

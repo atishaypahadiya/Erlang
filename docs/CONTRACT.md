@@ -11,8 +11,9 @@ node bin/erlang.js --version
 
 - `<dir>` is the root of the code to check, absolute or relative to the working directory. `--out <file>` may come before or after it.
 - `--version` (or `-v`), alone, prints one line and exits 0:
-  `erlang 0.0.1 (commit <40-hex SHA>): load and resilience checks (not the Erlang runtime)`.
-  The SHA is the commit ERLANG runs from, read from its `.git` without running git. It is `unknown` outside a git checkout. It does not show changes that are not yet committed.
+  `erlang 0.0.1 (commit <40-hex SHA>): load and resilience checks (not the Erlang runtime)`,
+  followed by ` (uncommitted changes)` when tracked files, staged or not, differ from that commit.
+  The SHA is the commit ERLANG runs from, read from its `.git`. It is `unknown` outside a git checkout. Uncommitted changes are found with `git diff --quiet HEAD`. Untracked files do not count. When git cannot answer, no suffix is printed.
 - Requirements: Node.js 22 or later, and `npm install` once in the ERLANG directory, which installs its one dependency, TypeScript 6.0.3.
 
 Every form above is run by `scripts/cli-test.js`.
@@ -87,7 +88,7 @@ A refused or partial report is still written. An error inside one check stops on
 
 ## Network
 
-None. `erlang` opens no socket, sends no request, starts no process and generates no load. The only network use is `npm install`, which fetches TypeScript from the npm registry once.
+None. `erlang` opens no socket, sends no request and generates no load. It starts no process, except `git diff` for `--version`. The only network use is `npm install`, which fetches TypeScript from the npm registry once.
 
 ## Writes
 

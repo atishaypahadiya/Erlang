@@ -12,7 +12,7 @@
 // Usage: node scripts/cli-test.js            exit 0 when every case holds
 
 import { spawnSync, execFileSync } from 'node:child_process';
-import { VERSION, commit } from '../bin/erlang.js';
+import { VERSION, commit, uncommitted } from '../bin/erlang.js';
 import { readFileSync, writeFileSync, rmSync, existsSync, mkdirSync, cpSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -77,7 +77,6 @@ writeFileSync(join(refusedConfig, 'erlang.config.json'), '{ "exclude": ["../outs
 }
 {
   const r = cli('--version');
-  const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: ROOT, encoding: 'utf8' }).trim();
   // commit() on hand-made .git layouts: packed refs, a worktree's .git file,
   // a detached HEAD, and no checkout at all.
   const A = 'a'.repeat(40), B = 'b'.repeat(40), C = 'c'.repeat(40);
@@ -92,7 +91,28 @@ writeFileSync(join(refusedConfig, 'erlang.config.json'), '{ "exclude": ["../outs
   g('escape/.git/HEAD', 'ref: refs/../../HEAD\n');
   const got = ['packed', 'main', 'wt', 'detached', 'none', 'escape'].map((d) => commit(join(OUT, 'git', d)));
   ok('commit(): packed ref, loose ref, worktree, detached, no checkout, a ref that leaves .git', JSON.stringify(got) === JSON.stringify([A, A, B, C, null, null]), JSON.stringify(got.map((x) => x && x[0])));
-  ok('--version: the version, the commit (as git names HEAD), and that it is not the Erlang runtime, exit 0', r.status === 0 && r.stdout.trim() === `erlang ${VERSION} (commit ${head}): load and resilience checks (not the Erlang runtime)`, r.stdout.trim());
+  // uncommitted() on a scratch repository: clean, an untracked file, an
+  // unstaged edit, a staged edit, and a directory git cannot read (a
+  // directory inside this checkout would answer for this checkout).
+  const repo = join(OUT, 'git', 'repo');
+  const git = (...a) => execFileSync('git', ['-c', 'user.name=fixture', '-c', 'user.email=fixture@example.invalid', '-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=/dev/null', '-C', repo, ...a], { stdio: 'ignore' });
+  mkdirSync(repo, { recursive: true });
+  git('init', '-q');
+  writeFileSync(join(repo, 'a.txt'), 'one\n');
+  git('add', 'a.txt');
+  git('commit', '-q', '-m', 'one');
+  const states = [uncommitted(repo)];
+  writeFileSync(join(repo, 'new.txt'), 'untracked\n');
+  states.push(uncommitted(repo));
+  writeFileSync(join(repo, 'a.txt'), 'two\n');
+  states.push(uncommitted(repo));
+  git('add', 'a.txt');
+  states.push(uncommitted(repo));
+  states.push(uncommitted(join(OUT, 'git', 'does-not-exist')));
+  ok('uncommitted(): clean, untracked only, unstaged edit, staged edit, and null where git cannot say', JSON.stringify(states) === JSON.stringify([false, false, true, true, null]), JSON.stringify(states));
+  const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: ROOT, encoding: 'utf8' }).trim();
+  const dirty = spawnSync('git', ['diff', '--quiet', 'HEAD', '--'], { cwd: ROOT }).status === 1;
+  ok(`--version: the version, the commit (as git names HEAD)${dirty ? ', and (uncommitted changes), since this checkout has some' : ', no suffix, since this checkout is clean'}; not the Erlang runtime; exit 0`, r.status === 0 && r.stdout.trim() === `erlang ${VERSION} (commit ${head}): load and resilience checks (not the Erlang runtime)${dirty ? ' (uncommitted changes)' : ''}`, r.stdout.trim());
 }
 for (const [label, args] of [['no arguments', []], ['--out with no file', [clean, '--out']], ['--out alone', ['--out', join(OUT, 'x.json')]], ['an unknown flag', [clean, '--fast']]]) {
   const r = cli(...args);
