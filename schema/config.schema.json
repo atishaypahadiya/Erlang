@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/atishaypahadiya/erlang/schema/config.schema.json",
   "title": "erlang.config.json",
-  "description": "How ERLANG scans a subject, read from the scan root only (lib/scope.js). Every report names the config, what it excludes and the handlers it names.",
+  "description": "How ERLANG scans a subject, read from the scan root only (lib/scope.js). Every report names the config, what it excludes, the handlers it names and the tables it calls small.",
   "type": "object",
   "additionalProperties": false,
   "properties": {
@@ -49,6 +49,15 @@
             "description": "A route template, such as /orders/:id; for a queue, its name."
           }
         }
+      }
+    },
+    "smallTables": {
+      "description": "Tables (or Prisma models) the owner states stay small, such as settings or country codes: reading all of their rows is not reported by unbounded-query. Every report names them.",
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
       }
     }
   }
