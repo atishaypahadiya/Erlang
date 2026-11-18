@@ -51,6 +51,20 @@ In the request path, calls go down the stack, to dependencies, not across to pee
 
 *Why:* "It's usually better to avoid intra-layer communication—i.e., possible cycles in the communication path—in the user request path" [S18].
 
+### STB-08 · Return every pooled connection on every path
+Strength: MUST · Evidence: platform · Check: static, trace, load
+
+A connection checked out of a pool is returned on every path out of the code that took it, errors included: in a `finally` block, or by a helper that owns the checkout. A connection that is not returned is lost to the pool until the process restarts.
+
+*Why:* node-postgres: "You must **always** return the client to the pool if you successfully check it out, regardless of whether or not there was an error with the queries you ran on the client. If you don't release the client your application will leak them and eventually your pool will be empty forever and all future requests to check out a client from the pool will wait forever" [S35]. Its API reference: "If you forget to release the client then your application will quickly exhaust available, idle clients in the pool" [S36].
+
+### STB-09 · Hold a pooled connection only while using it
+Strength: SHOULD · Evidence: platform, theory · Check: static, trace, load
+
+Code that holds a connection does not wait on another service while holding it. Calls to other services happen before the connection is taken or after it is returned.
+
+*Why:* when every connection is checked out, node-postgres queues further requests "in a FIFO queue until a client becomes available by being released back to the pool" [S36]. By Little's law [S1], the connections in use on average are the rate of checkouts times how long each is held. A call to another service while holding one adds that service's latency to every hold. A slow dependency then exhausts the database pool, as STB-02 warns, even though the database itself is idle.
+
 ## Release It! names and where they are covered
 
 The names are from the book's contents [S23]. The mapping goes by the names alone and is this set's reading, not the book's.
@@ -59,7 +73,7 @@ The names are from the book's contents [S23]. The mapping goes by the names alon
 |---|---|---|
 | Integration Points | antipattern | STB-01, TMO-01 |
 | Cascading Failures | antipattern | OVL-01 to OVL-05, RTY-02 |
-| Blocked Threads | antipattern | TMO-01, STB-02, CAP-08 |
+| Blocked Threads | antipattern | TMO-01, STB-02, STB-09, CAP-08, OVL-12 |
 | Slow Responses | antipattern | TMO-04, TMO-06 |
 | Unbounded Result Sets | antipattern | STB-04 |
 | Timeouts | pattern | TMO-01 to TMO-06 |

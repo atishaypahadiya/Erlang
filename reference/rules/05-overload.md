@@ -78,3 +78,10 @@ Strength: SHOULD · Evidence: practice · Check: static
 The listener's maximum connections do not exceed the threads, processes or file descriptors that can serve them.
 
 *Why:* Amazon found it important "for the maximum connections value to not exceed the number of listener threads, listener processes, or file descriptors on a server" [S21]. Google notes that running out of file descriptors can stop new connections and make health checks fail [S18].
+
+### OVL-12 · Keep CPU-heavy and synchronous work off the event loop
+Strength: SHOULD · Evidence: platform · Check: static, load
+
+In Node.js, a request handler does not run synchronous I/O or CPU-heavy synchronous calls: `*Sync` file, compression, child-process and crypto calls, and synchronous password hashing. It uses their asynchronous forms, which run on the worker pool, or moves the work to a worker thread or to startup.
+
+*Why:* the Node.js guide: "If a thread is taking a long time to execute a callback (Event Loop) or a task (Worker), we call it "blocked". While a thread is blocked working on behalf of one client, it cannot handle requests from any other clients". It lists the synchronous APIs a server "should not use" (`crypto.randomBytes` (synchronous version), `crypto.randomFillSync`, `crypto.pbkdf2Sync`, `zlib.inflateSync`, `zlib.deflateSync`, the synchronous file system APIs, `child_process.spawnSync`, `execSync` and `execFileSync`). It warns that input that blocks a thread lets "a malicious client" make "a Denial of Service attack" [S37]. bcrypt: "Bcrypt hashing is CPU intensive which will cause the sync APIs to block the event loop and prevent your application from servicing any inbound requests or events" [S38].
