@@ -228,6 +228,15 @@ console.log('\nunbounded-query: sinks, caps and statements');
 
 console.log('\npool-sizing: deployments, limits and lifetimes');
 {
+  const { parseYaml } = await import('../lib/yaml.js');
+  const [doc] = parseYaml('services:\n  api:\n    image: "postgres:16"   # the db\n    command: ["postgres", "-c", "max_connections=300"]\n    environment:\n      URL: postgres://db:5432/x\n');
+  ok('YAML: quoted scalars, flow lists, comments, a colon inside a value, the line of each key', doc.services.api.image === 'postgres:16' && doc.services.api.command[2] === 'max_connections=300' && doc.services.api.environment.URL === 'postgres://db:5432/x' && doc.services.api.$lines.command === 4, JSON.stringify(doc));
+  const long = `a${' '.repeat(200_000)}b\nkey: ${'x:'.repeat(100_000)}\n`;
+  const t0 = Date.now();
+  parseYaml(long);
+  ok('YAML: a 200 kB line with no key, and one with 100,000 colons, read in linear time', Date.now() - t0 < 500, `${Date.now() - t0} ms`);
+}
+{
   const PS = ['pool-sizing'];
   const pg = (max) => `import pg from 'pg';\nexport const pool = new pg.Pool(${max === null ? '' : `{ ${max} }`});\n`;
   const server = "import Fastify from 'fastify';\nimport { pool } from './db.js';\nconst app = Fastify();\napp.get('/x', async function x() { return (await pool.query('select 1')).rows; });\napp.listen({ port: 3000 });\n";
