@@ -591,7 +591,7 @@
         },
         "timing": {
           "type": "object",
-          "description": "The timing lock's verdict (lib/timing.js): reliable only with three or more samples, relative spread of 10% or less, and the one-minute load average below half the CPU count before and after.",
+          "description": "The timing lock's verdict (lib/timing.js): reliable only with three or more samples, relative spread of 10% or less, and the one-minute load average below half the CPU count before and after. Counts and shares with no time limit in them are exempt (exempt: true).",
           "required": [
             "reliable",
             "samples"
@@ -651,9 +651,20 @@
                 },
                 "cpus": {
                   "type": "integer"
+                },
+                "cooledAfterS": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "description": "Seconds the harness waited after the step for the load average to fall below half the CPU count; null when it never did within 120 s (docs/decisions.md, Q6)."
                 }
               },
               "additionalProperties": false
+            },
+            "exempt": {
+              "type": "boolean",
+              "description": "True for a verdict on a count, or on a share with no time limit in it (statements, calls, connections, bytes, the share of requests that failed): exempt from the timing rule, always reliable; the load averages are kept as information."
             }
           }
         }

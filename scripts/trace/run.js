@@ -51,6 +51,9 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 // shares this runner: the form's load/load.json steps, run by k6, over the
 // same database, seed and served twin.
 const LOAD = process.argv.includes('--load');
+// How many times one twin's repeat is run again after ITTEN's lock
+// interrupts it, before the run stops with exit 75.
+const LOAD_ATTEMPTS = 5;
 const [formDir, outDir, modules] = process.argv.slice(2).filter((a) => a !== '--load').map((p) => p && resolve(p));
 const { ERLANG_TRACE_CONTAINER: CONTAINER, ERLANG_TRACE_PORT: PORT, ERLANG_TRACE_APP_PASSWORD_FILE: PW_FILE } = process.env;
 if (!formDir || !outDir || !modules || !CONTAINER || !PORT || !PW_FILE) {
@@ -506,6 +509,10 @@ async function loadMain() {
     const rep = {};
     for (const twin of ['planted', 'clean']) {
       const { out, work, log } = works[twin];
+      // A step that ITTEN's lock interrupted voids this twin's repeat: it is
+      // run again from a fresh database and server once the lock is gone
+      // (the wait below, whose limit ends the run with exit 75).
+      for (let attempt = 1; ; attempt++) {
       const tables = freshDatabase(scale, join(formDir, twin));
       let app = await serve(work, scale, log);
       const steps = [];
@@ -520,9 +527,13 @@ async function loadMain() {
           const after = await cooled();
           console.log(`load: ${spec.fixture} ${twin} repeat ${k + 1} ${step.id}: ${result.interrupted ? 'interrupted by ITTEN\'s lock' : `${result.counts.requests} requests, ${result.counts.ok} ok, ${result.counts.refused} refused, ${result.counts.failed} failed`}`);
           steps.push({ id: step.id, method: step.method ?? 'GET', path: step.path, route: step.route ?? routeOf(app.routes, step.method ?? 'GET', step.path), rate: step.rate, seconds: step.seconds, ...result, environment: { before, after } });
+          if (result.interrupted) break;
         }
       } finally { await app.stop(); }
-      rep[twin] = { tables, steps };
+      if (!steps.some((s) => s.interrupted)) { rep[twin] = { tables, steps }; break; }
+      if (attempt >= LOAD_ATTEMPTS) { console.error(`load: ${spec.fixture} ${twin} repeat ${k + 1} was interrupted by ITTEN's lock ${attempt} times; stopping.`); process.exit(EXIT_LOCKED); }
+      console.error(`load: ${spec.fixture} ${twin} repeat ${k + 1}: running it again once ITTEN's lock is gone (attempt ${attempt + 1} of ${LOAD_ATTEMPTS})`);
+      }
     }
     raw.repeats.push(rep);
   }

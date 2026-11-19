@@ -508,25 +508,36 @@ function judgeTwin(twin) {
 const keyOf = (f) => `${f.check} ${f.rules?.[0] ?? ''} ${(f.where.endpoints ?? []).map((e) => `${e.method} ${e.route}`).join(',')}${f.erlang?.trace?.host ? ` ${f.erlang.trace.host}` : ''}`;
 const matches = (d, f) => d.check === f.check && (!d.rule || f.rules?.includes(d.rule)) && (!d.host || f.erlang?.trace?.host === d.host)
   && ((f.where.endpoints ?? []).some((e) => e.method === d.method && e.route === d.route) || (!!d.symbol && f.erlang?.trace?.symbol === d.symbol));
+// A form passes only when the planted twin yields a failing finding for
+// every defect and the clean twin none. In a timed form (L09, L11), a defect
+// the planted twin reports only as "timing unreliable" is not a pass: the
+// form is UNRELIABLE (exit 3), unless something else failed (exit 1).
+// Count-based forms never produce one.
 let failed = false;
-const say = (ok, what, detail) => { if (!ok) failed = true; console.log(`${ok ? 'PASS' : 'FAIL'}  ${spec.fixture} ${spec.form} ${what}${detail ? `  (${detail})` : ''}`); };
+let unreliable = false;
+const say = (ok, what, detail, status = ok ? 'PASS' : 'FAIL') => { if (status === 'FAIL') failed = true; if (status === 'UNRELIABLE') unreliable = true; console.log(`${status}  ${spec.fixture} ${spec.form} ${what}${detail ? `  (${detail})` : ''}`); };
+const verdictOf = (t) => `samples ${JSON.stringify((t.samples ?? []).map((x) => Number(Number(x).toFixed(1))))}, spread ${t.spread == null ? 'unknown' : `${(t.spread * 100).toFixed(1)}%`}, load before ${t.before?.load1 ?? '?'}/${t.before?.cpus ?? '?'} CPUs, after ${t.after?.load1 ?? '?'}/${t.after?.cpus ?? '?'}: ${Array.isArray(t.why) ? t.why.join('; ') : t.why}`;
 for (const twin of ['planted', 'clean']) {
   if (!existsSync(join(outDir, twin, 'raw.json'))) { say(false, twin, 'no raw.json: run scripts/trace.sh'); continue; }
   const r = judgeTwin(twin);
   const judged = r.findings.filter((f) => f.severity !== 'info');
   const infos = r.findings.filter((f) => f.severity === 'info').map(keyOf);
   if (twin === 'planted') {
-    // A timing defect the lock would not judge (load, spread) is
-    // inconclusive: info never fails, so neither does the self-check.
+    // A timing defect the rule would not judge (load, spread) is
+    // inconclusive: not missed, and not a pass.
     const inconclusive = spec.defects.filter((d) => !judged.some((f) => matches(d, f)) && r.findings.some((f) => f.severity === 'info' && matches(d, f) && f.erlang?.trace?.timing?.reliable === false));
     const missing = spec.defects.filter((d) => !judged.some((f) => matches(d, f)) && !inconclusive.includes(d));
-    for (const d of inconclusive) console.log(`SKIP  ${spec.fixture} ${spec.form} planted: ${d.check} ${d.rule ?? ''} ${d.method} ${d.route}${d.host ? ` ${d.host}` : ''}: timing unreliable, so not judged`);
+    for (const d of inconclusive) {
+      const f = r.findings.find((x) => x.severity === 'info' && matches(d, x) && x.erlang?.trace?.timing?.reliable === false);
+      console.log(`UNRELIABLE  ${spec.fixture} ${spec.form} planted: ${d.check} ${d.rule ?? ''} ${d.method} ${d.route}${d.host ? ` ${d.host}` : ''}: timing unreliable (${verdictOf(f.erlang.trace.timing)})`);
+    }
     const extra = judged.filter((f) => !spec.defects.some((d) => matches(d, f)));
     const unlinked = spec.defects.filter((d) => d.linked && judged.some((f) => matches(d, f) && !f.detection.includes('static')));
-    say(!missing.length && !extra.length && !unlinked.length, `planted: ${judged.length - extra.length}/${spec.defects.length - inconclusive.length} defects traced${inconclusive.length ? ` (${inconclusive.length} timing unreliable)` : ''}${spec.defects.some((d) => d.linked) ? `, ${spec.defects.filter((d) => d.linked && !inconclusive.includes(d)).length - unlinked.length} linked to a static finding` : ''}`,
-      [...missing.map((d) => `missed ${d.check} ${d.rule ?? ''} ${d.method} ${d.route}`), ...extra.map((f) => `decoy reported: ${keyOf(f)}`), ...unlinked.map((d) => `not linked: ${d.method} ${d.route}`), ...infos.map((i) => `info: ${i}`)].join('; '));
+    const wrong = missing.length || extra.length || unlinked.length;
+    say(!wrong && !inconclusive.length, `planted: ${judged.length - extra.length}/${spec.defects.length} defects traced${inconclusive.length ? ` (${inconclusive.length} timing unreliable)` : ''}${spec.defects.some((d) => d.linked) ? `, ${spec.defects.filter((d) => d.linked && !inconclusive.includes(d)).length - unlinked.length} linked to a static finding` : ''}`,
+      [...missing.map((d) => `missed ${d.check} ${d.rule ?? ''} ${d.method} ${d.route}`), ...extra.map((f) => `decoy reported: ${keyOf(f)}`), ...unlinked.map((d) => `not linked: ${d.method} ${d.route}`), ...infos.map((i) => `info: ${i}`)].join('; '), wrong ? 'FAIL' : inconclusive.length ? 'UNRELIABLE' : 'PASS');
   } else {
     say(!judged.length, `clean: ${judged.length} error(s) or warning(s)`, [...judged.map((f) => `reported: ${keyOf(f)}`), ...infos.map((i) => `info: ${i}`)].join('; '));
   }
 }
-process.exit(failed ? 1 : 0);
+process.exit(failed ? 1 : unreliable ? 3 : 0);

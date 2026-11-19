@@ -232,9 +232,9 @@ console.log('\nThe load judge (shedding), on recorded runs');
   const same = run([0, 7, 15].map((k) => { const q = queued(k); return { planted: q.clean, clean: q.clean }; }));
   ok('  the control: twins that behave alike give no finding, and the planted defect is missed', same.code === 1 && /missed no-load-shedding step past/.test(same.text), same.text.trim());
   const busy = run([0, 7, 15].map((k) => queued(k, { load1: 6 })));
-  ok('shedding: on a busy machine the finding is info, timing unreliable, and skipped, not failed', busy.code === 0 && /SKIP  L12 express load planted: .*timing unreliable/.test(busy.text) && busy.planted?.findings[0]?.severity === 'info', busy.text.trim());
+  ok('shedding: on a busy machine the finding is info, timing unreliable, and the form is UNRELIABLE (exit 3), never a pass', busy.code === 3 && !/^PASS  L12 express load planted/m.test(busy.text) && /UNRELIABLE  L12 express load planted: .*timing unreliable \(samples .*spread .*load before 6\/8 CPUs/.test(busy.text) && busy.planted?.findings[0]?.severity === 'info', busy.text.trim());
   const hot = run([0, 7, 15].map((k) => queued(k, { load1: 0.5, cooled: false })));
-  ok('  a step whose load average never cooled is unreliable too (docs/decisions.md, Q6)', hot.code === 0 && /SKIP/.test(hot.text), hot.text.trim());
+  ok('  a step whose load average never cooled is unreliable too (docs/decisions.md, Q6)', hot.code === 3 && /UNRELIABLE.*never cooled/.test(hot.text), hot.text.trim());
   const broken = run([0, 7, 15].map((k) => { const q = queued(k); q.clean.steps[0] = step('below', 50, 15, [300, 450, 0, 0]); return q; }));
   ok('shedding: a twin that is late below the knee stops the judge: the form is wrong', broken.code !== 0 && /below the knee: the fixture or its load form is wrong/.test(broken.text), broken.text.trim().slice(0, 300));
   rmSync(form, { recursive: true, force: true });
@@ -260,8 +260,59 @@ console.log('\nThe load judge (compare), on recorded runs');
   ok('compare: requests failing to get a connection, on the two routes that call out, in the planted twin only', good.code === 0 && /planted: 2\/2/.test(good.text) && /clean: 0/.test(good.text), good.text);
   const alike = run(released, released);
   ok('  the control: twins that both release in time give nothing, and both defects are missed', alike.code === 1 && /missed pool-exhaustion step payOrder; missed pool-exhaustion step shipOrder/.test(alike.text), alike.text);
+  const busyStep = (id, route, failed) => { const s = step(id, route, failed); s.environment = { before: { load1: 6, cpus: 8 }, after: { load1: 6, cpus: 8, cooledAfterS: null } }; return s; };
+  const busy = run((k) => [busyStep('getOrder', '/orders/:id', 0), busyStep('payOrder', '/orders/:id/pay', 100 + k * 9), busyStep('shipOrder', '/orders/:id/ship', 98 + k * 9)], () => released().map((s) => busyStep(s.id, s.route, 0)));
+  ok('compare: a share of failed requests is exempt from the timing rule: on a busy machine, with an 18% spread, still failing findings (exit 0)', busy.code === 0 && /planted: 2\/2/.test(busy.text) && /exempt from the timing rule/.test(busy.text), busy.text);
   const decoy = run((k) => [step('getOrder', '/orders/:id', 90 + k), ...held(k).slice(1)], released);
   ok('  a decoy step that fails in the planted twin only is a false positive', decoy.code === 1 && /decoy reported: pool-exhaustion STB-09 getOrder/.test(decoy.text), decoy.text);
+  rmSync(form, { recursive: true, force: true });
+}
+{
+  // L09: a cheap route's late share while a heavy one runs beside it; the
+  // finding is about the heavy route.
+  const form = join(OUT, 'load-l09');
+  rmSync(form, { recursive: true, force: true });
+  for (const d of ['planted', 'clean', 'load']) cpSync(join(ROOT, 'fixtures', 'L09-blocking-work', d), join(form, d), { recursive: true });
+  const out = join(form, 'out');
+  const step = (id, late) => ({ id, method: 'GET', path: '/avatars/1', route: '/avatars/:id', rate: 20, seconds: 10, interrupted: false, counts: { requests: 200, ok: 200 - late, late, refused: 0, failed: 0, dropped: 0 }, served: { medMs: 5, p90Ms: 9, p99Ms: 20, maxMs: 30 }, refusals: null, samples: [], environment: { before: { load1: 0.5, cpus: 8 }, after: { load1: 0.5, cpus: 8, cooledAfterS: 5 } } });
+  const run = (planted) => {
+    rmSync(out, { recursive: true, force: true });
+    for (const t of ['planted', 'clean']) mkdirSync(join(out, t), { recursive: true });
+    const clean = () => ['signup', 'login', 'export', 'codes'].map((id) => step(id, 4));
+    writeFileSync(join(out, 'raw.json'), JSON.stringify({ profile: 'ci', fixture: 'L09', form: 'express', repeats: [0, 1, 2].map((k) => ({ planted: { steps: planted(k) }, clean: { steps: clean() } })) }));
+    const r = spawnSync(process.execPath, [join(ROOT, 'scripts', 'load', 'judge.js'), form, out], { encoding: 'utf8' });
+    return { code: r.status, text: (r.stdout + r.stderr).trim(), report: JSON.parse(readFileSync(join(out, 'planted', 'report.json'), 'utf8')) };
+  };
+  const good = run((k) => [step('signup', 180 + k), step('login', 190 + k), step('export', 150 + k), step('codes', 4)]);
+  const routes = good.report.findings.filter((f) => f.severity !== 'info').map((f) => f.where.endpoints?.[0]?.route ?? f.erlang?.route ?? JSON.stringify(f.where)).join(' ');
+  ok('compare with a background: avatars late while signup, login and export run, reported on those routes, not on /avatars', good.code === 0 && !/avatars/.test(routes), `${good.text}\n${routes}`);
+  const alike = run(() => ['signup', 'login', 'export', 'codes'].map((id) => step(id, 4)));
+  ok('  the control: twins whose avatars are never late give nothing, and the three defects are missed', alike.code === 1 && /0\/3/.test(alike.text), alike.text);
+  rmSync(form, { recursive: true, force: true });
+}
+
+console.log('\nTimed trace forms: unreliable is never a pass');
+{
+  // L11 (judge "starts"): first request after a start against the later ones,
+  // three starts per route. Recorded shape, synthetic numbers.
+  const form = join(OUT, 'trace-l11');
+  rmSync(form, { recursive: true, force: true });
+  for (const d of ['planted', 'clean', 'trace']) cpSync(join(ROOT, 'fixtures', 'L11-cold-start', d), join(form, d), { recursive: true });
+  const out = join(form, 'out');
+  const routes = [['region', 'GET', '/regions/P123', '/regions/:postcode'], ['countries', 'GET', '/checkout/countries', '/checkout/countries'], ['invoicePdf', 'GET', '/invoices/1.pdf', '/invoices/:id.pdf'], ['price', 'GET', '/prices/1', '/prices/:id'], ['createOrder', 'POST', '/orders', '/orders']];
+  const cold = { region: 300, countries: 115, invoicePdf: 230 };
+  const raw = (twin, env) => ({ image: null, started: '2026-11-19T00:00:00Z', environment: env, fixture: 'L11', form: 'express', twin, seed: {}, scales: { 1: { n: 1, tables: {}, requests: [], pages: [],
+    starts: routes.map(([id, method, path, route]) => ({ id, method, path, route, samples: [0, 1, 2].map((k) => ({ firstMs: (twin === 'planted' && cold[id] ? cold[id] : 5) + k, laterMs: [1, 1.1, 0.9, 1, 1.2] })) })) } } });
+  const run = (env) => {
+    rmSync(out, { recursive: true, force: true });
+    for (const t of ['planted', 'clean']) { mkdirSync(join(out, t), { recursive: true }); writeFileSync(join(out, t, 'raw.json'), JSON.stringify(raw(t, env))); }
+    const r = spawnSync(process.execPath, [join(ROOT, 'scripts', 'trace', 'judge.js'), form, out], { encoding: 'utf8' });
+    return { code: r.status, text: (r.stdout + r.stderr).trim() };
+  };
+  const calm = run({ before: { load1: 0.5, cpus: 8 }, after: { load1: 0.5, cpus: 8 } });
+  ok('starts on a calm machine: the three cold routes are failing findings, and the form passes (exit 0)', calm.code === 0 && /^PASS  L11 express planted: 3\/3/m.test(calm.text), calm.text);
+  const busy = run({ before: { load1: 6, cpus: 8 }, after: { load1: 6, cpus: 8 } });
+  ok('  the same run on a busy machine: UNRELIABLE with samples, spread and load averages, exit 3, never SKIP or PASS', busy.code === 3 && /^UNRELIABLE  L11 express planted: cold-start STB-10 GET \/regions\/:postcode: timing unreliable \(samples .*spread .*load before 6\/8 CPUs/m.test(busy.text) && /^UNRELIABLE  L11 express planted: 0\/3/m.test(busy.text) && !/^(SKIP|PASS)  L11 express planted/m.test(busy.text), busy.text);
   rmSync(form, { recursive: true, force: true });
 }
 

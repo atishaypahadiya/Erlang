@@ -176,6 +176,14 @@ for form in "${forms[@]}"; do
     failed=1
     continue
   fi
-  node "scripts/$MODE/judge.js" "fixtures/$form" "dist/$MODE/$form" || failed=1
+  # The judge's 3: nothing failed, but a planted defect was only "timing
+  # unreliable", so the form is not confirmed (load forms).
+  set +e
+  node "scripts/$MODE/judge.js" "fixtures/$form" "dist/$MODE/$form"
+  jrc=$?
+  set -e
+  if [ "$jrc" = "3" ]; then unreliable=1; elif [ "$jrc" != "0" ]; then failed=1; fi
 done
-exit "$failed"
+if [ "$failed" = "1" ]; then exit 1; fi
+if [ "${unreliable:-0}" = "1" ]; then exit 3; fi
+exit 0

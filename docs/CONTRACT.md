@@ -91,6 +91,7 @@ ERLANG never applies a fix. Applying one is the caller's step. Every auto fix in
 | 2 | Refused: `<dir>` is not a readable directory, or its config cannot be read |
 | 3 | Partial with no failing findings: a file could not be read, so the silence vouches for nothing |
 | 64 | Bad usage (`EX_USAGE`) |
+| 75 | Temporarily blocked, nothing judged, retry later (`EX_TEMPFAIL`). `erlang scan` measures no time and never returns it; the trace and load harnesses do, when ITTEN's timing lock keeps them from measuring (below). |
 
 These codes, and the rule that error and warning fail a run while info never does, are shared with ITTEN and KERCKHOFFS.
 
@@ -168,9 +169,10 @@ Trace findings are finding/1:
 |---|---|
 | 0 | Every form as expected: each planted twin reports exactly its defects, linked where `trace.json` says, and each clean twin reports no error or warning |
 | 1 | A form was not as expected, or its run failed |
+| 3 | Nothing failed, but in a timed form (trace: L09, L11; every load form) a planted defect was reported only as `timing unreliable`, so the form is not confirmed (`UNRELIABLE`, never `PASS`) |
 | 2 | Cannot run: Docker is not running, PostgreSQL did not start, or the port is bound beyond 127.0.0.1 |
 | 64 | Bad usage |
-| 75 | ITTEN's timing lock stayed active past the wait (`EX_TEMPFAIL`): read at start and immediately before each twin, waited on, rereading about once a second, for `ERLANG_LOCK_WAIT_S` seconds (600 by default), and named in the message (`research/itten-lock.md`). |
+| 75 | Temporarily blocked, nothing judged, retry later (`EX_TEMPFAIL`): ITTEN's timing lock stayed active past the wait, read at start and immediately before each twin, waited on, rereading about once a second, for `ERLANG_LOCK_WAIT_S` seconds (600 by default), and named in the message (`research/itten-lock.md`). |
 
 **Network**
 - PostgreSQL publishes its port on 127.0.0.1 only. Each twin listens on 127.0.0.1 only, whatever host and port it asks for. Requests go only to the twin, one at a time, at most 5 a second, three per request per scale (two for requests that wait out a timeout), apart from soaks.
@@ -183,7 +185,7 @@ Trace findings are finding/1:
 - One Docker container, removed on exit, including on failure. The image stays in Docker's store.
 - Nothing in `fixtures/`: each twin is copied to `dist/` before it runs.
 
-**Determinism.** The seeds use no randomness, and the counts are exact. For each of the four first forms, two consecutive runs gave reports identical apart from `started`, for both twins. Timings are judged only under the timing lock (three or more samples, relative spread of 10% or less, one-minute load average below half the CPU count before and after); otherwise the finding is `info`, and a planted defect judged that way is reported as `SKIP ... timing unreliable`, not as missed.
+**Determinism.** The seeds use no randomness, and the counts are exact. For each of the four first forms, two consecutive runs gave reports identical apart from `started`, for both twins. Timings are judged only under the timing lock (three or more samples, relative spread of 10% or less, one-minute load average below half the CPU count before and after); otherwise the finding is `info`, and a planted defect judged that way is reported as `UNRELIABLE ... timing unreliable`, with its samples, spread and load averages: neither missed nor passed, and the run exits 3 unless something else failed. Count-based forms never produce one.
 
 **Load on the machine.** Everything runs at `nice -n 15`. The container is held to one CPU and 1 GB. A full run of the nineteen forms takes about twenty minutes, most of it L07 waiting out timeouts and L05's soaks.
 
@@ -206,7 +208,7 @@ Each form's `load/load.json` lists its steps (method, path, rate, seconds, the l
 | CI (`CI=true`) | 500 a second | 60 s | 1,200 s of load | any |
 | A workstation | 200 a second | 20 s | 600 s of load | one |
 
-**ITTEN's timing lock** is read before each step and every 5 seconds during it. A lock that appears mid-step stops k6; the step is discarded and the run judged again later. At the wait's limit the run stops with exit 75, naming the lock.
+**ITTEN's timing lock** is read before each step and every 5 seconds during it. A lock that appears mid-step stops k6 and voids that twin's repeat, which runs again from a fresh database and server once the lock is gone; after five interruptions of one repeat the run stops with exit 75. At the wait's limit the run stops with exit 75, naming the lock.
 
 **Judges.** `shedding` (L12): past the knee, the share of requests served in time, against the twin's share below it. `compare` (every other row): each judged step names one quantity, and a twin reports when its median over the repeats is at least the step's `ratio` times the other twin's and at least its `floor`:
 
@@ -225,10 +227,10 @@ Each form's `load/load.json` lists its steps (method, path, rate, seconds, the l
 
 A step's paths must start with a single `/` and resolve to the twin's own origin; anything else is refused.
 
-**Judging.** Each twin against the other, never against an absolute number. Every load finding goes through the timing rule: the judged quantity in each repeat (at least 3), a relative spread of 10% or less, and the one-minute load average below half the CPU count before every step and after it, "after" read once the harness's own load has stopped and the average has fallen (up to 120 s; docs/decisions.md, Q6). Otherwise the finding is `info`, `timing unreliable`, and never fails; a planted defect judged that way is reported as `SKIP`, not as missed. A finding that agrees with a static finding (check, rule, and the symbol or endpoint) is that finding, with `load` in its `detection` and the measurements in `erlang.load`; its fingerprint stays the static finding's, and never holds a measured value.
+**Judging.** Each twin against the other, never against an absolute number. A verdict on a count, or on a share with no time limit in it (`statements`, `attempts`, `stub-open`, `connections`, `bytes`, `failed`), is exempt from the timing rule: always judged, with the load averages recorded as information and `exempt: true` in `erlang.load.timing`. Every other load finding (latencies, `late-share`, the shedding gap, `heap-growth`) goes through the timing rule: the judged quantity in each repeat (at least 3), a relative spread of 10% or less, and the one-minute load average below half the CPU count before every step and after it, "after" read once the harness's own load has stopped and the average has fallen (up to 120 s; docs/decisions.md, Q6). Otherwise the finding is `info`, `timing unreliable`, and never fails; a planted defect judged that way is reported as `UNRELIABLE`: neither missed nor passed. A finding that agrees with a static finding (check, rule, and the symbol or endpoint) is that finding, with `load` in its `detection` and the measurements in `erlang.load`; its fingerprint stays the static finding's, and never holds a measured value.
 
 **Output.** `dist/load/<id>/<form>/raw.json` (every step of every repeat: counts of requests served in time, late, refused and failed, latency percentiles, the twin's probes, the load average before and after), the k6 scripts and summaries, and `<twin>/report.json`, a report/1.
 
-**Exit codes**: as the trace harness's; 2 also when k6 is missing or a step is over its caps.
+**Exit codes**: as the trace harness's; 2 also when k6 is missing or a step is over its caps. A form passes only when the planted twin yields a failing finding for every defect under the timing rule and the clean twin reports no error or warning; a planted defect reported only as `timing unreliable` makes the form `UNRELIABLE`, printed with its samples, spread and load averages, and the run exits 3 unless something else failed.
 
 **Network and writes**: as the trace harness's. Load goes only to the twin, on 127.0.0.1.

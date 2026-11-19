@@ -48,6 +48,20 @@ const SHED_GAP = 0.25;
 // metric, the median over the repeats, is at least the step's ratio (RATIO
 // by default) times the other twin's, and at least the step's floor.
 const RATIO = 1.5;
+// Verdicts on counts, or on shares with no time limit in them, are exempt
+// from the timing rule (the owner, 19 November 2026): statements, calls,
+// connections, bytes, and the share of requests that failed. Everything
+// else is timed: latencies, the share answered late (a time limit), the
+// shedding gap (served within okMs), and heap kept per request (neither a
+// count nor a share; it moves with the collector and the machine).
+const EXEMPT = new Set(['statements', 'attempts', 'stub-open', 'connections', 'bytes', 'failed']);
+// The verdict of an exempt quantity: recorded like the timing rule's, with
+// the load averages kept as information, and always reliable.
+const exempt = ({ samples, before, after }) => {
+  const xs = samples.filter((x) => Number.isFinite(x));
+  const med = xs.length ? median(xs) : null;
+  return { reliable: true, exempt: true, reason: null, why: [], samples: xs, median: med, spread: xs.length && med > 0 ? (Math.max(...xs) - Math.min(...xs)) / med : null, before: before ?? null, after: after ?? null };
+};
 const JUDGE_OF = { 'stub-open': 'inflight', failed: 'pool-errors', connections: 'connection-errors', p99: 'latency', p90: 'latency', median: 'latency', max: 'first-request', 'late-share': 'throughput', 'heap-growth': 'memory' };
 const METRICS = {
   statements: { what: 'statements per request', of: (s) => (s.counts.requests ? (s.statements?.calls ?? 0) / s.counts.requests : 0), fmt: (x) => x.toFixed(1) },
@@ -86,7 +100,7 @@ function environments(raw) {
   const worst = (key) => all.reduce((w, e) => {
     const x = e[key];
     const load = key === 'after' && x.cooledAfterS === null ? Math.max(x.load1, x.cpus / 2) : x.load1;
-    return !w || load > w.load1 ? { load1: load, cpus: x.cpus } : w;
+    return !w || load > w.load1 ? { load1: load, cpus: x.cpus, ...(key === 'after' ? { cooledAfterS: x.cooledAfterS ?? null } : {}) } : w;
   }, null);
   return { before: worst('before'), after: worst('after') };
 }
@@ -111,6 +125,7 @@ function judgeTwin(raw, twin) {
       const runs = raw.repeats.map((rep) => ({ me: stepOf(rep, twin, id), them: stepOf(rep, other, id) }));
       const samples = runs.map((r) => Number((share(r.them) - share(r.me)).toFixed(4)));
       const gap = median(samples);
+      if (twin === 'planted') MEASURED.push(`step ${id} (goodput gap, clean minus planted): ${JSON.stringify(samples)}; ${verdictOf(timingJudge({ samples, before: env.before, after: env.after }))}`);
       if (gap < SHED_GAP) continue;
       const timing = timingJudge({ samples, before: env.before, after: env.after });
       const s0 = runs[0].me;
@@ -131,9 +146,14 @@ function judgeTwin(raw, twin) {
       const mine = median(runs.map((r) => r.me));
       const theirs = median(runs.map((r) => r.them));
       const ratio = step.ratio ?? RATIO;
+      if (twin === 'planted') {
+        const r4 = (xs) => JSON.stringify(xs.map((x) => Number(x.toFixed(4))));
+        const v = (EXEMPT.has(step.metric) ? exempt : timingJudge)({ samples: runs.map((r) => r.me), before: env.before, after: env.after });
+        MEASURED.push(`step ${step.id} (${step.metric}, needs ${ratio}x and ${step.floor ?? 0}): planted ${r4(runs.map((r) => r.me))}, clean ${r4(runs.map((r) => r.them))}; ${v.exempt ? 'a count or share, exempt from the timing rule; ' : ''}${verdictOf(v)}`);
+      }
       if (!(mine >= (step.floor ?? 0)) || !(mine >= ratio * theirs) || mine === 0) continue;
       const samples = runs.map((r) => Number(r.me.toFixed(4)));
-      const timing = timingJudge({ samples, before: env.before, after: env.after });
+      const timing = (EXEMPT.has(step.metric) ? exempt : timingJudge)({ samples, before: env.before, after: env.after });
       const s0 = stepOf(raw.repeats[0], twin, step.id);
       // With a background (L09), the finding is about the background route,
       // whose work slowed the measured one.
@@ -181,8 +201,20 @@ function emit(t, statics, message, load, severity) {
 }
 
 const raw = existsSync(join(outDir, 'raw.json')) ? JSON.parse(readFileSync(join(outDir, 'raw.json'), 'utf8')) : null;
+// A form passes only when the planted twin yields a failing finding for
+// every defect under the timing rule, and the clean twin none. A defect the
+// planted twin reports only as "timing unreliable" is not a pass: the form is
+// UNRELIABLE (exit 3, nothing failed, nothing confirmed), unless something
+// else failed (exit 1).
 let failed = false;
-const say = (ok, what, detail) => { if (!ok) failed = true; console.log(`${ok ? 'PASS' : 'FAIL'}  ${spec.fixture} ${spec.form} load ${what}${detail ? `  (${detail})` : ''}`); };
+let unreliable = false;
+// Every judged step's quantities, both twins, per repeat, with the timing
+// verdict: printed under the planted twin's line, so a CI log carries them.
+const MEASURED = [];
+const say = (ok, what, detail, status = ok ? 'PASS' : 'FAIL') => { if (status === 'FAIL') failed = true; if (status === 'UNRELIABLE') unreliable = true; console.log(`${status}  ${spec.fixture} ${spec.form} load ${what}${detail ? `  (${detail})` : ''}`); };
+// The timing verdict behind an unreliable finding, for the report: samples,
+// spread, load averages before and after.
+const verdictOf = (t) => `samples ${JSON.stringify(t.samples)}, spread ${t.spread === null ? 'unknown' : `${(t.spread * 100).toFixed(1)}%`}, load before ${t.before?.load1 ?? '?'}/${t.before?.cpus ?? '?'} CPUs, after ${t.after?.load1 ?? '?'}/${t.after?.cpus ?? '?'}${t.after?.cooledAfterS === null ? ' (never cooled)' : ''}${(Array.isArray(t.why) ? t.why.join('; ') : t.why) ? `: ${Array.isArray(t.why) ? t.why.join('; ') : t.why}` : ''}`;
 if (!raw) { say(false, '', 'no raw.json: run scripts/load.sh'); process.exit(1); }
 const keyOf = (f) => `${f.check} ${f.rules?.[0] ?? ''} ${f.erlang?.load?.step ?? ''}`;
 const matches = (d, f) => d.check === f.check && (!d.rule || f.rules?.includes(d.rule)) && f.erlang?.load?.step === d.step;
@@ -193,14 +225,19 @@ for (const twin of ['planted', 'clean']) {
   const infos = r.findings.filter((f) => f.severity === 'info');
   if (twin === 'planted') {
     const inconclusive = spec.defects.filter((d) => !judged.some((f) => matches(d, f)) && infos.some((f) => matches(d, f) && f.erlang.load.timing.reliable === false));
-    for (const d of inconclusive) console.log(`SKIP  ${spec.fixture} ${spec.form} load planted: ${d.check} ${d.rule ?? ''} step ${d.step}: ${REASON}, so not judged`);
+    for (const d of inconclusive) {
+      const f = infos.find((x) => matches(d, x) && x.erlang.load.timing.reliable === false);
+      console.log(`UNRELIABLE  ${spec.fixture} ${spec.form} load planted: ${d.check} ${d.rule ?? ''} step ${d.step}: ${REASON} (${verdictOf(f.erlang.load.timing)})`);
+    }
     const missing = spec.defects.filter((d) => !judged.some((f) => matches(d, f)) && !inconclusive.includes(d));
     const extra = judged.filter((f) => !spec.defects.some((d) => matches(d, f)));
     const unlinked = spec.defects.filter((d) => d.linked && judged.some((f) => matches(d, f) && !f.detection.includes('static')));
-    say(!missing.length && !extra.length && !unlinked.length, `planted: ${judged.length - extra.length}/${spec.defects.length - inconclusive.length} defects found under load${inconclusive.length ? ` (${inconclusive.length} timing unreliable)` : ''}`,
-      [...missing.map((d) => `missed ${d.check} step ${d.step}`), ...extra.map((f) => `decoy reported: ${keyOf(f)}`), ...unlinked.map((d) => `not linked: step ${d.step}`), ...infos.map((f) => `info: ${keyOf(f)}`)].join('; '));
+    const wrong = missing.length || extra.length || unlinked.length;
+    say(!wrong && !inconclusive.length, `planted: ${judged.length - extra.length}/${spec.defects.length} defects found under load${inconclusive.length ? ` (${inconclusive.length} timing unreliable)` : ''}`,
+      [...missing.map((d) => `missed ${d.check} step ${d.step}`), ...extra.map((f) => `decoy reported: ${keyOf(f)}`), ...unlinked.map((d) => `not linked: step ${d.step}`), ...infos.map((f) => `info: ${keyOf(f)}`)].join('; '), wrong ? 'FAIL' : inconclusive.length ? 'UNRELIABLE' : 'PASS');
+    for (const m of MEASURED) console.log(`      measured ${m}`);
   } else {
     say(!judged.length, `clean: ${judged.length} error(s) or warning(s)`, [...judged.map((f) => `reported: ${keyOf(f)}`), ...infos.map((f) => `info: ${keyOf(f)}`)].join('; '));
   }
 }
-process.exit(failed ? 1 : 0);
+process.exit(failed ? 1 : unreliable ? 3 : 0);
