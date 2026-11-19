@@ -229,6 +229,17 @@ console.log('\nThe load judge (shedding), on recorded runs');
   ok('shedding: the queueing twin is reported, the capped twin is not', good.code === 0 && /PASS  L12 express load planted: 1\/1/.test(good.text) && /PASS  L12 express load clean: 0/.test(good.text), good.text.trim());
   ok('  linked to the static finding by symbol, with load in its detection and its fingerprint unchanged', !!f && f.detection.includes('static') && f.detection.includes('load') && f.fingerprint === scan(join(form, 'planted')).findings.find((s) => s.check === 'no-load-shedding')?.fingerprint, f && JSON.stringify(f.detection));
   ok('  the measured shares are in erlang.load, never in the fingerprint', !!f && f.erlang.load.samples.length === 3 && f.erlang.load.timing.reliable === true && !/\d\.\d/.test(f.fingerprint), f?.fingerprint);
+  // The timing trial (Q6): probes around every run, five pairs.
+  const withProbes = (q, cpuMs = 100, busy = false) => { for (const t of ['planted', 'clean']) for (const s of q[t].steps) { s.environment = { before: { load1: busy ? 6 : 0.5, cpus: 8 }, after: { load1: busy ? 6 : 0.5, cpus: 8, cooledAfterS: 5 }, probe: { before: { cpuMs, ioMs: 50 }, after: { cpuMs, ioMs: 50 } } }; } return q; };
+  const trialOf = (text) => /^TRIAL .*$/m.exec(text)?.[0] ?? '';
+  const steady = run([0, 3, 6, 9, 12].map((k) => withProbes(queued(k), 100, true)));
+  ok('trial: on a busy machine whose probes agree, current is UNRELIABLE, (a) and (a)+(b) PASS, no clean false positive', /current rule UNRELIABLE \(clean false positives 0/.test(trialOf(steady.text)) && /\(a\) probe PASS \(clean false positives 0/.test(trialOf(steady.text)) && /\(a\)\+\(b\) probe and pairs PASS \(clean false positives 0/.test(trialOf(steady.text)), trialOf(steady.text));
+  const drift = run([0, 3, 6, 9, 12].map((k) => withProbes(queued(k), k === 6 ? 140 : 100)));
+  ok('  probes that disagree (one run 40% slower) make (a) and (a)+(b) UNRELIABLE, whatever the load average', /\(a\) probe UNRELIABLE/.test(trialOf(drift.text)) && /\(a\)\+\(b\) probe and pairs UNRELIABLE/.test(trialOf(drift.text)) && /probe CPU times disagree by 40\.0%/.test(drift.text), drift.text);
+  const onePair = run([0, 3, 6, 9, 12].map((k) => { const q = withProbes(queued(k)); if (k === 9) q.planted = withProbes(queued(k)).clean; return q; }));
+  ok('  a pair that does not show the gap: (a)+(b) misses the defect (the median shows it; current and (a) call the spread unreliable)', /current rule UNRELIABLE/.test(trialOf(onePair.text)) && /\(a\)\+\(b\) probe and pairs FAIL \(clean false positives 0, decoys 0, missed past\)/.test(trialOf(onePair.text)), trialOf(onePair.text));
+  const three = run([0, 7, 15].map((k) => withProbes(queued(k))));
+  ok('  three pairs are too few for (a)+(b): UNRELIABLE, fewer than 5', /\(a\)\+\(b\) probe and pairs UNRELIABLE/.test(trialOf(three.text)) && /fewer than 5/.test(three.text), three.text);
   const same = run([0, 7, 15].map((k) => { const q = queued(k); return { planted: q.clean, clean: q.clean }; }));
   ok('  the control: twins that behave alike give no finding, and the planted defect is missed', same.code === 1 && /missed no-load-shedding step past/.test(same.text), same.text.trim());
   const busy = run([0, 7, 15].map((k) => queued(k, { load1: 6 })));
@@ -288,6 +299,29 @@ console.log('\nThe load judge (compare), on recorded runs');
   ok('compare with a background: avatars late while signup, login and export run, reported on those routes, not on /avatars', good.code === 0 && !/avatars/.test(routes), `${good.text}\n${routes}`);
   const alike = run(() => ['signup', 'login', 'export', 'codes'].map((id) => step(id, 4)));
   ok('  the control: twins whose avatars are never late give nothing, and the three defects are missed', alike.code === 1 && /0\/3/.test(alike.text), alike.text);
+  rmSync(form, { recursive: true, force: true });
+}
+
+console.log('\nThe load judge: a static info left unresolved takes the load verdict');
+{
+  const form = join(OUT, 'load-l10');
+  rmSync(form, { recursive: true, force: true });
+  for (const d of ['planted', 'clean', 'load']) cpSync(join(ROOT, 'fixtures', 'L10-no-cache', d), join(form, d), { recursive: true });
+  const out = join(form, 'out');
+  const ids = [['orderTotals', '/stats'], ['orderLines', '/orders/:id/lines'], ['quote', '/checkout/quote'], ['categoryCount', '/stats/categories/:id'], ['customerOrders', '/stats/customers/:id'], ['refundTotals', '/stats/refunds'], ['exportReady', '/exports/:id/ready']];
+  const step = (id, route, perRequest) => ({ id, method: 'GET', path: '/x', route, rate: 10, seconds: 10, interrupted: false, counts: { requests: 101, ok: 101, late: 0, refused: 0, failed: 0, dropped: 0 }, statements: { calls: Math.round(perRequest * 101) }, served: { medMs: 2, p90Ms: 3, p99Ms: 5, maxMs: 9 }, refusals: null, samples: [], environment: { before: { load1: 1.9, cpus: 2 }, after: { load1: 0.9, cpus: 2, cooledAfterS: 30 } } });
+  const run = (planted) => {
+    rmSync(out, { recursive: true, force: true });
+    for (const t of ['planted', 'clean']) mkdirSync(join(out, t), { recursive: true });
+    const clean = { orderTotals: 0.0099, orderLines: 2, quote: 2 };
+    writeFileSync(join(out, 'raw.json'), JSON.stringify({ profile: 'ci', fixture: 'L10', form: 'express', repeats: [0, 1, 2].map(() => ({ planted: { steps: ids.map(([id, r]) => step(id, r, planted[id] ?? 1)) }, clean: { steps: ids.map(([id, r]) => step(id, r, clean[id] ?? 1)) } })) }));
+    const r = spawnSync(process.execPath, [join(ROOT, 'scripts', 'load', 'judge.js'), form, out], { encoding: 'utf8' });
+    return { code: r.status, text: r.stdout + r.stderr };
+  };
+  const good = run({ orderTotals: 1, orderLines: 6, quote: 3 });
+  ok('L10: /stats, info statically (freshness unknown), is a warning once the load run counts a statement per request against the cached twin', good.code === 0 && /PASS  L10 express load planted: 3\/3/.test(good.text), good.text.split('\n').slice(0, 3).join('\n'));
+  const cached = run({ orderTotals: 0.0099, orderLines: 6, quote: 3 });
+  ok('  the control: a planted twin that caches /stats too leaves the static finding at info, and the defect is missed', cached.code === 1 && /missed no-cache step orderTotals/.test(cached.text), cached.text.split('\n')[0]);
   rmSync(form, { recursive: true, force: true });
 }
 

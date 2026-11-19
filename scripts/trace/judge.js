@@ -23,7 +23,33 @@ import { finding, fingerprint } from '../../core/finding.js';
 import { report } from '../../core/report.js';
 import { validate } from '../../core/schema.js';
 import { scan, VERSION } from '../../bin/erlang.js';
-import { judge as timingJudge, environment } from '../../lib/timing.js';
+import { judge as timingJudge, environment, REASON } from '../../lib/timing.js';
+import { agree } from '../../lib/calibration.js';
+
+// ---- The timing trial (docs/decisions.md, Q6; on trial, not the rule), for the
+// timed judges (loop, starts). Three rules judge the same run; only "current"
+// decides the exit code and writes the reports:
+//   current  the timing rule on the timed samples (3 or more, spread 10% or
+//            less, load average below half the CPUs before and after);
+//   probe    (a): the same, the load-average gate replaced by the
+//            calibration probe before and after the twin's run, which must
+//            agree within 10%;
+//   paired   (a)+(b): the per-pair ratio of the two conditions each run
+//            measures (loop: the longest blocked stretch over the request's
+//            time; starts: the first request over the later ones), 5 pairs or
+//            more, every pair showing it, the 10% spread on the ratios.
+const MIN_PAIRS = 5;
+const median_ = (xs) => { const s = [...xs].sort((a, b) => a - b); const m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
+function trialVerdict({ samples, probes, before, after, minSamples }) {
+  const why = [];
+  const xs = samples.filter((x) => Number.isFinite(x));
+  const m = xs.length ? median_(xs) : null;
+  const spread = xs.length && m > 0 ? (Math.max(...xs) - Math.min(...xs)) / m : null;
+  if (xs.length < minSamples) why.push(`${xs.length} sample(s), fewer than ${minSamples}`);
+  else if (spread === null || spread > 0.1) why.push(`spread ${spread === null ? 'unknown' : `${(spread * 100).toFixed(1)}%`}, over 10%`);
+  why.push(...agree(probes).why);
+  return { reliable: why.length === 0, reason: why.length ? REASON : null, why, samples: xs, median: m, spread, before: before ?? null, after: after ?? null };
+}
 import { growth, rowsGrowth, repeated, linkStatic, normalizeSql, routePattern, fmt, COMPRESS_MIN, UNREAD, ROWS, SLOPE } from '../../lib/trace-judge.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -104,7 +130,7 @@ function sourceOf(dir) {
 }
 const locate = (src, test) => [...src].flatMap(([file, lines]) => lines.flatMap((l, k) => (test(l) ? [{ file, line: k + 1 }] : [])));
 
-function judgeTwin(twin) {
+function judgeTwin(twin, rule = 'current') {
   const raw = JSON.parse(readFileSync(join(outDir, twin, 'raw.json'), 'utf8'));
   const subjectDir = join(formDir, twin);
   const src = sourceOf(subjectDir);
@@ -342,7 +368,10 @@ function judgeTwin(twin) {
     const blocked = judged.map((s) => s.loopMaxMs ?? 0);
     const shares = judged.map((s) => (s.ms > 0 ? (s.loopMaxMs ?? 0) / s.ms : 0));
     if (!blocked.every((b, k) => b >= BLOCK_MS && shares[k] >= BLOCK_SHARE)) continue;
-    const v = timingJudge({ samples: blocked, before: raw.environment?.before ?? environment(), after: raw.environment?.after ?? environment() });
+    const env0 = { before: raw.environment?.before ?? environment(), after: raw.environment?.after ?? environment() };
+    const probes = [raw.environment?.probe?.before, raw.environment?.probe?.after];
+    const v = rule === 'current' ? timingJudge({ samples: blocked, ...env0 })
+      : trialVerdict({ samples: rule === 'paired' ? shares : blocked, probes, ...env0, minSamples: rule === 'paired' ? MIN_PAIRS : 3 });
     const t = { ...v, why: Array.isArray(v.why) ? v.why.join('; ') || null : v.why ?? null };
     const share = Math.min(...shares);
     const trace = { judge: 'timing', path: x.path, timing: t, scales: [{ scale: HI, ms: Number(t.median.toFixed(1)) }] };
@@ -443,9 +472,17 @@ function judgeTwin(twin) {
   for (const r of spec.judge === 'starts' ? spec.starts : []) {
     const x = (hi.starts ?? []).find((q) => q.id === r.id);
     const later = x.samples.map((s) => median(s.laterMs));
-    const slow = x.samples.every((s, k) => s.firstMs - later[k] >= FIRST_EXTRA_MS && s.firstMs >= FIRST_RATIO * later[k]);
+    // Trial column "absolute" (L11): the first request's own time over 5 or
+    // more fresh starts, each against the median warm request of all starts.
+    const warm = median(x.samples.flatMap((s) => s.laterMs));
+    const slow = rule === 'absolute'
+      ? x.samples.every((s) => s.firstMs - warm >= FIRST_EXTRA_MS && s.firstMs >= FIRST_RATIO * warm)
+      : x.samples.every((s, k) => s.firstMs - later[k] >= FIRST_EXTRA_MS && s.firstMs >= FIRST_RATIO * later[k]);
     if (!slow) continue;
-    const v = timingJudge({ samples: x.samples.map((s) => s.firstMs), before: raw.environment?.before ?? environment(), after: raw.environment?.after ?? environment() });
+    const env0 = { before: raw.environment?.before ?? environment(), after: raw.environment?.after ?? environment() };
+    const probes = [raw.environment?.probe?.before, raw.environment?.probe?.after];
+    const v = rule === 'current' ? timingJudge({ samples: x.samples.map((s) => s.firstMs), ...env0 })
+      : trialVerdict({ samples: rule === 'paired' ? x.samples.map((s, k) => s.firstMs / Math.max(later[k], 0.001)) : x.samples.map((s) => s.firstMs), probes, ...env0, minSamples: rule === 'paired' || rule === 'absolute' ? MIN_PAIRS : 3 });
     const t = { ...v, why: Array.isArray(v.why) ? v.why.join('; ') || null : v.why ?? null };
     const route = r.route ?? r.path;
     const steady = median(later);
@@ -501,7 +538,7 @@ function judgeTwin(twin) {
     findings: out,
     run: { trace: { image: raw.image, fixture: raw.fixture, form: raw.form, twin, judge: spec.judge, seed: raw.seed, scales: Object.fromEntries(Object.entries(raw.scales).map(([k, v]) => [k, { n: v.n, tables: v.tables }])) } },
   });
-  writeFileSync(join(outDir, twin, 'report.json'), JSON.stringify(r, null, 2) + '\n');
+  if (rule === 'current') writeFileSync(join(outDir, twin, 'report.json'), JSON.stringify(r, null, 2) + '\n');
   return r;
 }
 
@@ -536,8 +573,41 @@ for (const twin of ['planted', 'clean']) {
     const wrong = missing.length || extra.length || unlinked.length;
     say(!wrong && !inconclusive.length, `planted: ${judged.length - extra.length}/${spec.defects.length} defects traced${inconclusive.length ? ` (${inconclusive.length} timing unreliable)` : ''}${spec.defects.some((d) => d.linked) ? `, ${spec.defects.filter((d) => d.linked && !inconclusive.includes(d)).length - unlinked.length} linked to a static finding` : ''}`,
       [...missing.map((d) => `missed ${d.check} ${d.rule ?? ''} ${d.method} ${d.route}`), ...extra.map((f) => `decoy reported: ${keyOf(f)}`), ...unlinked.map((d) => `not linked: ${d.method} ${d.route}`), ...infos.map((i) => `info: ${i}`)].join('; '), wrong ? 'FAIL' : inconclusive.length ? 'UNRELIABLE' : 'PASS');
+    for (const f of extra) console.log(`      ${f.message}`);
   } else {
     say(!judged.length, `clean: ${judged.length} error(s) or warning(s)`, [...judged.map((f) => `reported: ${keyOf(f)}`), ...infos.map((i) => `info: ${i}`)].join('; '));
+    for (const f of judged) console.log(`      ${f.message}`);
   }
+}
+// The timing trial (Q6), timed judges only: the same run under each rule,
+// one line per form, with the clean twin's failing findings and the decoys,
+// and the measurements behind them. Printed only; the exit code is the
+// current rule's.
+if (['loop', 'starts'].includes(spec.judge) && ['planted', 'clean'].every((t) => existsSync(join(outDir, t, 'raw.json')))) {
+  for (const twin of ['planted', 'clean']) {
+    const raw = JSON.parse(readFileSync(join(outDir, twin, 'raw.json'), 'utf8'));
+    const e = raw.environment ?? {};
+    const scale = raw.scales[Object.keys(raw.scales).sort((a, b) => b - a)[0]];
+    const rows = spec.judge === 'loop'
+      ? (scale.requests ?? []).map((q) => `${q.id}: blocked ms ${JSON.stringify(q.samples.slice(1).map((s) => Math.round(s.loopMaxMs ?? 0)))}, share of request ${JSON.stringify(q.samples.slice(1).map((s) => Number(((s.loopMaxMs ?? 0) / s.ms).toFixed(2))))}`)
+      : (scale.starts ?? []).map((q) => `${q.id}: first ms ${JSON.stringify(q.samples.map((s) => Math.round(s.firstMs)))}, first over later ${JSON.stringify(q.samples.map((s) => Number((s.firstMs / median_(s.laterMs)).toFixed(1))))}`);
+    console.log(`      measured ${twin}: load ${e.before?.load1}/${e.before?.cpus} before, ${e.after?.load1}/${e.after?.cpus} after; probe ${JSON.stringify(e.probe ?? null)}`);
+    for (const row of rows) console.log(`        ${row}`);
+  }
+  const outcome = (rule) => {
+    const p = judgeTwin('planted', rule);
+    const c = judgeTwin('clean', rule);
+    const judged = p.findings.filter((f) => f.severity !== 'info');
+    const unrel = spec.defects.filter((d) => !judged.some((f) => matches(d, f)) && p.findings.some((f) => f.severity === 'info' && matches(d, f) && f.erlang?.trace?.timing?.reliable === false));
+    const missing = spec.defects.filter((d) => !judged.some((f) => matches(d, f)) && !unrel.includes(d));
+    const extra = judged.filter((f) => !spec.defects.some((d) => matches(d, f)));
+    const cleanFp = c.findings.filter((f) => f.severity !== 'info').length;
+    const why = unrel.map((d) => `${d.method} ${d.route}: ${p.findings.find((f) => f.severity === 'info' && matches(d, f)).erlang.trace.timing.why}`);
+    return { status: missing.length || extra.length || cleanFp ? 'FAIL' : unrel.length ? 'UNRELIABLE' : 'PASS', cleanFp, decoys: extra.length, missed: missing.map((d) => `${d.method} ${d.route}`), why };
+  };
+  const rules = [['current', 'current rule'], ['probe', '(a) probe'], ['paired', '(a)+(b) probe and pairs'], ...(spec.judge === 'starts' ? [['absolute', '(a) with the absolute first request over 5+ starts']] : [])];
+  const results = rules.map(([rule]) => outcome(rule));
+  console.log(`TRIAL  ${spec.fixture} ${spec.form} trace: ${rules.map(([, name], k) => `${name} ${results[k].status} (clean false positives ${results[k].cleanFp}, decoys ${results[k].decoys}${results[k].missed.length ? `, missed ${results[k].missed.join(', ')}` : ''})`).join(' | ')}`);
+  rules.forEach(([, name], k) => { for (const w of results[k].why) console.log(`      ${name}: ${w}`); });
 }
 process.exit(failed ? 1 : unreliable ? 3 : 0);

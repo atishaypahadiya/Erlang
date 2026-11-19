@@ -37,7 +37,12 @@ jobs:
         with:
           node-version: 22
       - run: npm ci
+      # The timing trial (docs/decisions.md, Q6): the timed forms run 5 pairs, so
+      # the judge can print the current rule and both candidates side by side.
       - run: scripts/trace.sh
+        env:
+          ERLANG_TRIAL_RUNS: 6
+          ERLANG_TRIAL_STARTS: 5
 
   # The load forms, listed for the load job's matrix.
   load-forms:
@@ -58,7 +63,7 @@ jobs:
     needs: load-forms
     if: needs.load-forms.outputs.forms != '[]'
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -78,3 +83,5 @@ jobs:
       - run: scripts/load.sh "$FORM"
         env:
           FORM: ${{ matrix.form }}
+          # The timing trial (docs/decisions.md, Q6): five pairs a form.
+          ERLANG_LOAD_PAIRS: 5

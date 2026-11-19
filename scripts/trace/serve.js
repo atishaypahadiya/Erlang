@@ -8,7 +8,7 @@
 //     x-erlang-host. Nothing the twin calls leaves the machine;
 //   - answers the harness's probes over IPC: "pool" (the counts of the pool
 //     the twin's src/db.js exports), "memory" (after a full collection, when
-//     node runs with --expose-gc), "loop-reset" and "loop" (the event loop's
+//     node runs with --expose-gc, with the responses answered so far), "loop-reset" and "loop" (the event loop's
 //     delay since the last reset).
 // Then it imports the twin's entry (trace.json "entry", or src/server.js,
 // or src/app.js). If no server is listening once the import is done and the
@@ -36,8 +36,13 @@ const root = resolve(dir);
 
 // ---- Every server on 127.0.0.1, on a port the system picks.
 const servers = [];
+// Responses the twin's HTTP servers finished, for the "memory" probe: a heap
+// reading with the count it was taken at.
+let answered = 0;
+const counted = new WeakSet();
 const listen = net.Server.prototype.listen;
 net.Server.prototype.listen = function (...args) {
+  if (this instanceof http.Server && !counted.has(this)) { counted.add(this); this.on('request', (req, res) => res.on('finish', () => { answered++; })); }
   const cb = args.find((a) => typeof a === 'function');
   servers.push(this);
   return listen.call(this, { host: '127.0.0.1', port: 0 }, cb);
@@ -91,7 +96,7 @@ process.on('message', async (m) => {
     } else if (m.probe === 'memory') {
       if (global.gc) { global.gc(); global.gc(); }
       const u = process.memoryUsage();
-      reply({ heapUsed: u.heapUsed, rss: u.rss, collected: !!global.gc });
+      reply({ heapUsed: u.heapUsed, rss: u.rss, collected: !!global.gc, answered });
     // reset() also forgets the last tick, and the tick after it only notes
     // the time: wait for that tick, or a stretch that starts before it is
     // never recorded.

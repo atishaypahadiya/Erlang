@@ -70,3 +70,12 @@ A load step raises the machine's load average itself: k6, the twin and PostgreSQ
 - Distributed load, or load from another machine: one k6 process, on the machine that serves the twin.
 - Any target ERLANG did not start.
 - Absolute thresholds (a p99 of 200 ms): every judgement compares the twins on the same machine, back to back.
+
+## The timing trial (docs/decisions.md, Q6; not adopted)
+
+Two replacements for the load-average gate on timed verdicts, tried on the fixtures before either is adopted. CI runs five pairs a form (`ERLANG_LOAD_PAIRS`), the timed trace forms six runs and five starts (`ERLANG_TRIAL_RUNS`, `ERLANG_TRIAL_STARTS`), and both judges print a `TRIAL` line per form: the result under the current rule, under (a), under (a)+(b), each with the clean twin's failing findings and the decoys reported. The exit code stays the current rule's.
+
+- **(a) The calibration probe** (`lib/calibration.js`): SHA-256 over a fixed buffer and 64 MiB written, fsync'd and read back, before and after every run of a judged step (around each twin's run in a trace form). Reliable when every probe agrees within 10%, CPU and I/O apart; the load averages are kept as information.
+- **(b) Pairs**: a pair is one fresh run of each twin, in alternating order (planted first, then clean first). A finding holds only if every pair shows it; the 10% spread applies to the per-pair ratios (the per-pair gaps for shedding). Pairs are whole runs rather than single steps: alternating steps would need a database and a stub per twin, or the planted L06 twin's retries, which outlive their requests, would reach the stub during the clean twin's step.
+- **L05, the heap slope**: the heap after a full collection, read with the responses answered at 5 or more points through the step, fitted by least squares. A finding needs a positive slope in every repeat, each fit R² 0.9 or more, and the median slope over the floor and 3 times the other twin's. The slopes of both twins and of the decoy routes are printed.
+- **L11 (trace), the absolute first request**: the first request's time over 5 or more fresh starts, each against the median warm request of all starts, beside the per-start ratio.
