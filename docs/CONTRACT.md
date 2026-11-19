@@ -57,7 +57,7 @@ Each finding is also printed to standard output, one line per finding. A last li
 **finding/1** (`core/schema/finding.schema.json`, ITTEN's at v0.3.5):
 - `check`: one of `no-timeout`, `n-plus-one`, `per-row-writes`, `unbounded-query`, `pool-sizing`, `retry-policy`, `retry-budget`, `missing-index`, `pool-exhaustion`, `blocking-work`, `oversized-payload`, `memory-growth`, `no-cache`, `cold-start`, `no-load-shedding`.
 - `severity`: `error`, `warning` or `info`. A MUST rule gives `error` and a SHOULD rule gives `warning`. Errors and warnings fail a run; info never does. `info` with `erlang.unresolved` means ERLANG could not decide, for example when no request handler was found or the database's limit is unknown.
-- `fingerprint`: built from the check, the file and enclosing function (or table and column), and the kind of defect, with no line number, so it survives edits that move lines. Several of the same kind in one function are told apart by their order (`|2`, `|3`). Renaming the file or function changes it.
+- `fingerprint`: built from the check, the file and enclosing function (or table and column), and the kind of defect, with no line number, so it survives edits that move lines. Several of the same kind in one function are told apart by their order (`|2`, `|3`). Renaming the file or function changes it. A fingerprint never holds a value measured at run time (a count, a time, a size), so a finding keeps its fingerprint from one run to the next; declared values may appear, such as a route, a rule or an upstream host named in a trace form. The rule is shared with ITTEN and KERCKHOFFS.
 - `message`: what is wrong, why it matters and what it rests on.
 - `measured: []` and `floor: null`: nothing is measured by static checks.
 - `detection`: `static`, and `config` when deployment or configuration files were read.
@@ -69,10 +69,18 @@ Each finding is also printed to standard output, one line per finding. A last li
 
 Every finding of `erlang` carries a suggested fix in `erlang.fix`, of one of two kinds:
 
-- **`auto`**: complete edits, `{ file, line, column, length, replace }`. Replace `length` characters at a 1-based line and column, with columns in UTF-16 code units. An insert at 1:1 of a file that does not exist creates it, as when the fix is a new migration. A `note` may add context, such as building an index concurrently in production.
+- **`auto`**: complete `edits`, each one edit unit (below). A `note` may add context, such as building an index concurrently in production.
 - **`guided`**: `locations` and a `note`, for fixes that need judgement. No edits are given.
 
-ERLANG never applies a fix. Applying one is the caller's step. Every auto fix in the fixtures is applied and re-checked by `scripts/fix-test.js`: it must clear its finding, add none, and leave the code parsing. The edit shape is the same as KERCKHOFFS's, so one fix step can apply either specialist's.
+The edit unit is shared with ITTEN and KERCKHOFFS, from ITTEN's contract, so one fix step can apply any of the three's fixes:
+
+- `{ file, line, column, length, replace }`: replace `length` characters at `line` and `column` with `replace`. `line` and `column` are 1-based; `column` and `length` count UTF-16 code units.
+- `{ create: file, content }`: make a file, which must not exist. A new migration is made this way.
+- `{ remove: file }`: delete a file, which must exist.
+
+Every `file` is relative to the project root. `lib/fix.js` applies the unit and refuses, changing nothing, an edit whose file is outside the root or is build output, a position past the end of its line or file, a create of a file that exists, an edit or remove of one that does not, overlapping edits, and a file that one apply both edits and creates or removes. `scripts/unit-test.js` holds a case for each, and for UTF-16 columns and lengths.
+
+ERLANG never applies a fix. Applying one is the caller's step. Every auto fix in the fixtures is applied and re-checked by `scripts/fix-test.js`: it must clear its finding, add none, and leave the code parsing.
 
 ## Exit codes
 

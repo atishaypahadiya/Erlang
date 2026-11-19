@@ -86,36 +86,73 @@
               "type": "array",
               "minItems": 1,
               "items": {
-                "type": "object",
-                "required": [
-                  "file",
-                  "line",
-                  "column",
-                  "length",
-                  "replace"
-                ],
-                "additionalProperties": false,
-                "properties": {
-                  "file": {
-                    "type": "string",
-                    "minLength": 1
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "required": [
+                      "file",
+                      "line",
+                      "column",
+                      "length",
+                      "replace"
+                    ],
+                    "additionalProperties": false,
+                    "properties": {
+                      "file": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "line": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "column": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "length": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "replace": {
+                        "type": "string"
+                      }
+                    },
+                    "description": "Replace length UTF-16 code units at a 1-based line and column (columns in UTF-16 code units) of file, relative to the project root."
                   },
-                  "line": {
-                    "type": "integer",
-                    "minimum": 1
+                  {
+                    "type": "object",
+                    "description": "Make a file, which must not exist, relative to the project root.",
+                    "required": [
+                      "create",
+                      "content"
+                    ],
+                    "additionalProperties": false,
+                    "properties": {
+                      "create": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "content": {
+                        "type": "string"
+                      }
+                    }
                   },
-                  "column": {
-                    "type": "integer",
-                    "minimum": 1
-                  },
-                  "length": {
-                    "type": "integer",
-                    "minimum": 0
-                  },
-                  "replace": {
-                    "type": "string"
+                  {
+                    "type": "object",
+                    "description": "Delete a file, which must exist, relative to the project root.",
+                    "required": [
+                      "remove"
+                    ],
+                    "additionalProperties": false,
+                    "properties": {
+                      "remove": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    }
                   }
-                }
+                ]
               }
             },
             "note": {

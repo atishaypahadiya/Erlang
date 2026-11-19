@@ -300,7 +300,7 @@ export function run(root, { handlers: brief = [], smallTables = [] } = {}) {
     const n = migrationNumbers.get(dir) + 1;
     migrationNumbers.set(dir, n);
     const file = `${dir ? `${dir}/` : ''}${String(n).padStart(width, '0')}_${name}.sql`;
-    return { kind: 'auto', edits: [{ file, line: 1, column: 1, length: 0, replace: sqlText }], note: `A new migration, ${file}. On a large table in production, use CREATE INDEX CONCURRENTLY, outside a transaction, so writes are not blocked while the index builds.` };
+    return { kind: 'auto', edits: [{ create: file, content: sqlText }], note: `A new migration, ${file}. On a large table in production, use CREATE INDEX CONCURRENTLY, outside a transaction, so writes are not blocked while the index builds.` };
   }
 
   function pad(n) { return String(n).padStart(8, '0'); }

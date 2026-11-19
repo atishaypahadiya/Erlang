@@ -7,11 +7,11 @@
 //
 // Usage: node scripts/unit-test.js           exit 0 when every case holds
 
-import { writeFileSync, mkdirSync, rmSync, readFileSync, cpSync } from 'node:fs';
+import { writeFileSync, mkdirSync, rmSync, readFileSync, cpSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { scan } from '../bin/erlang.js';
-import { apply, syntaxErrors } from '../lib/fix.js';
+import { apply, syntaxErrors, fileOf } from '../lib/fix.js';
 import { describe, Plain } from '../lib/isolate.js';
 import * as TJ from '../lib/trace-judge.js';
 import * as TIMING from '../lib/timing.js';
@@ -53,7 +53,7 @@ function expectAutoFixHolds(name, files, only) {
   const fixed = `${dir}-fixed`;
   cpSync(dir, fixed, { recursive: true });
   apply(fixed, [f.erlang.fix]);
-  const file = f.erlang.fix.edits[0].file;
+  const file = fileOf(f.erlang.fix.edits[0]);
   const text = readFileSync(join(fixed, file), 'utf8');
   const after = scanOf(fixed, only);
   ok(name, !syntaxErrors(file, text).length && after.status === 'complete' && after.findings.length === 0, `${text.trim().split('\n').find((l) => /timeout|signal|Many\(/.test(l))?.trim()}; after: ${summary(after)}`);
@@ -139,6 +139,41 @@ expectFindings('fetch(u,) with a trailing comma: guided, not edited', { 'a.js': 
   ok('apply refuses a guided fix', /only auto fixes/.test(threw));
   try { threw = ''; apply(OUT, [{ kind: 'auto', edits: [{ file: 'dist/a.js', line: 1, column: 1, length: 0, replace: 'x' }] }]); } catch (e) { threw = e.message; }
   ok('apply refuses an edit to build output', /build output/.test(threw));
+}
+
+console.log('\nThe edit unit (shared with ITTEN and KERCKHOFFS)');
+{
+  const dir = join(OUT, 'edit-unit');
+  const fresh = (files) => { rmSync(dir, { recursive: true, force: true }); mkdirSync(dir, { recursive: true }); for (const [f, t] of Object.entries(files)) { mkdirSync(dirname(join(dir, f)), { recursive: true }); writeFileSync(join(dir, f), t); } };
+  const read = (f) => readFileSync(join(dir, f), 'utf8');
+  const refused = (what, files, edits, re) => { fresh(files); let threw = ''; try { apply(dir, [{ kind: 'auto', edits }]); } catch (e) { threw = e.message; } ok(`apply refuses ${what}`, re.test(threw) && Object.entries(files).every(([f, t]) => read(f) === t), threw || 'it did not throw'); };
+  // Columns and lengths in UTF-16 code units: the emoji before the edit is
+  // two units, the é one.
+  fresh({ 'a.js': "const s = '😀é'; f(x);\n" });
+  apply(dir, [{ kind: 'auto', edits: [{ file: 'a.js', line: 1, column: 20, length: 1, replace: 'y' }] }]);
+  ok('a column counts UTF-16 code units (an emoji is two)', read('a.js') === "const s = '😀é'; f(y);\n", read('a.js'));
+  fresh({ 'a.js': "const s = '😀';\n" });
+  apply(dir, [{ kind: 'auto', edits: [{ file: 'a.js', line: 1, column: 12, length: 2, replace: 'ok' }] }]);
+  ok('a length counts UTF-16 code units', read('a.js') === "const s = 'ok';\n", read('a.js'));
+  fresh({ 'a.js': 'a();\r\nb();\r\n' });
+  apply(dir, [{ kind: 'auto', edits: [{ file: 'a.js', line: 2, column: 1, length: 1, replace: 'c' }] }]);
+  ok('lines are 1-based, CRLF files included', read('a.js') === 'a();\r\nc();\r\n', JSON.stringify(read('a.js')));
+  fresh({ 'a.js': 'a();\n' });
+  apply(dir, [{ kind: 'auto', edits: [{ create: 'db/002_index.sql', content: 'create index on t (a);\n' }] }]);
+  ok('{ create, content } makes a file, and its directories', read('db/002_index.sql') === 'create index on t (a);\n');
+  apply(dir, [{ kind: 'auto', edits: [{ remove: 'a.js' }] }]);
+  ok('{ remove } deletes a file', !existsSync(join(dir, 'a.js')));
+  refused('a create of a file that exists', { 'a.js': 'a();\n' }, [{ create: 'a.js', content: 'b();\n' }], /already exists/);
+  refused('a remove of a file that does not exist', { 'a.js': 'a();\n' }, [{ remove: 'b.js' }], /does not exist/);
+  refused('an edit to a file that does not exist (create makes files)', { 'a.js': 'a();\n' }, [{ file: 'b.js', line: 1, column: 1, length: 0, replace: 'x' }], /does not exist; a new file is made with \{ create, content \}/);
+  refused('a path outside the project root', { 'a.js': 'a();\n' }, [{ file: '../a.js', line: 1, column: 1, length: 0, replace: 'x' }], /not a path relative to the project root/);
+  refused('an absolute path', { 'a.js': 'a();\n' }, [{ file: join(dir, 'a.js'), line: 1, column: 1, length: 0, replace: 'x' }], /not a path relative to the project root/);
+  refused('a line past the end', { 'a.js': 'a();\n' }, [{ file: 'a.js', line: 3, column: 1, length: 0, replace: 'x' }], /not 3/);
+  refused('a column past the end of its line', { 'a.js': 'a();\nb();\n' }, [{ file: 'a.js', line: 1, column: 6, length: 0, replace: 'x' }], /no column 6/);
+  refused('a length past the end of the file', { 'a.js': 'a();\n' }, [{ file: 'a.js', line: 1, column: 1, length: 9, replace: 'x' }], /past the end/);
+  refused('a 0-based line or column', { 'a.js': 'a();\n' }, [{ file: 'a.js', line: 0, column: 0, length: 0, replace: 'x' }], /malformed/);
+  refused('a file both edited and removed, changing nothing', { 'a.js': 'a();\n', 'b.js': 'b();\n' }, [{ file: 'b.js', line: 1, column: 1, length: 1, replace: 'c' }, { file: 'a.js', line: 1, column: 1, length: 0, replace: 'x' }, { remove: 'a.js' }], /edited and removed/);
+  rmSync(dir, { recursive: true, force: true });
 }
 
 console.log('\nn-plus-one and per-row-writes: handlers, versions and shapes');

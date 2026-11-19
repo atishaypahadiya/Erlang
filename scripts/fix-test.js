@@ -19,7 +19,7 @@ import { fileURLToPath } from 'node:url';
 import { FIXTURES, specOf, copyTwin } from './fixture-test.js';
 import { scan } from '../bin/erlang.js';
 import { catches } from '../core/fixture-score.js';
-import { apply, syntaxErrors } from '../lib/fix.js';
+import { apply, syntaxErrors, fileOf } from '../lib/fix.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = join(ROOT, 'dist', 'fix');
@@ -74,7 +74,7 @@ function main() {
       try {
         if (fix.kind === 'auto') {
           apply(dir, [fix]);
-          p = [...new Set(fix.edits.map((e) => e.file))].flatMap((file) => syntaxErrors(file, readFileSync(join(dir, file), 'utf8')).map((at) => `${file}:${at} does not parse after the fix`));
+          p = [...new Set(fix.edits.filter((e) => !('remove' in e)).map(fileOf))].flatMap((file) => syntaxErrors(file, readFileSync(join(dir, file), 'utf8')).map((at) => `${file}:${at} does not parse after the fix`));
           p.push(...after(dir, f, before, only).problems);
         } else {
           followGuided(dir, cleanDir, fix);
