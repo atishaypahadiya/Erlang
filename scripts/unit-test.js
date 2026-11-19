@@ -532,6 +532,30 @@ console.log('\nno-load-shedding: a cap on requests in flight');
   }
 }
 
+console.log('\nretry-policy and retry-budget: layers and budgets');
+{
+  const RP = ['retry-policy'];
+  const RB = ['retry-budget'];
+  const loopAround = (call, cond = 'attempt >= 3') => `  for (let attempt = 1; ; attempt++) {\n    try {\n      return ${call};\n    } catch (err) {\n      if (${cond}) throw err;\n      await new Promise((r) => setTimeout(r, Math.random() * Math.min(10_000, 100 * 2 ** attempt)));\n    }\n  }`;
+  const app = (head, body) => ({ 'app.js': `import express from 'express';\n${head}\nconst app = express();\napp.get('/x', async (req, res) => {\n${body}\n});\napp.listen(3000);\n` });
+  expectFindings('A retry loop around a function that retries in a loop: RTY-02', app("import axios from 'axios';\nasync function once() {\n" + loopAround("(await axios.get('http://up.test/a', { timeout: 2000 })).data", 'attempt >= 3 || err.response?.status < 500') + '\n}', loopAround('await once()')), [['error', 'app.js', 15, 'guided']], RP);
+  expectFindings('A retry loop around the default axios with axios-retry on it: RTY-02', app("import axios from 'axios';\nimport axiosRetry from 'axios-retry';\naxiosRetry(axios, { retryDelay: axiosRetry.exponentialDelay });", loopAround("(await axios.get('http://up.test/a', { timeout: 2000 })).data", 'attempt >= 3 || err.response?.status < 500')), [['error', 'app.js', 7, 'guided']], RP);
+  expectFindings('A retry loop around got.post (got does not retry POST): nothing', app("import got from 'got';", loopAround("await got.post('http://up.test/a', { timeout: { request: 2000 } }).json()", 'attempt >= 3 || err.response?.statusCode < 500')), [], RP);
+  expectFindings('A retry loop around got with retry.limit 0 on its instance: nothing', app("import got from 'got';\nconst up = got.extend({ retry: { limit: 0 }, timeout: { request: 2000 } });", loopAround("await up('http://up.test/a').json()", 'attempt >= 3 || err.response?.statusCode < 500')), [], RP);
+  {
+    const r = scanOf(subject(app("import got from 'got';", loopAround("await got('http://up.test/a', { timeout: { request: 2000 } }).json()", 'attempt >= 3 || err.response?.statusCode < 500'))), RP);
+    const f = r.findings.find((x) => x.rules.includes('RTY-02'));
+    ok('A loop of 3 around got\'s default GET retry: 9 attempts, said in the message', f?.erlang.attempts === 9 && f.message.includes('up to 9 calls'), f?.message);
+  }
+  expectFindings('A loop with no budget: retry-budget warning', app("import axios from 'axios';", loopAround("(await axios.get('http://up.test/a', { timeout: 2000 })).data", 'attempt >= 3 || err.response?.status < 500')), [['warning', 'app.js', 5, 'guided']], RB);
+  expectFindings('A loop whose give-up test reads a module-level counter: a budget, nothing', app("import axios from 'axios';\nlet retriesThisMinute = 0;\nsetInterval(() => { retriesThisMinute = 0; }, 60_000).unref();", loopAround("(await axios.get('http://up.test/a', { timeout: 2000 })).data", 'attempt >= 3 || err.response?.status < 500 || ++retriesThisMinute > 60')), [], RB);
+  expectFindings('axios-retry with retries: 0: not a retry, no budget needed', app("import axios from 'axios';\nimport axiosRetry from 'axios-retry';\naxiosRetry(axios, { retries: 0 });", "  res.json((await axios.get('http://up.test/a', { timeout: 2000 })).data);"), [], RB);
+  {
+    const r = scanOf(subject({ 'job.js': "import axios from 'axios';\nexport async function f() {\n" + loopAround("(await axios.get('http://up.test/a', { timeout: 2000 })).data", 'attempt >= 3 || err.response?.status < 500') + '\n}\n' }), RB);
+    ok('No handler: the budget finding is info, unresolved', r.findings.length === 1 && r.findings[0].severity === 'info' && r.findings[0].erlang.unresolved === true, summary(r));
+  }
+}
+
 console.log('\nShared rules: the timing lock and expected rows');
 {
   const calm = { load1: 1, cpus: 8 };

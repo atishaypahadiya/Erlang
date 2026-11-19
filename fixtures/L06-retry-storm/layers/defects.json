@@ -1,0 +1,196 @@
+{
+  "note": "The fixture pair for retries at several layers (RTY-02, in retry-policy) and retry budgets (RTY-05, the retry-budget check), rank 6's parts in fixtures/PLAN.md, layers form: axios-retry 4.5.0, p-retry 9.0.0 and got 16.2.0 under Express, scanned with retry-policy and retry-budget. Written by hand: each planted defect is fixed in place in the clean twin, line for line, and the twins differ in nothing else. The clean twin keeps one layer per call, turning the inner retry off for that call (axios-retry's per-request 'axios-retry': { retries: 0 }, got's retry: { limit: 0 }) or dropping the outer one, and every remaining retry draws on the budget in src/budget.js, imported on the line after the imports. The planted twin has the same src/budget.js and uses it only on the decoys. got retries GET, PUT, HEAD, DELETE, OPTIONS, TRACE and QUERY twice by default and never POST (got 16.2.0, source/core/options.ts). A finding catches a defect when its check matches and its locations name the defect's file, line, column and symbol (every place, when the defect lists several), with the defect's severity. Decoys are in both twins; reporting one is a false positive. Paths are relative to each twin. Nothing here is installed or run.",
+  "check": "retry-policy",
+  "checks": [
+    "retry-policy",
+    "retry-budget"
+  ],
+  "plan": "L06",
+  "form": "layers",
+  "planted": "fixtures/L06-retry-storm/layers/planted",
+  "clean": "fixtures/L06-retry-storm/layers/clean",
+  "defects": [
+    {
+      "id": "L06-l1",
+      "check": "retry-policy",
+      "title": "A retry loop around a call axios-retry already retries: 3 × 4 = 12 calls per failure",
+      "severity": "error",
+      "where": [
+        {
+          "file": "src/routes/products.js",
+          "line": 10,
+          "column": 3,
+          "symbol": "stockLevel"
+        },
+        {
+          "file": "src/routes/products.js",
+          "line": 12,
+          "column": 30,
+          "symbol": "stockLevel"
+        }
+      ],
+      "fix": "guided",
+      "fixedInClean": "axios-retry turned off for this call: 'axios-retry': { retries: 0 }"
+    },
+    {
+      "id": "L06-l2",
+      "check": "retry-policy",
+      "title": "p-retry around a got GET, which got retries twice by default: 3 × 3 = 9 calls",
+      "severity": "error",
+      "where": [
+        {
+          "file": "src/routes/products.js",
+          "line": 22,
+          "column": 18,
+          "symbol": "productReviews"
+        },
+        {
+          "file": "src/routes/products.js",
+          "line": 22,
+          "column": 31,
+          "symbol": "productReviews"
+        }
+      ],
+      "fix": "guided",
+      "fixedInClean": "got's retry turned off for this call: retry: { limit: 0 }"
+    },
+    {
+      "id": "L06-l3",
+      "check": "retry-policy",
+      "title": "p-retry around a project function that retries with p-retry itself: 3 × 4 = 12 calls",
+      "severity": "error",
+      "where": [
+        {
+          "file": "src/routes/products.js",
+          "line": 27,
+          "column": 18,
+          "symbol": "productPrice"
+        },
+        {
+          "file": "src/prices.js",
+          "line": 5,
+          "column": 10,
+          "symbol": "fetchPrice"
+        }
+      ],
+      "fix": "guided",
+      "fixedInClean": "the outer retry dropped"
+    },
+    {
+      "id": "L06-b1",
+      "check": "retry-budget",
+      "title": "axios-retry on stock with no retry budget",
+      "severity": "warning",
+      "where": {
+        "file": "src/clients.js",
+        "line": 7,
+        "column": 1
+      },
+      "fix": "guided",
+      "fixedInClean": "retryCondition draws on the budget"
+    },
+    {
+      "id": "L06-b2",
+      "check": "retry-budget",
+      "title": "p-retry in fetchPrice with no retry budget",
+      "severity": "warning",
+      "where": {
+        "file": "src/prices.js",
+        "line": 5,
+        "column": 10,
+        "symbol": "fetchPrice"
+      },
+      "fix": "guided",
+      "fixedInClean": "shouldRetry draws on the budget"
+    },
+    {
+      "id": "L06-b3",
+      "check": "retry-budget",
+      "title": "The stock retry loop with no retry budget",
+      "severity": "warning",
+      "where": {
+        "file": "src/routes/products.js",
+        "line": 10,
+        "column": 3,
+        "symbol": "stockLevel"
+      },
+      "fix": "guided",
+      "fixedInClean": "the catch gives up when the budget is spent"
+    },
+    {
+      "id": "L06-b4",
+      "check": "retry-budget",
+      "title": "p-retry around the reviews call with no retry budget",
+      "severity": "warning",
+      "where": {
+        "file": "src/routes/products.js",
+        "line": 22,
+        "column": 18,
+        "symbol": "productReviews"
+      },
+      "fix": "guided",
+      "fixedInClean": "shouldRetry draws on the budget"
+    },
+    {
+      "id": "L06-b5",
+      "check": "retry-budget",
+      "title": "p-retry around fetchPrice with no retry budget",
+      "severity": "warning",
+      "where": {
+        "file": "src/routes/products.js",
+        "line": 27,
+        "column": 18,
+        "symbol": "productPrice"
+      },
+      "fix": "guided",
+      "fixedInClean": "the outer retry dropped"
+    }
+  ],
+  "decoys": [
+    {
+      "id": "L06-ld1",
+      "title": "p-retry around a got POST, which got does not retry, with a budget",
+      "where": {
+        "file": "src/routes/orders.js",
+        "line": 10,
+        "column": 30
+      }
+    },
+    {
+      "id": "L06-ld2",
+      "title": "A retry loop around an axios instance with no retries of its own, with a budget",
+      "where": {
+        "file": "src/routes/orders.js",
+        "line": 15,
+        "column": 3
+      }
+    },
+    {
+      "id": "L06-ld3",
+      "title": "p-retry around a call with axios-retry turned off for it, with a budget",
+      "where": {
+        "file": "src/routes/orders.js",
+        "line": 27,
+        "column": 18
+      }
+    },
+    {
+      "id": "L06-ld4",
+      "title": "A got GET with its default retries and nothing around it",
+      "where": {
+        "file": "src/routes/orders.js",
+        "line": 32,
+        "column": 18
+      }
+    },
+    {
+      "id": "L06-ld5",
+      "title": "A retry loop on top of axios-retry in a script no request runs",
+      "where": {
+        "file": "scripts/backfill.js",
+        "line": 5,
+        "column": 3
+      }
+    }
+  ]
+}

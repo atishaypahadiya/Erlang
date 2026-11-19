@@ -45,6 +45,10 @@ import { finding, fingerprint } from '../core/finding.js';
 import { replaceNode, insertProperty, appendArgument } from '../lib/fix.js';
 
 export const CHECK = 'retry-policy';
+export const CHECKS = [CHECK, 'retry-budget'];
+const GOT_RETRY_METHODS = new Set(['GET', 'PUT', 'HEAD', 'DELETE', 'OPTIONS', 'TRACE', 'QUERY']);
+const LAYERS_NOTE = "Retry at one layer only, the one directly above the call (RTY-02): turn the inner retry off for this call (axios-retry: { 'axios-retry': { retries: 0 } } in the request's config; got: retry: { limit: 0 }) and keep the outer policy, or drop the outer retry and keep the inner one.";
+const BUDGET_NOTE = 'Keep one retry budget per process, shared by every retry, and consult it where the retry is decided, failing when it is spent (RTY-05): a token bucket (say 10 tokens, 1 spent per retry, 0.1 earned per request that succeeds first time), or a retry allowed only while retries are under 10% of requests, as Google does.';
 const STRENGTH = 'MUST';
 const CAP_MS = 10_000;
 const LONG_WAIT_MS = 60_000;
@@ -63,6 +67,8 @@ export function run(root, { handlers: brief = [] } = {}) {
   const findings = [];
   const stats = { files: files.size, handlers: H.handlers.length, sites: { 'axios-retry': 0, 'p-retry': 0, got: 0, loop: 0 }, skipped: { outsideRequests: 0, unreadable: 0 }, notes: H.notes };
   const sites = [];
+  const retriers = [];
+  const loopMeta = new Map();
 
   for (const rel of rels) {
     perFile(gaps, rel, () => {
@@ -84,6 +90,7 @@ export function run(root, { handlers: brief = [] } = {}) {
     const issues = s.kind === 'axios-retry' ? axiosRetry(s.node) : s.kind === 'p-retry' ? pRetry(s.node) : s.kind === 'got' ? gotRetry(s.node, s.retry) : loop(s.node);
     if (!issues) return;
     stats.sites[s.kind]++;
+    retriers.push(s);
     if (!issues.length) return;
     const reach = reachOf(s);
     if (H.handlers.length && !reach.length) { stats.skipped.outsideRequests++; return; }
@@ -210,6 +217,7 @@ export function run(root, { handlers: brief = [] } = {}) {
     const issues = [];
     const capped = attemptCap(node, counters);
     const failLines = shape === 'catch' ? [tryStmt.catchClause] : [okIf];
+    loopMeta.set(node, { capped, failLines });
     if (capped === false) issues.push({ rule: 'RTY-01', issue: 'attempts', severity: 'error', policy: { retrier: 'loop', attempts: 'unbounded' }, what: 'it has no limit on attempts, so a failing service is called for as long as the request lasts', fix: guided([node, ...failLines], 'Count attempts and give up after 3 (RTY-01), throwing the last error.') });
     const attempts = typeof capped === 'number' ? capped : undefined;
 
@@ -533,17 +541,166 @@ export function run(root, { handlers: brief = [] } = {}) {
     const eps = [];
     for (const h of reach) if (h.endpoint && !eps.some((x) => x.method === h.endpoint.method && x.route === h.endpoint.route)) eps.push(h.endpoint);
     const policy = Object.fromEntries(Object.entries(i.policy).filter(([, v]) => v !== undefined));
-    findings.push({ severity, message, rules: [i.rule], locations: [loc], endpoints: eps, keyParts: [`${loc.file}#${loc.symbol ?? '<module>'}`, s.kind, i.issue], extension: { strength: STRENGTH, ...policy, ...(unsure ? { unresolved: true } : {}), fix: i.fix } });
+    findings.push({ check: i.check ?? CHECK, severity, message, rules: [i.rule], locations: [loc, ...(i.also ?? [])], endpoints: eps, keyParts: [`${loc.file}#${loc.symbol ?? '<module>'}`, s.kind, i.issue], extension: { strength: i.strength ?? STRENGTH, ...policy, ...(unsure ? { unresolved: true } : {}), fix: i.fix } });
+  }
+
+  // ---- Retries at several layers (RTY-02) ----
+
+  function attemptsOf(s) {
+    const plus = (v) => (v === null ? undefined : v === Infinity ? 'unbounded' : v + 1);
+    if (s.kind === 'axios-retry') { const r = lookup(evalObject(cx, unwrap(s.node.arguments[1])), 'retries'); return r.open ? undefined : plus(r.absent ? 3 : numberOf(r.value)); }
+    if (s.kind === 'p-retry') { const r = lookup(evalObject(cx, unwrap(s.node.arguments[1])), 'retries'); return r.open ? undefined : plus(r.absent ? 10 : numberOf(r.value)); }
+    if (s.kind === 'got') { const r = lookup(evalObject(cx, s.retry), 'limit'); return r.open ? undefined : plus(r.absent ? 2 : numberOf(r.value)); }
+    const c = loopMeta.get(s.node)?.capped;
+    return typeof c === 'number' ? c : c === false ? 'unbounded' : undefined;
+  }
+  const baseOf = (e) => { e = unwrap(e); while (e && (ts.isPropertyAccessExpression(e) || ts.isCallExpression(e) || ts.isElementAccessExpression(e))) e = unwrap(e.expression); return e && ts.isIdentifier(e) ? e : null; };
+  // Whether an outbound call retries on its own: { how, attempts, site } or null.
+  function retrierOfCall(call) {
+    const o = origin(cx, call.expression);
+    const base = clientOrigin(call);
+    if (isGot(o) || base.k === 'got-instance') {
+      const own = retriers.find((r) => r.kind === 'got' && r.node === call);
+      if (own) { const a = attemptsOf(own); return a === 1 ? null : { how: "got's retry option", attempts: a, site: call }; }
+      for (let b = base; b?.k === 'got-instance'; b = b.parent) for (const opt of b.options ?? []) {
+        const r = lookup(evalObject(cx, opt), 'retry');
+        if (r.absent) continue;
+        if (r.open) return null;
+        const l = lookup(evalObject(cx, unwrap(r.value)), 'limit');
+        if (!l.absent && numberOf(l.value) === 0) return null;
+      }
+      const c = unwrap(call.expression);
+      let method = ts.isPropertyAccessExpression(c) && ['get', 'post', 'put', 'patch', 'delete', 'head'].includes(c.name.text) ? c.name.text.toUpperCase() : null;
+      for (const a of call.arguments) { const m = lookup(evalObject(cx, a), 'method'); if (!m.absent && !m.open && ts.isStringLiteralLike(unwrap(m.value))) method = unwrap(m.value).text.toUpperCase(); }
+      method ??= 'GET';
+      return GOT_RETRY_METHODS.has(method) ? { how: `got's default retry, 2 retries for ${method}`, attempts: 3, site: call } : null;
+    }
+    if (base.k === 'axios-instance' || (base.k === 'import' && base.module === 'axios')) {
+      for (const a of call.arguments) {
+        const r = lookup(evalObject(cx, a), 'axios-retry');
+        if (!r.absent && !r.open) { const n = lookup(evalObject(cx, unwrap(r.value)), 'retries'); if (!n.absent && numberOf(n.value) === 0) return null; }
+      }
+      const id = baseOf(call.expression);
+      for (const r of retriers) {
+        if (r.kind !== 'axios-retry') continue;
+        const target = unwrap(r.node.arguments[0]);
+        const both = isLib(origin(cx, target), 'axios') ? base.k === 'import' : id && ts.isIdentifier(target) && symOf(id) === symOf(target);
+        if (both) { const a = attemptsOf(r); return a === 1 ? null : { how: `axios-retry on ${target.getText()}`, attempts: a, site: r.node }; }
+      }
+    }
+    return null;
+  }
+  // The first retry inside what an outer retry repeats: { what, how,
+  // attempts, node } or null. Follows project functions MAX_FN_DEPTH deep.
+  function innerRetry(region, outer, depth, seen) {
+    let found = null;
+    const visit = (n) => {
+      if (found) return;
+      const nested = retriers.find((r) => r.node === n && r.node !== outer && (r.kind === 'loop' || r.kind === 'p-retry'));
+      if (nested) { found = { how: nested.kind === 'loop' ? 'a retry loop' : 'p-retry', attempts: attemptsOf(nested), node: nested.node }; return; }
+      if (ts.isCallExpression(n)) {
+        const own = retrierOfCall(n);
+        if (own) { found = { ...own, node: n }; return; }
+        const fn = depth < MAX_FN_DEPTH ? functionOf(cx, n.expression) : null;
+        if (fn?.body && !seen.has(fn)) {
+          seen.add(fn);
+          const deeper = innerRetry(fn.body, outer, depth + 1, seen);
+          if (deeper) { found = { ...deeper, via: n }; return; }
+        }
+      }
+      ts.forEachChild(n, visit);
+    };
+    visit(region);
+    return found;
+  }
+  for (const s of retriers) {
+    if (s.kind !== 'loop' && s.kind !== 'p-retry') continue;
+    perFile(gaps, fileOf(s.node), () => {
+      const region = s.kind === 'loop' ? s.node.statement : fnOf(s.node.arguments[0]);
+      if (!region) return;
+      const inner = innerRetry(region, s.node, 0, new Set());
+      if (!inner) return;
+      stats.layered = (stats.layered ?? 0) + 1;
+      const reach = reachOf(s);
+      if (H.handlers.length && !reach.length) { stats.skipped.outsideRequests++; return; }
+      const outer = attemptsOf(s);
+      const total = typeof outer === 'number' && typeof inner.attempts === 'number' ? outer * inner.attempts : outer === 'unbounded' || inner.attempts === 'unbounded' ? 'unbounded' : undefined;
+      const call = (inner.via ?? inner.node).getText().replace(/\s+/g, ' ');
+      const callText = call.length > 60 ? `${call.slice(0, 57)}...` : call;
+      report(s, {
+        rule: 'RTY-02', issue: 'layers', severity: 'error', policy: { retrier: s.kind, ...(total !== undefined ? { attempts: total } : {}) },
+        what: `it repeats ${callText}, which already retries on its own (${inner.how}${typeof inner.attempts === 'number' ? `, ${inner.attempts} attempts` : ''})${typeof total === 'number' ? `: one failure becomes up to ${total} calls to the service, and every layer above multiplies it again` : ', so the attempts multiply'}`,
+        also: [locationOf(inner.node)],
+        fix: guided([s.node, inner.node], LAYERS_NOTE),
+      }, reach);
+    });
+  }
+
+  // ---- Retry budgets (RTY-05, check retry-budget) ----
+
+  // Whether an identifier names state kept across requests: a module-level
+  // variable, not a function or a client, that is a let or var or has a
+  // method called on it here.
+  function isState(id) {
+    const d = declOf(cx, id)?.decl;
+    if (!d || !ts.isVariableDeclaration(d) || !ts.isVariableStatement(d.parent?.parent) || !ts.isSourceFile(d.parent.parent.parent)) return false;
+    const init = unwrap(d.initializer);
+    if (init && ts.isFunctionLike(init)) return false;
+    const o = init ? origin(cx, init) : null;
+    if (o && (o.k === 'axios-instance' || o.k === 'got-instance' || (o.k === 'import' && OUTBOUND.has(o.module)))) return false;
+    const p = id.parent;
+    const method = ts.isPropertyAccessExpression(p) && p.expression === id && ts.isCallExpression(p.parent) && p.parent.expression === p;
+    return !(d.parent.flags & ts.NodeFlags.Const) || method;
+  }
+  function consultsBudget(nodes) {
+    let found = false;
+    const visit = (n) => { if (found) return; if (ts.isIdentifier(n) && isState(n)) { found = true; return; } ts.forEachChild(n, visit); };
+    for (const n of nodes) if (n) visit(n);
+    return found;
+  }
+  // Where a retrier decides to retry, as nodes.
+  function decisionOf(s) {
+    const fnBody = (v) => { if (!v) return null; const f = fnOf(v); return f ?? v; };
+    if (s.kind === 'axios-retry') { const r = lookup(evalObject(cx, unwrap(s.node.arguments[1])), 'retryCondition'); return r.absent || r.open ? [] : [fnBody(r.value)]; }
+    if (s.kind === 'p-retry') { const o = evalObject(cx, unwrap(s.node.arguments[1])); return ['shouldRetry', 'onFailedAttempt'].map((k) => lookup(o, k)).filter((r) => !r.absent && !r.open).map((r) => fnBody(r.value)); }
+    if (s.kind === 'got') { const r = lookup(evalObject(cx, s.retry), 'calculateDelay'); return r.absent || r.open ? [] : [fnBody(r.value)]; }
+    const m = loopMeta.get(s.node);
+    return [ts.isForStatement(s.node) ? s.node.condition : s.node.expression, ...(m?.failLines ?? [])];
+  }
+  const afterImports = (node) => {
+    const sf = node.getSourceFile();
+    const imports = sf.statements.filter(ts.isImportDeclaration);
+    return imports.length ? sf.getLineAndCharacterOfPosition(imports.at(-1).end).line + 2 : 1;
+  };
+  for (const s of retriers) {
+    perFile(gaps, fileOf(s.node), () => {
+      const attempts = attemptsOf(s);
+      if (attempts === 1) return;
+      if (consultsBudget(decisionOf(s))) { stats.budgeted = (stats.budgeted ?? 0) + 1; return; }
+      const reach = reachOf(s);
+      if (H.handlers.length && !reach.length) return;
+      // Where the retry is decided: a loop's failure branch, or the options
+      // object that takes retryCondition, shouldRetry or calculateDelay.
+      const where = s.kind === 'loop' ? loopMeta.get(s.node).failLines : s.kind === 'got' ? [s.retry] : [unwrap(s.node.arguments[1]) ?? s.node];
+      const fix = guided(where, BUDGET_NOTE);
+      const first = afterImports(s.node);
+      if (!fix.locations.some((l) => l.line === first)) fix.locations.unshift({ file: fileOf(s.node), line: first });
+      report(s, {
+        check: 'retry-budget', rule: 'RTY-05', issue: 'budget', severity: 'warning', strength: 'SHOULD', policy: { retrier: s.kind, ...(attempts !== undefined ? { attempts } : {}) },
+        what: `nothing across requests limits how often it retries. While the service fails, every request retries${typeof attempts === 'number' ? `, ${attempts} attempts each,` : ','} so the load on the failing service grows with the load offered instead of staying near it. A process-wide retry budget (Google retries only while retries are under 10% of requests) caps that (RTY-05)`,
+        fix,
+      }, reach);
+    });
   }
 
   const counts = new Map();
   const out = findings.map((f) => {
-    const base = fingerprint(CHECK, ...f.keyParts);
+    const base = fingerprint(f.check, ...f.keyParts);
     const n = (counts.get(base) ?? 0) + 1;
     counts.set(base, n);
     return finding({
       specialist: 'erlang',
-      check: CHECK,
+      check: f.check,
       severity: f.severity,
       fingerprint: n === 1 ? base : `${base}|${n}`,
       message: f.message,
