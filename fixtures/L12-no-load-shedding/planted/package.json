@@ -1,0 +1,11 @@
+{
+  "name": "l12-shop",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@fastify/under-pressure": "9.2.1",
+    "express": "5.2.1",
+    "fastify": "5.6.2",
+    "pg": "8.23.1"
+  }
+}

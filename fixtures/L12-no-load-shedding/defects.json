@@ -1,0 +1,55 @@
+{
+  "note": "The fixture pair for no-load-shedding (L12 in fixtures/PLAN.md), scanned with no-load-shedding alone. Written by hand: each planted defect is fixed in place in the clean twin, line for line, and the twins differ in nothing else. A finding catches a defect when its check matches and its locations name the defect's file, line, column and symbol (every place, when the defect lists several), with the defect's severity. Decoys are in both twins; reporting one is a false positive. The fix is guided. The clean twin imports the limiter in src/shed.js on the line after the imports and applies it on the line after the app is made, before the routes: at most 20 requests in flight, and 503 with Retry-After at once beyond that. The planted twin has the same src/shed.js and never applies it, so a limiter that exists is not enough. The other servers are bounded in three other ways: @fastify/under-pressure, a hand-written limit answering 429, and maxConnections. Paths are relative to each twin. Nothing here is installed or run.",
+  "check": "no-load-shedding",
+  "checks": [
+    "no-load-shedding"
+  ],
+  "plan": "L12",
+  "planted": "fixtures/L12-no-load-shedding/planted",
+  "clean": "fixtures/L12-no-load-shedding/clean",
+  "defects": [
+    {
+      "id": "L12-1",
+      "check": "no-load-shedding",
+      "title": "The main app accepts every request and queues it for a database connection, without limit",
+      "severity": "warning",
+      "where": {
+        "file": "src/app.js",
+        "line": 4,
+        "column": 20,
+        "symbol": "app"
+      },
+      "fix": "guided",
+      "fixedInClean": "at most 20 in flight, 503 beyond"
+    }
+  ],
+  "decoys": [
+    {
+      "id": "L12-d1",
+      "title": "A Fastify app with @fastify/under-pressure registered",
+      "where": {
+        "file": "src/admin.js",
+        "line": 6,
+        "column": 15
+      }
+    },
+    {
+      "id": "L12-d2",
+      "title": "An Express app with a hand-written limit answering 429",
+      "where": {
+        "file": "src/internal.js",
+        "line": 6,
+        "column": 18
+      }
+    },
+    {
+      "id": "L12-d3",
+      "title": "A node:http server with maxConnections set",
+      "where": {
+        "file": "src/metrics.js",
+        "line": 4,
+        "column": 17
+      }
+    }
+  ]
+}

@@ -4,7 +4,7 @@ Named after A. K. Erlang; not the Erlang programming language.
 
 ERLANG checks how a web service behaves under load and when its dependencies fail: missing timeouts, retry storms, unbounded queries, per-item queries, exhausted pools. It is the load-and-resilience specialist in a set with ITTEN (design) and KERCKHOFFS (security), and writes the same finding format. It tests the owner's own services only.
 
-Status: thirteen static checks are built, each suggesting a fix for every finding:
+Status: fourteen static checks are built, each suggesting a fix for every finding:
 
 - `no-timeout` (TMO-01): outbound calls that nothing bounds in time, from fetch, axios, got, `node:http`/`node:https` and `pg`.
 - `n-plus-one` (DAT-01): a query run once per item of a list, in code a request handler reaches, through Prisma or `pg`.
@@ -19,6 +19,7 @@ Status: thirteen static checks are built, each suggesting a fix for every findin
 - `memory-growth` (STB-05): a module-level `Map`, `Set`, array or dictionary object that requests add to and nothing removes from; the fix bounds it.
 - `no-cache` (DAT-06): a read inside a loop whose arguments do not change from pass to pass, the same read twice in one block with no write between, and (as info) a whole-table aggregate behind a GET with nothing in front of it that could answer instead.
 - `cold-start` (STB-10): a value every request depends on (a table built from a file or the database, a large module, a connection) built by the first request that needs it, `if (!x) x = await build()` or `x ??= …`, instead of at startup.
+- `no-load-shedding` (OVL-02, OVL-03): an Express, Fastify or `node:http` server with nothing that caps the requests in flight: no limiter answering 503 or 429 applied to it, no `@fastify/under-pressure`, no `maxConnections`, and no nginx or HAProxy file in the repository that limits connections.
 
 Request handlers are found in Express, Fastify, `node:http` and Next.js code. Prisma's batching is taken from what was observed for 7.10.1 (`research/prisma-batching.md`). The checks read source and run nothing. The trace harness (below) runs the fixtures against a database to confirm them by counts; generated load comes later.
 
@@ -47,7 +48,7 @@ It writes a report/1 to `dist/reports/<dir name>/report.json`, or to `<file>`. E
 
 - `reference/`: the rules ERLANG checks against, with their sources.
 - `research/`: the failure model, prior art, the name, and other design notes. `research/first-check.md` explains the order of the checks. `research/probes/` holds runtime probes, such as the Prisma batching probe; it is excluded from the self-scan, since it runs per-item queries on purpose.
-- `fixtures/`: the test bench (`fixtures/PLAN.md`). `L07-no-timeout/`, `L01a-n-plus-one/`, `L01b-per-row-writes/`, `L02-unbounded-query/`, `L03-missing-index/`, `L06-retry-storm/`, `L08-pool-exhaustion/`, `L09-blocking-work/`, `L05-memory-growth/`, `L10-no-cache/`, `L11-cold-start/` and `L13-pool-sizing/` are built as static pairs, and so is the `sql/` form of `L04-oversized-payload/`; the `sql/` forms of L01a, L01b and L02, and `L04-oversized-payload/`, have trace forms.
+- `fixtures/`: the test bench (`fixtures/PLAN.md`). `L07-no-timeout/`, `L01a-n-plus-one/`, `L01b-per-row-writes/`, `L02-unbounded-query/`, `L03-missing-index/`, `L06-retry-storm/`, `L08-pool-exhaustion/`, `L09-blocking-work/`, `L05-memory-growth/`, `L10-no-cache/`, `L11-cold-start/`, `L12-no-load-shedding/` and `L13-pool-sizing/` are built as static pairs, and so is the `sql/` form of `L04-oversized-payload/`; the `sql/` forms of L01a, L01b and L02, and `L04-oversized-payload/`, have trace forms.
 - `core/`: a pinned, temporary copy of the shared finding/1 and report/1 code (`core.pin.json`).
 
 ## Part of a set

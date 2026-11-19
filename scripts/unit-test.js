@@ -514,6 +514,24 @@ console.log('\ncold-start: set-up done by the first request');
   }
 }
 
+console.log('\nno-load-shedding: a cap on requests in flight');
+{
+  const LS = ['no-load-shedding'];
+  const ex = (mid = '', after = '', extra = {}) => ({ 'app.js': `import express from 'express';\n${mid}const app = express();\n${after}app.get('/x', (req, res) => res.end());\nconst server = app.listen(3000);\n`, ...extra });
+  expectFindings('An Express app with nothing in front: a warning, guided', ex(), [['warning', 'app.js', 2, 'guided']], LS);
+  expectFindings('A maintenance middleware (503, no comparison) does not count', ex('', "app.use((req, res, next) => process.env.DOWN ? res.status(503).end() : next());\n"), [['warning', 'app.js', 2, 'guided']], LS);
+  expectFindings('express-queue with a queuedLimit: nothing', ex("import queue from 'express-queue';\n", 'app.use(queue({ activeLimit: 10, queuedLimit: 5 }));\n'), [], LS);
+  expectFindings('express-queue with no queuedLimit (unbounded): a warning', ex("import queue from 'express-queue';\n", 'app.use(queue({ activeLimit: 10 }));\n'), [['warning', 'app.js', 3, 'guided']], LS);
+  expectFindings('maxConnections on the server app.listen() returned: nothing', { 'app.js': "import express from 'express';\nconst app = express();\napp.get('/x', (req, res) => res.end());\nconst server = app.listen(3000);\nserver.maxConnections = 200;\n" }, [], LS);
+  expectFindings('nginx limit_conn: nothing', ex('', '', { 'deploy/nginx.conf': 'limit_conn_zone $binary_remote_addr zone=a:10m;\nserver {\n  limit_conn a 100;\n}\n' }), [], LS);
+  expectFindings('HAProxy maxconn: nothing', ex('', '', { 'haproxy.cfg': 'backend app\n  server a 127.0.0.1:3000 maxconn 100\n' }), [], LS);
+  expectFindings('A Fastify onRequest hook that refuses over a count: nothing', { 'app.js': "import Fastify from 'fastify';\nconst app = Fastify();\nlet n = 0;\napp.addHook('onRequest', async (req, reply) => { if (n > 100) return reply.code(503).send(); });\napp.get('/x', async () => 'ok');\n" }, [], LS);
+  {
+    const r = scanOf(subject({ 'srv.js': "import { createServer } from 'node:http';\nexport const s = createServer((req, res) => res.end());\n" }), LS);
+    ok('No handler found: nothing reported, and the run data says why', r.findings.length === 0 && r.erlang.checks['no-load-shedding'].notes.some((x) => x.includes('not judged')), summary(r));
+  }
+}
+
 console.log('\nShared rules: the timing lock and expected rows');
 {
   const calm = { load1: 1, cpus: 8 };

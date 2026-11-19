@@ -43,6 +43,7 @@ import * as oversizedPayload from '../checks/oversized-payload.js';
 import * as memoryGrowth from '../checks/memory-growth.js';
 import * as noCache from '../checks/no-cache.js';
 import * as coldStart from '../checks/cold-start.js';
+import * as noLoadShedding from '../checks/no-load-shedding.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 export const SPECIALIST = 'erlang';
@@ -89,7 +90,7 @@ export function uncommitted(root = ROOT) {
   return r.status === 1 ? true : r.status === 0 ? false : null;
 }
 
-export const CHECKS = [noTimeout, perItem, unboundedQuery, poolSizing, retryPolicy, missingIndex, poolExhaustion, blockingWork, oversizedPayload, memoryGrowth, noCache, coldStart];
+export const CHECKS = [noTimeout, perItem, unboundedQuery, poolSizing, retryPolicy, missingIndex, poolExhaustion, blockingWork, oversizedPayload, memoryGrowth, noCache, coldStart, noLoadShedding];
 const namesOf = (c) => c.CHECKS ?? [c.CHECK];
 
 // The subject as a path relative to the working directory, so a report never

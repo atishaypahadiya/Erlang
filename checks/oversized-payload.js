@@ -23,13 +23,11 @@
 // Fixes are guided: which columns the caller uses, which endpoint to batch
 // behind, and whether a proxy compresses are judgements.
 
-import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { join } from 'node:path';
 import { ts, build, position, relOf } from '../lib/program.js';
 import { unwrap, origin, isLib, isGlobal, symbolAt, functionName, declOf } from '../lib/resolve.js';
-import { readSources, OUTPUT_DIRS, MAX_BYTES } from '../lib/sources.js';
-import { excluded } from '../lib/scope.js';
-import { perFile, decode } from '../lib/isolate.js';
+import { readSources } from '../lib/sources.js';
+import { perFile } from '../lib/isolate.js';
+import { proxyFiles } from '../lib/proxies.js';
 import { findHandlers } from '../lib/handlers.js';
 import { databases, sqlFacts, splitTop } from '../lib/db.js';
 import { finding, fingerprint } from '../core/finding.js';
@@ -38,7 +36,6 @@ export const CHECK = 'oversized-payload';
 const FIXED_LIST = 10;
 const CALL_METHODS = new Set(['get', 'post', 'put', 'patch', 'delete', 'head', 'request', 'fetch']);
 const ITERATORS = new Set(['map', 'forEach', 'flatMap']);
-const PROXY_FILE = /(^|\/)(nginx[^/]*\.conf|[^/]*\.nginx|default\.conf|Caddyfile)$/;
 
 const SELECT_NOTE = 'Select the columns the response and its callers use, not every column: a list multiplies each unused column by its rows (DAT-04).';
 const COMPRESS_NOTE = {
@@ -234,23 +231,7 @@ export function run(root, { handlers: brief = [], smallTables = [] } = {}) {
   }
 
   // Proxies in the repository that compress.
-  const walk = (dir, rel) => {
-    let entries;
-    try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
-    for (const e of entries) {
-      const abs = join(dir, e.name);
-      const r = rel ? `${rel}/${e.name}` : e.name;
-      if (e.isSymbolicLink() || excluded(abs)) continue;
-      if (e.isDirectory()) { if (!OUTPUT_DIRS.has(e.name)) walk(abs, r); continue; }
-      if (!e.isFile() || !PROXY_FILE.test(r)) continue;
-      perFile(gaps, r, () => {
-        if (statSync(abs).size > MAX_BYTES) return;
-        const text = decode(readFileSync(abs)).replace(/#[^\n]*/g, '');
-        if (/\bgzip\s+on\b/.test(text) || /^\s*encode\b/m.test(text)) stats.proxyCompresses.push(r);
-      });
-    }
-  };
-  walk(root, '');
+  for (const { file, text } of proxyFiles(root, gaps)) if (/\bgzip\s+on\b/.test(text) || /^\s*encode\b/m.test(text)) stats.proxyCompresses.push(file);
   stats.apps = apps.length;
   if (compressed || stats.proxyCompresses.length) stats.skipped.compressed += apps.length;
   else if (H.handlers.length || apps.length) {
