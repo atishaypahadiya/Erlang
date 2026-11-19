@@ -29,7 +29,7 @@ The LLM study also points at the remedy ERLANG relies on. Adding a performance g
 | 8 | Connection-pool exhaustion | Not measured | Mechanism [S19][S22]; vendor demonstration [F18] | Pool wait and errors as concurrency passes pool size | CAP-08, CAP-10, STB-02, STB-08, STB-09 | L08 |
 | 9 | Heavy synchronous work in the request path | Not measured | Mechanism, severe on event-loop runtimes [F19] | Latency of an idle route while a heavy route is under load | OVL-01, OVL-12, STB-02 | L09 |
 | 10 | No caching, redundant computation | Measured, human code, above 10% of ORM issues [F1] | Usually modest per instance [F1] | Identical query and parameters on repeated requests | DAT-06, CAP-11 | L10 |
-| 11 | Cold starts | Platform property: under 1% of serverless invocations [F20] | 100 ms to over 1 s each [F20] | First-request latency after a restart | CAP-03, CAP-11 | L11 |
+| 11 | Cold starts | Platform property: under 1% of serverless invocations [F20] | 100 ms to over 1 s each [F20] | First-request latency after a restart | CAP-03, CAP-11, STB-10 | L11 |
 | 12 | No load shedding: unbounded concurrency and queues | Not measured | Mechanism [S17][S18][S21] | Goodput past the knee (CAP-02) | OVL-01 to OVL-03, CAP-02 | L12 |
 
 Rank 12 is not in the brief's list of defects. It is here because it decides whether the service passes CAP-02, ERLANG's main load oracle, and because a service with every other defect fixed can still collapse past its knee without it.

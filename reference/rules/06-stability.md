@@ -65,6 +65,13 @@ Code that holds a connection does not wait on another service while holding it. 
 
 *Why:* when every connection is checked out, node-postgres queues further requests "in a FIFO queue until a client becomes available by being released back to the pool" [S36]. By Little's law [S1], the connections in use on average are the rate of checkouts times how long each is held. A call to another service while holding one adds that service's latency to every hold. A slow dependency then exhausts the database pool, as STB-02 warns, even though the database itself is idle.
 
+### STB-10 · Build what requests need before taking requests
+Strength: SHOULD · Evidence: platform · Check: static, trace, load
+
+Expensive set-up that every request depends on (a lookup table built from a file or the database, a large module, a client that must connect) is done when the process starts, and the service reports ready only after it is done. It is not done by whichever request happens to need it first.
+
+*Why:* AWS advises to "Initialize SDK clients and database connections outside of the function handler", so that "Subsequent invocations processed by the same instance of your function can reuse these resources" [S40]. Kubernetes' readiness probes exist for the same case: "an application might need to load large data or configuration files during startup", and while it does, "you don't want to send it requests" [S41]. Set-up inside a handler instead makes the first requests after every deploy or restart wait for it, and when the value is assigned only after the work finishes, each request that arrives in the meantime starts the work again.
+
 ## Release It! names and where they are covered
 
 The names are from the book's contents [S23]. The mapping goes by the names alone and is this set's reading, not the book's.

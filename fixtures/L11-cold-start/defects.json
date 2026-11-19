@@ -1,0 +1,134 @@
+{
+  "note": "The fixture pair for cold-start (L11 in fixtures/PLAN.md), scanned with cold-start alone. Written by hand: each planted defect is fixed in place in the clean twin, line for line, and the twins differ in nothing else. A finding catches a defect when its check matches and its locations name the defect's file, line, column and symbol (every place, when the defect lists several), with the defect's severity. Decoys are in both twins; reporting one is a false positive. The fixes are guided. The clean twin builds each value with a top-level await on its declaration line, so app.js, which imports these modules, listens only once they are ready; the first-use check in the function becomes a comment on the same line. Paths are relative to each twin. Nothing here is installed or run.",
+  "check": "cold-start",
+  "checks": [
+    "cold-start"
+  ],
+  "plan": "L11",
+  "planted": "fixtures/L11-cold-start/planted",
+  "clean": "fixtures/L11-cold-start/clean",
+  "defects": [
+    {
+      "id": "L11-1",
+      "check": "cold-start",
+      "title": "The postcode table is built from a file by the first request that needs it",
+      "severity": "warning",
+      "where": [
+        {
+          "file": "src/regions.js",
+          "line": 16,
+          "column": 17,
+          "symbol": "regionOf"
+        },
+        {
+          "file": "src/regions.js",
+          "line": 4,
+          "column": 5,
+          "symbol": "regions"
+        }
+      ],
+      "fix": "guided",
+      "fixedInClean": "built at startup"
+    },
+    {
+      "id": "L11-2",
+      "check": "cold-start",
+      "title": "The country list is loaded from the database on first use",
+      "severity": "warning",
+      "where": [
+        {
+          "file": "src/countries.js",
+          "line": 7,
+          "column": 27,
+          "symbol": "countryList"
+        },
+        {
+          "file": "src/countries.js",
+          "line": 4,
+          "column": 5,
+          "symbol": "countries"
+        }
+      ],
+      "fix": "guided",
+      "fixedInClean": "loaded at startup"
+    },
+    {
+      "id": "L11-3",
+      "check": "cold-start",
+      "title": "A large module is imported by the first request that renders a PDF",
+      "severity": "warning",
+      "where": [
+        {
+          "file": "src/routes/shop.js",
+          "line": 30,
+          "column": 3,
+          "symbol": "invoicePdf"
+        },
+        {
+          "file": "src/routes/shop.js",
+          "line": 10,
+          "column": 5,
+          "symbol": "renderer"
+        }
+      ],
+      "fix": "guided",
+      "fixedInClean": "imported at startup"
+    }
+  ],
+  "decoys": [
+    {
+      "id": "L11-d1",
+      "title": "A value refreshed when it is a minute old: a cache, on purpose",
+      "where": {
+        "file": "src/routes/shop.js",
+        "line": 37,
+        "column": 43
+      }
+    },
+    {
+      "id": "L11-d2",
+      "title": "A cheap value made on first use",
+      "where": {
+        "file": "src/routes/shop.js",
+        "line": 38,
+        "column": 15
+      }
+    },
+    {
+      "id": "L11-d3",
+      "title": "A variable of the request, set when the body has none",
+      "where": {
+        "file": "src/routes/shop.js",
+        "line": 46,
+        "column": 14
+      }
+    },
+    {
+      "id": "L11-d4",
+      "title": "A value read from the database when the module loads",
+      "where": {
+        "file": "src/routes/shop.js",
+        "line": 16,
+        "column": 7
+      }
+    },
+    {
+      "id": "L11-d5",
+      "title": "A value built on first use by a function only startup calls",
+      "where": {
+        "file": "src/warm.js",
+        "line": 7,
+        "column": 18
+      }
+    },
+    {
+      "id": "L11-d6",
+      "title": "A value built on first use in a script no request runs",
+      "where": {
+        "file": "scripts/import-regions.js",
+        "line": 7,
+        "column": 14
+      }
+    }
+  ]
+}

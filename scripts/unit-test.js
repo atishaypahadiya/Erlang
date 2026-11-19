@@ -494,6 +494,26 @@ console.log('\nno-cache: reads whose answer is already known');
   }
 }
 
+console.log('\ncold-start: set-up done by the first request');
+{
+  const CS = ['cold-start'];
+  const app = (decl, body, extra = '') => ({ 'app.js': `import express from 'express';\nimport { readFileSync } from 'node:fs';\nconst app = express();\n${decl}\n${extra}app.get('/x', async (req, res) => {\n${body}\n  res.end();\n});\napp.listen(3000);\n` });
+  const cs = (name, decl, body, want, extra) => expectFindings(name, app(decl, body, extra), want, CS);
+  cs('A block-form guard with a *Sync read: a warning', 'let words;', "  if (typeof words === 'undefined') { words = readFileSync('words.txt', 'utf8').split('\\n'); }", [['warning', 'app.js', 6, 'guided']]);
+  cs('A promise memo of a slow project function: a warning, no race', 'let ready;\nasync function build() { await new Promise((r) => setTimeout(r, 10)); return 1; }', '  ready ??= build();\n  await ready;', [['warning', 'app.js', 7, 'guided']]);
+  cs('A guard with an age: nothing', 'let memo = null;', "  if (!memo || Date.now() - memo.at > 1000) memo = { at: Date.now(), v: readFileSync('a.txt', 'utf8') };", []);
+  cs('A cheap value: nothing', 'let re = null;', "  if (!re) re = new RegExp('^a+$');", []);
+  {
+    const r = scanOf(subject(app('let ready;\nasync function build() { await new Promise((r) => setTimeout(r, 10)); return 1; }', '  ready ??= build();\n  await ready;')), CS);
+    ok('  the promise memo message does not claim a second build', r.findings.length === 1 && !r.findings[0].message.includes('starts the build again'), r.findings[0]?.message);
+  }
+  expectFindings('A Fastify plugin variable set by a handler: a warning', { 'app.js': "import Fastify from 'fastify';\nimport { readFileSync } from 'node:fs';\nconst app = Fastify();\napp.register(async function routes(f) {\n  let table = null;\n  f.get('/x', async () => {\n    if (!table) table = JSON.parse(readFileSync('t.json', 'utf8'));\n    return table;\n  });\n});\n" }, [['warning', 'app.js', 7, 'guided']], CS);
+  {
+    const r = scanOf(subject({ 'lib.js': "import { readFileSync } from 'node:fs';\nlet t;\nexport function get() { if (!t) t = readFileSync('t', 'utf8'); return t; }\n" }), CS);
+    ok('No handler: nothing reported, and the run data says why', r.findings.length === 0 && r.erlang.checks['cold-start'].skipped.noHandlers === 1, summary(r));
+  }
+}
+
 console.log('\nShared rules: the timing lock and expected rows');
 {
   const calm = { load1: 1, cpus: 8 };
