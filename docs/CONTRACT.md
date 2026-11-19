@@ -136,7 +136,7 @@ A separate program, for ERLANG's own fixtures: `scripts/trace.sh` (`npm run trac
 scripts/trace.sh [form ...]      e.g. scripts/trace.sh L01a-n-plus-one/sql
 ```
 
-With no form, it runs every `fixtures/<id>/<form>/trace/trace.json`: today the `sql/` forms of L01a, L01b, L02 and L04, L06's `loops/` form, L07 and L08.
+With no form, it runs every `fixtures/<id>/<form>/trace/trace.json`: today the `sql/` forms of L01a, L01b, L02 and L04, L06's `loops/` form, L07, L08, L09 and L13's `compose/` form.
 
 **Inputs**
 
@@ -183,4 +183,4 @@ Trace findings are finding/1:
 
 **Determinism.** The seeds use no randomness, and the counts are exact. For each of the four first forms, two consecutive runs gave reports identical apart from `started`, for both twins. Timings are judged only under the timing lock (three or more samples, relative spread of 10% or less, one-minute load average below half the CPU count before and after); otherwise the finding is `info`, and a planted defect judged that way is reported as `SKIP ... timing unreliable`, not as missed.
 
-**Load on the machine.** Everything runs at `nice -n 15`. The container is held to one CPU and 1 GB. A full run of the seven forms takes about six minutes, most of it L07 waiting out timeouts.
+**Load on the machine.** Everything runs at `nice -n 15`. The container is held to one CPU and 1 GB. A full run of the nine forms takes about eight minutes, most of it L07 waiting out timeouts.

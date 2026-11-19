@@ -64,6 +64,13 @@ function ittenRunning() {
 
 // psql inside the container, over its local socket; SQL goes on stdin, never
 // on a command line.
+// The app role's backends at the database, by pid: a connection a request
+// opened shows as a pid that was not there before it.
+function backends() {
+  const out = psql('postgres', 'postgres', `select pid from pg_stat_activity where usename = '${ROLE}' and datname = '${DB}' order by pid;\n`);
+  return out ? out.split('\n').map(Number) : [];
+}
+
 function psql(user, db, sql, vars = {}) {
   const args = ['exec', '-i', CONTAINER, 'psql', '-X', '-q', '-At', '-v', 'ON_ERROR_STOP=1', '-U', user, '-d', db];
   for (const [k, v] of Object.entries(vars)) args.push('-v', `${k}=${v}`);
@@ -88,10 +95,51 @@ function freshDatabase(scale, twinDir) {
 
 const resetStats = () => psql('postgres', DB, 'select pg_stat_statements_reset();\n');
 
+// Statements with their parameters (trace.json "params"): the app role logs
+// every statement (log_statement, set for the role in the trace database
+// only), and a request's are the ones between two markers the harness logs
+// as postgres around it. In order, as { sql, params }.
+let markSeq = 0;
+function mark() {
+  const m = `erlang-mark-${process.pid}-${++markSeq}`;
+  psql('postgres', DB, `set log_statement = 'all';\nselect '${m}';\n`);
+  return m;
+}
+const ENTRY = /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d(?:\.\d+)? \S+ \[(\d+)\] (\w+):\s+(.*)$/;
+function loggedBetween(start, end, sinceIso) {
+  // PostgreSQL logs to stderr, which docker logs writes to its own stderr.
+  const r = spawnSync('docker', ['logs', '--since', sinceIso, CONTAINER], { encoding: 'utf8', maxBuffer: 64 << 20 });
+  if (r.status !== 0) throw new Error(`trace: docker logs failed: ${r.stderr.slice(0, 200)}`);
+  const all = `${r.stdout}\n${r.stderr}`;
+  const entries = [];
+  for (const line of all.split('\n')) {
+    const m = ENTRY.exec(line);
+    if (m) entries.push({ pid: m[1], level: m[2], text: m[3] });
+    else if (entries.length && /^\s/.test(line)) entries.at(-1).text += `\n${line.trim()}`;
+  }
+  const a = entries.findIndex((e) => e.text.includes(start));
+  const b = entries.findIndex((e, k) => k > a && e.text.includes(end));
+  if (a < 0 || b < 0) throw new Error('trace: the statement log has no markers around the request');
+  const out = [];
+  const plans = [];
+  const markPids = new Set([entries[a].pid, entries[b].pid]);
+  for (const e of entries.slice(a + 1, b)) {
+    if (markPids.has(e.pid)) continue;
+    const p = /^duration: [\d.]+ ms\s+plan:\s*([\s\S]*)$/.exec(e.text);
+    if (e.level === 'LOG' && p) { try { plans.push(JSON.parse(p[1])); } catch { throw new Error('trace: a plan in the log is not JSON'); } continue; }
+    const s = /^(?:statement|execute [^:]*):\s+([\s\S]*)$/.exec(e.text);
+    if (e.level === 'LOG' && s) out.push({ pid: e.pid, sql: s[1].trim(), params: null });
+    else if (e.level === 'DETAIL' && /^Parameters: /.test(e.text)) { const last = out.findLast((o) => o.pid === e.pid); if (last) last.params = e.text.slice('Parameters: '.length); }
+  }
+  return { statements: out.map(({ sql, params }) => ({ sql, params })), plans };
+}
+
 // The statements the app's role ran since the reset: { query: { calls, rows } }.
+// Per statement: calls and rows, and, for a form that asks for parameters
+// (trace.json "params"), the blocks it touched (shared hit + read).
 function readStats() {
-  const json = psql('postgres', DB, `select coalesce(json_object_agg(query, json_build_object('calls', calls, 'rows', rows)), '{}')
-from (select s.query, sum(s.calls)::int as calls, sum(s.rows)::int as rows
+  const json = psql('postgres', DB, `select coalesce(json_object_agg(query, json_build_object('calls', calls, 'rows', rows${spec.params ? ", 'blocks', blocks" : ''})), '{}')
+from (select s.query, sum(s.calls)::int as calls, sum(s.rows)::int as rows, sum(s.shared_blks_hit + s.shared_blks_read)::int as blocks
       from pg_stat_statements s join pg_roles r on r.oid = s.userid join pg_database d on d.oid = s.dbid
       where s.toplevel and r.rolname = '${ROLE}' and d.datname = '${DB}' group by s.query) q;\n`);
   return JSON.parse(json);
@@ -159,10 +207,20 @@ function itemsOf(how, body, decoded) {
 }
 
 let last = 0;
-async function paced() {
-  const wait = last + MIN_GAP_MS - Date.now();
+const SOAK_GAP_MS = 20;
+async function paced(gap = MIN_GAP_MS) {
+  const wait = last + gap - Date.now();
   if (wait > 0) await sleep(wait);
   last = Date.now();
+}
+
+// The scan nodes of a request's plans, as "<node> on <table>", for telling
+// whether two runs chose the same plans.
+function scans(plans) {
+  const out = [];
+  const walk = (n) => { if (n['Relation Name']) out.push(`${n['Node Type']} on ${n['Relation Name']}`); for (const c of n.Plans ?? []) walk(c); };
+  for (const p of plans) walk(p.Plan);
+  return out;
 }
 
 // One request, with the stub and probes as the request asks; a response
@@ -173,17 +231,26 @@ async function once(app, r, path, body) {
   if (probes.includes('pool-during')) stub.onHit = () => app.probe('pool');
   if (probes.includes('loop')) await app.probe('loop-reset');
   const poolBefore = probes.includes('pool-after') ? await app.probe('pool') : null;
+  const backendsBefore = probes.includes('connections') ? backends() : null;
+  const since = new Date(Date.now() - 5000).toISOString();
+  const markStart = spec.params || spec.plans ? mark() : null;
   const t0 = performance.now();
   let res = null;
   let timedOut = false;
   try { res = await send(app.port, r.method, path, body, r.timeoutMs); } catch (e) { if (e.code === 'ERLANG_TIMEOUT') timedOut = true; else throw e; }
   const ms = performance.now() - t0;
+  const fromLog = markStart ? loggedBetween(markStart, mark(), since) : null;
+  const logged = spec.params ? fromLog.statements : null;
+  const plans = spec.plans ? fromLog.plans : null;
   const hits = stub.hits.map((h) => ({ ...h, at: Number((h.at - stub.hits[0].at).toFixed(3)) }));
   const extra = {
     ...(r.upstream || hits.length ? { upstream: hits } : {}),
     ...(probes.includes('pool-after') ? { poolBefore, poolAfter: await app.probe('pool') } : {}),
     ...(probes.includes('loop') ? { loop: await app.probe('loop') } : {}),
+    ...(backendsBefore ? (() => { const after = backends(); return { connections: { opened: after.filter((p) => !backendsBefore.includes(p)).length, open: after.length } }; })() : {}),
     ms: Number(ms.toFixed(3)),
+    ...(plans ? { plans } : {}),
+    ...(logged ? { logged, cacheHeaders: res ? { cacheControl: res.headers['cache-control'] ?? null, etag: res.headers.etag ?? null } : null } : {}),
   };
   stubFor();
   return { res, timedOut, extra };
@@ -194,7 +261,8 @@ async function measureRequest(app, r, n) {
   const body = r.body === undefined ? undefined : expand(r.body, n);
   const runs = [];
   // Three runs, the first a warm-up; two when trace.json says so (runs: 2),
-  // for requests that wait out a timeout.
+  // for requests that wait out a timeout; more for timings (the lock needs
+  // three after the warm-up).
   const count = r.runs ?? spec.runs ?? 3;
   for (let k = 0; k < count; k++) {
     await paced();
@@ -214,12 +282,13 @@ async function measureRequest(app, r, n) {
       ...extra,
     });
   }
-  const [w, a, b] = count === 3 ? runs : [null, ...runs];
+  const w = count >= 3 ? runs[0] : null;
+  const [a, b] = runs.slice(-2);
   const kept = (x) => x.poolAfter && (x.poolAfter.total - x.poolAfter.idle) - (x.poolBefore.total - x.poolBefore.idle);
-  const shape = (x) => JSON.stringify({ ...x, bytes: 0, ms: 0, upstream: x.upstream?.length, loop: undefined, poolBefore: undefined, poolAfter: kept(x) });
+  const shape = (x) => JSON.stringify({ ...x, bytes: 0, ms: 0, upstream: x.upstream?.length, loop: undefined, poolBefore: undefined, poolAfter: kept(x), connections: x.connections?.opened, plans: x.plans && scans(x.plans), logged: x.logged?.length, statements: x.logged ? Object.fromEntries(Object.entries(x.statements).map(([q, v]) => [q, v.calls])) : x.statements });
   const stable = shape(a) === shape(b);
-  const keep = (x) => ({ timedOut: x.timedOut, ...(x.upstream ? { upstream: x.upstream } : {}), ...(x.poolAfter ? { poolBefore: x.poolBefore, poolAfter: x.poolAfter } : {}), ms: x.ms, ...(x.loop ? { loop: x.loop } : {}) });
-  return { id: r.id, method: r.method, path, route: r.route ?? routeOf(app.routes, r.method, path), ...b, stable, ...(stable ? {} : { other: a }), ...(r.upstream || r.probes ? { ...(w ? { warm: keep(w) } : {}), first: keep(a) } : {}), samples: [w, a, b].filter(Boolean).map((x) => ({ ms: x.ms, ...(x.loop ? { loopMaxMs: x.loop.maxMs } : {}), ...(x.upstream ? { attempts: x.upstream.length } : {}) })) };
+  const keep = (x) => ({ timedOut: x.timedOut, ...(x.upstream ? { upstream: x.upstream } : {}), ...(x.poolAfter ? { poolBefore: x.poolBefore, poolAfter: x.poolAfter } : {}), ms: x.ms, ...(x.loop ? { loop: x.loop } : {}), ...(x.connections ? { connections: x.connections } : {}), ...(x.logged ? { logged: x.logged, cacheHeaders: x.cacheHeaders, statements: x.statements } : {}), ...(x.plans ? { plans: x.plans } : {}) });
+  return { id: r.id, method: r.method, path, route: r.route ?? routeOf(app.routes, r.method, path), ...b, stable, ...(stable ? {} : { other: a }), ...(r.upstream || r.probes || spec.params || spec.plans ? { ...(w ? { warm: keep(w) } : {}), first: keep(a), last: keep(b) } : {}), samples: runs.map((x) => ({ ms: x.ms, ...(x.loop ? { loopMaxMs: x.loop.maxMs } : {}), ...(x.upstream ? { attempts: x.upstream.length } : {}) })) };
 }
 
 // The same request k times in a row, statements counted over all of them.
@@ -238,7 +307,8 @@ async function measureSoak(app, r) {
   const points = [{ requests: 0, ...(await app.probe('memory')) }];
   let sent = 0;
   for (const target of r.counts) {
-    for (; sent < target; sent++) { const { res } = await once(app, r, expand(r.path, 0, sent)); if (!res || res.status >= 400) throw new Error(`soak ${r.id}: ${r.method} answered ${res?.status ?? 'nothing'}`); }
+    // Soaks are paced at most 50 requests a second, still one at a time.
+    for (; sent < target; sent++) { await paced(SOAK_GAP_MS); const { res } = await once(app, r, expand(r.path, 0, sent), r.body === undefined ? undefined : expand(r.body, 0, sent)); if (!res || res.status >= 400) throw new Error(`soak ${r.id}: ${r.method} answered ${res?.status ?? 'nothing'}`); }
     points.push({ requests: sent, ...(await app.probe('memory')) });
   }
   return { id: r.id, method: r.method, route: r.route ?? null, points };
@@ -270,8 +340,13 @@ async function serve(work, scale, log) {
   rmSync(ready, { force: true });
   const password = readFileSync(PW_FILE, 'utf8').trim();
   const fd = openSync(log, 'a');
+  const url = `postgres://${ROLE}:${encodeURIComponent(password)}@127.0.0.1:${PORT}/${DB}`;
+  if (spec.params) psql('postgres', 'postgres', `alter role ${ROLE} in database ${DB} set log_statement = 'all';\n`);
+  // Plans (trace.json "plans"): auto_explain, loaded in the app role's
+  // sessions in the trace database only, logs every statement's plan as run.
+  if (spec.plans) psql('postgres', 'postgres', ['session_preload_libraries = \'auto_explain\'', 'auto_explain.log_min_duration = 0', 'auto_explain.log_analyze = on', 'auto_explain.log_timing = off', 'auto_explain.log_format = json'].map((g) => `alter role ${ROLE} in database ${DB} set ${g};\n`).join(''));
   const child = spawn(process.execPath, ['--expose-gc', join(HERE, 'serve.js'), work, ready, spec.entry ?? ''], {
-    env: { ...(spec.env ?? {}), PATH: process.env.PATH, NODE_ENV: 'production', DATABASE_URL: `postgres://${ROLE}:${encodeURIComponent(password)}@127.0.0.1:${PORT}/${DB}`, ERLANG_TRACE_STUB: STUB },
+    env: { ...Object.fromEntries(Object.entries(spec.env ?? {}).map(([k, v]) => [k, v === '$DATABASE_URL' ? url : v])), PATH: process.env.PATH, NODE_ENV: 'production', DATABASE_URL: url, ERLANG_TRACE_STUB: STUB },
     stdio: ['ignore', fd, fd, 'ipc'],
   });
   let seq = 0;
@@ -342,7 +417,7 @@ for (const twin of ['planted', 'clean']) {
           const fresh = await serve(work, scale, log);
           try {
             const runs = [];
-            for (let j = 0; j < (r.after ?? 5) + 1; j++) { await paced(); const { res, extra } = await once(fresh, r, expand(r.path, n)); if (!res || res.status >= 400) throw new Error(`start ${r.id}: ${r.method} answered ${res?.status ?? 'nothing'}`); runs.push({ ms: extra.ms }); }
+            for (let j = 0; j < (r.after ?? 5) + 1; j++) { await paced(); const { res, extra } = await once(fresh, r, expand(r.path, n), r.body === undefined ? undefined : expand(r.body, n)); if (!res || res.status >= 400) throw new Error(`start ${r.id}: ${r.method} answered ${res?.status ?? 'nothing'}`); runs.push({ ms: extra.ms }); }
             samples.push({ firstMs: runs[0].ms, laterMs: runs.slice(1).map((x) => x.ms) });
           } finally { await fresh.stop(); }
         }

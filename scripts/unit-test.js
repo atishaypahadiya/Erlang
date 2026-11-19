@@ -400,6 +400,9 @@ console.log('\nTrace judgements (lib/trace-judge.js)');
   const lineOf = (f, l) => lines[f]?.[l - 1] ?? null;
   ok('linkStatic: the same check, route and statement links', TJ.linkStatic({ check: 'n-plus-one', method: 'GET', route: '/orders', statement: 'SELECT id, name FROM customers WHERE id = $1' }, statics, lineOf) === statics[0]);
   ok('linkStatic: another statement, route or check does not', !TJ.linkStatic({ check: 'n-plus-one', method: 'GET', route: '/orders', statement: 'select id from products where id = $1' }, statics, lineOf) && !TJ.linkStatic({ check: 'n-plus-one', method: 'GET', route: '/stats', statement: 'select id, name from customers where id = $1' }, statics, lineOf) && !TJ.linkStatic({ check: 'per-row-writes', method: 'GET', route: '/orders', statement: 'select id, name from customers where id = $1' }, statics, lineOf));
+  const lib = [{ check: 'no-timeout', rules: ['TMO-01'], where: { locations: [{ file: 'q.js', line: 5, symbol: 'getQuote' }] } }];
+  ok('linkStatic: a static finding with no endpoint links by the symbol the trace names, and the rule', TJ.linkStatic({ check: 'no-timeout', rule: 'TMO-01', method: 'GET', route: '/call/getQuote', symbol: 'getQuote' }, lib, lineOf) === lib[0]);
+  ok('linkStatic: no endpoint and no symbol, or another symbol or rule, does not link', !TJ.linkStatic({ check: 'no-timeout', rule: 'TMO-01', method: 'GET', route: '/call/getQuote' }, lib, lineOf) && !TJ.linkStatic({ check: 'no-timeout', rule: 'TMO-01', method: 'GET', route: '/x', symbol: 'charge' }, lib, lineOf) && !TJ.linkStatic({ check: 'no-timeout', rule: 'TMO-02', method: 'GET', route: '/x', symbol: 'getQuote' }, lib, lineOf));
 }
 
 console.log('\npool-exhaustion: checkouts, releases and calls held across');

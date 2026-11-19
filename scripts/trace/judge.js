@@ -38,6 +38,28 @@ const [LO, HI] = [spec.scales[0], spec.scales.at(-1)];
 const TEXT = /json|text|javascript|xml/;
 const NO_WAIT_MS = 20;
 const RULE_TMO = 'TMO-01';
+// judge "loop": a request blocks the loop when the longest stretch the loop
+// could not run is at least BLOCK_MS and at least BLOCK_SHARE of the
+// request's own time, in every judged run.
+const BLOCK_MS = 50;
+const BLOCK_SHARE = 0.7;
+// judge "cache": a read repeated across requests counts when its cost grows
+// with the table (blocks per call at the top scale over the bottom one) and
+// its result does not (rows per call): an aggregate, not a list.
+const COST_RATIO = 5;
+// judge "memory": heap kept per request, after a full collection, over the
+// soak's last stretch (past every bound a clean twin sets).
+const KEPT_BYTES = 32;
+// judge "plans": a sequential scan with a filter, on a table of BIG_TABLE
+// rows or more, returning under SELECTIVE of the rows it read.
+const BIG_TABLE = 10_000;
+const SELECTIVE = 0.05;
+// judge "starts".
+const FIRST_EXTRA_MS = 20;
+const FIRST_RATIO = 3;
+const median = (xs) => { const s = [...xs].sort((a, b) => a - b); return s.length % 2 ? s[(s.length - 1) / 2] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2; };
+const READ = /^\s*(?:select|with)\b/i;
+const WRITE = /^\s*(?:insert|update|delete|merge|truncate|refresh)\b/i;
 
 const RULE = { 'n-plus-one': ['DAT-01', 'MUST'], 'per-row-writes': ['DAT-02', 'SHOULD'], 'unbounded-query': ['STB-04', 'MUST'] };
 const COUNT_JUDGES = new Set(['statements', 'rows']);
@@ -53,6 +75,12 @@ const NOTE = {
   'RTY-03': 'Wait before each retry, a random time up to a cap that doubles with each attempt (full jitter): Math.random() * Math.min(10_000, 100 * 2 ** attempt) ms.',
   'RTY-06': 'Give up at once on 4xx replies other than 408 and 429; retry network errors, 429 and 5xx only.',
   'STB-08': 'Release the connection in finally, so every path returns it.',
+  'OVL-12': 'Use the asynchronous form, which runs on the thread pool (crypto.pbkdf2, zlib.gzip, fs.promises), or move the work to a worker thread.',
+  'CAP-08': 'Make the pool once per process, at module level, and use it in every request.',
+  'DAT-06': 'Keep the result: read it once per request, or cache it for as long as it may be stale, bounded in entries, with Cache-Control on the response.',
+  'STB-05': 'Bound the collection: an LRU with a maximum of entries and an age (lru-cache), or delete entries when they are done with.',
+  'STB-10': 'Build the value when the module loads (a top-level await), so the service listens only once it is ready.',
+  'DAT-07': 'Add an index on the filtered columns, in a migration: CREATE INDEX CONCURRENTLY in production, outside a transaction.',
   'TMO-01': 'Give the call a deadline: a signal (AbortSignal.timeout(ms)), a timeout option the client enforces, or statement_timeout for PostgreSQL.',
   'STB-09': 'Make the call to the other service before taking the connection, or after returning it.',
 };
@@ -93,11 +121,15 @@ function judgeTwin(twin) {
     const ratio = Number.isFinite(trace.ratio) ? Number(trace.ratio.toFixed(3)) : null;
     const ev = { ...trace, ratio, ...(trace.slope !== undefined && trace.slope !== null ? { slope: Number(trace.slope.toFixed(3)) } : {}) };
     if (s) {
+      // A static finding left at info because reading could not decide
+      // (unresolved) takes the trace's severity: the trace decided it.
+      const resolves = s.severity === 'info' && s.erlang?.unresolved && severity !== 'info';
+      const { unresolved: _u, ...ext } = s.erlang ?? {};
       out.push(finding({
-        specialist: 'erlang', check, severity: s.severity, fingerprint: s.fingerprint,
+        specialist: 'erlang', check, severity: resolves ? severity : s.severity, fingerprint: s.fingerprint,
         message: `${s.message} Traced on seeded data: ${message}`,
         detection: [...new Set([...s.detection, 'trace'])], rules: s.rules, where: s.where,
-        extension: { ...s.erlang, trace: ev },
+        extension: { ...(resolves ? ext : s.erlang), trace: ev },
       }));
       return;
     }
@@ -293,6 +325,165 @@ function judgeTwin(twin) {
       message: `${r.symbol ?? route} was still waiting on ${host ?? 'its call'} when the harness gave up after ${fmt(r.timeoutMs)} ms, with the other side accepting the call and never answering: nothing ends the wait (TMO-01).` });
     else if (runs.some((q) => q.timedOut)) emit({ check: 'no-timeout', rule: RULE_TMO, strength: 'MUST', severity: 'info', unresolved: true, method: r.method, route, symbol: r.symbol ?? null, trace,
       message: `${r.symbol ?? route} timed out in one run but not the other.` });
+  }
+
+  // ---- The event loop held (judge "loop", L09): the longest stretch the
+  // loop could not run during the request (monitorEventLoopDelay's max),
+  // against the request's time, over the runs after the warm-up. A timing:
+  // it counts only under the timing lock; otherwise it is info.
+  for (const r of spec.judge === 'loop' ? spec.requests : []) {
+    const x = hi.requests.find((q) => q.id === r.id);
+    if ((x.status ?? 500) >= 400) throw new Error(`${twin}: ${r.method} ${x.path} answered ${x.status}; the fixture or its seed is wrong`);
+    const route = x.route ?? r.path;
+    const judged = x.samples.slice(1);
+    const blocked = judged.map((s) => s.loopMaxMs ?? 0);
+    const shares = judged.map((s) => (s.ms > 0 ? (s.loopMaxMs ?? 0) / s.ms : 0));
+    if (!blocked.every((b, k) => b >= BLOCK_MS && shares[k] >= BLOCK_SHARE)) continue;
+    const v = timingJudge({ samples: blocked, before: raw.environment?.before ?? environment(), after: raw.environment?.after ?? environment() });
+    const t = { ...v, why: Array.isArray(v.why) ? v.why.join('; ') || null : v.why ?? null };
+    const share = Math.min(...shares);
+    const trace = { judge: 'timing', path: x.path, timing: t, scales: [{ scale: HI, ms: Number(t.median.toFixed(1)) }] };
+    if (t.reliable) emit({ check: 'blocking-work', rule: 'OVL-12', strength: 'SHOULD', severity: 'warning', method: r.method, route, trace,
+      message: `${r.method} ${route} held the event loop for ${fmt(Math.round(t.median))} ms at a stretch (median of ${blocked.length}, spread ${(t.spread * 100).toFixed(1)}%), at least ${Math.round(share * 100)}% of the request's own time: no other request is served meanwhile (OVL-12).` });
+    else emit({ check: 'blocking-work', rule: 'OVL-12', strength: 'SHOULD', severity: 'info', unresolved: true, method: r.method, route, trace,
+      message: `${r.method} ${route} appeared to hold the event loop for most of the request, but timing unreliable: ${t.why}.` });
+  }
+
+  // ---- Connections opened per request (judge "connections", L13): new
+  // backends of the app role at the database while one request ran, after
+  // the warm-up. A process with one pool opens none once it is warm; a pool
+  // or client made per request opens one every time (CAP-08).
+  for (const r of spec.judge === 'connections' ? spec.requests : []) {
+    const x = hi.requests.find((q) => q.id === r.id);
+    if ((x.status ?? 500) >= 400) throw new Error(`${twin}: ${r.method} ${x.path} answered ${x.status}; the fixture or its seed is wrong`);
+    const route = x.route ?? r.path;
+    const opened = [x.first ?? x.other ?? x, x].map((q) => q.connections?.opened ?? 0);
+    const trace = { judge: 'connections', path: x.path, ...(r.symbol ? { symbol: r.symbol } : {}), scales: [{ scale: HI, connections: opened[1] }] };
+    if (opened.every((o) => o >= 1)) emit({ check: 'pool-sizing', rule: 'CAP-08', strength: 'MUST', severity: 'error', method: r.method, route, symbol: r.symbol ?? null, trace,
+      message: `${r.method} ${route} opened ${opened[1]} new connection${opened[1] === 1 ? '' : 's'} to the database on each request after the first, ${x.connections.open} open once it answered: a pool made per request, whose connections every request adds (CAP-08). Counted at the database, in pg_stat_activity.` });
+  }
+
+  // ---- The same read again (judge "cache", L10), from the statement log
+  // with parameters. Within one request: the same read with the same
+  // parameters twice, with no write between, in both runs after the warm-up
+  // (DAT-06). Across requests, for a GET whose response carries no
+  // Cache-Control or ETag: the same read with the same parameters in every
+  // request after the warm-up, whose blocks grow with the table while its
+  // rows do not (DAT-06).
+  for (const r of spec.judge === 'cache' ? spec.requests : []) {
+    const x = hi.requests.find((q) => q.id === r.id);
+    if ((x.status ?? 500) >= 400) throw new Error(`${twin}: ${r.method} ${x.path} answered ${x.status}; the fixture or its seed is wrong`);
+    const route = x.route ?? r.path;
+    const runs = [x.first, x.last];
+    const keyOf = (s) => `${normalizeSql(s.sql)}|${s.params ?? ''}`;
+    const twice = (logged) => {
+      const seen = new Map();
+      const found = new Map();
+      for (const s of logged) {
+        if (WRITE.test(s.sql)) { seen.clear(); continue; }
+        if (!READ.test(s.sql)) continue;
+        const k = keyOf(s);
+        seen.set(k, (seen.get(k) ?? 0) + 1);
+        if (seen.get(k) >= 2) found.set(k, { ...s, times: Math.max(found.get(k)?.times ?? 0, seen.get(k)) });
+      }
+      return found;
+    };
+    const within = runs.map((q) => twice(q.logged));
+    for (const [k, s] of within[0]) {
+      if (!within[1].has(k)) continue;
+      emit({ check: 'no-cache', rule: 'DAT-06', strength: 'SHOULD', severity: 'warning', method: r.method, route, statement: s.sql,
+        trace: { judge: 'repeat', path: x.path, statement: s.sql, scales: [{ scale: HI, times: s.times }] },
+        message: `${r.method} ${route} ran \`${s.sql}\` ${s.times} times in one request with the same parameters (${s.params ?? 'none'}) and no write between: every run after the first reads what the request already has (DAT-06). From the statement log.` });
+    }
+    if (r.method !== 'GET' || x.cacheHeaders?.cacheControl || x.cacheHeaders?.etag) continue;
+    const lx = lo?.requests.find((q) => q.id === r.id);
+    const per = (stats, sql) => { const e = Object.entries(stats ?? {}).find(([q]) => normalizeSql(q) === normalizeSql(sql)); return e && e[1].calls ? { blocks: e[1].blocks / e[1].calls, rows: e[1].rows / e[1].calls } : null; };
+    const inAll = (q) => new Set(q.logged.filter((s) => READ.test(s.sql)).map(keyOf));
+    const keys = [...inAll(x.first)].filter((k) => inAll(x.last).has(k) && (!x.warm?.logged || x.warm.logged.some((s) => keyOf(s) === k)));
+    for (const k of keys) {
+      const s = x.last.logged.find((q) => keyOf(q) === k);
+      const a = per(lx?.statements, s.sql);
+      const b = per(x.statements, s.sql);
+      if (!a || !b || !(a.blocks > 0) || b.blocks / a.blocks < COST_RATIO || b.rows > a.rows) continue;
+      const ratio = b.blocks / a.blocks;
+      emit({ check: 'no-cache', rule: 'DAT-06', strength: 'SHOULD', severity: 'warning', method: r.method, route, statement: s.sql,
+        trace: { judge: 'repeat', path: x.path, statement: s.sql, ratio, scales: [{ scale: LO, rows: Math.round(a.rows) }, { scale: HI, rows: Math.round(b.rows) }] },
+        message: `${r.method} ${route} ran \`${s.sql}\` on every request with the same parameters, nothing cached in front and no Cache-Control or ETag on the response, and its cost grows with the table: ${fmt(Math.round(b.blocks))} blocks a call at ${HI}x against ${fmt(Math.round(a.blocks))} at ${LO}x, for the same ${Math.round(b.rows)} row(s) (DAT-06).` });
+    }
+  }
+
+  // ---- Memory kept per request (judge "memory", L05): the twin's heap
+  // after a full collection, at each point of a soak whose requests each
+  // carry a key of their own. Judged on the last stretch, which the soak's
+  // counts put past every bound the clean twin sets: a heap that still grows
+  // there by KEPT_BYTES or more a request keeps something per request that
+  // nothing removes (STB-05).
+  for (const r of spec.judge === 'memory' ? spec.soaks : []) {
+    const x = (hi.soaks ?? []).find((q) => q.id === r.id);
+    if (!x || x.points.some((p) => !p.collected)) throw new Error(`${twin}: soak ${r.id} has no heap measured after a full collection`);
+    const [a, b] = x.points.slice(-2);
+    const per = (b.heapUsed - a.heapUsed) / (b.requests - a.requests);
+    const route = r.route ?? r.path;
+    const trace = { judge: 'memory', path: r.path, scales: x.points.map((p) => ({ scale: HI, requests: p.requests, heapBytesPerRequest: p.requests ? Number(((p.heapUsed - x.points[0].heapUsed) / p.requests).toFixed(1)) : 0 })) };
+    if (per >= KEPT_BYTES) emit({ check: 'memory-growth', rule: 'STB-05', strength: 'SHOULD', severity: 'warning', method: r.method, route, trace,
+      message: `${r.method} ${route} kept about ${fmt(Math.round(per))} bytes of heap per request from request ${fmt(a.requests)} to ${fmt(b.requests)}, each with a key of its own, measured after a full collection: the heap grows with every new key and nothing gives it back (STB-05).` });
+  }
+
+  // ---- The first request after a start (judge "starts", L11): for each
+  // start, the first request against the median of the ones after it. A
+  // first request FIRST_EXTRA_MS or more and FIRST_RATIO times slower, in
+  // every start, waits for set-up a start could have done (STB-10). A
+  // timing: judged under the timing lock on the first-request times.
+  for (const r of spec.judge === 'starts' ? spec.starts : []) {
+    const x = (hi.starts ?? []).find((q) => q.id === r.id);
+    const later = x.samples.map((s) => median(s.laterMs));
+    const slow = x.samples.every((s, k) => s.firstMs - later[k] >= FIRST_EXTRA_MS && s.firstMs >= FIRST_RATIO * later[k]);
+    if (!slow) continue;
+    const v = timingJudge({ samples: x.samples.map((s) => s.firstMs), before: raw.environment?.before ?? environment(), after: raw.environment?.after ?? environment() });
+    const t = { ...v, why: Array.isArray(v.why) ? v.why.join('; ') || null : v.why ?? null };
+    const route = r.route ?? r.path;
+    const steady = median(later);
+    const trace = { judge: 'timing', path: x.path, timing: t, scales: [{ scale: HI, ms: Number(t.median.toFixed(1)) }] };
+    if (t.reliable) emit({ check: 'cold-start', rule: 'STB-10', strength: 'SHOULD', severity: 'warning', method: r.method, route, trace,
+      message: `${r.method} ${route} took ${fmt(Math.round(t.median))} ms as the first request after a start (median of ${x.samples.length} starts, spread ${(t.spread * 100).toFixed(1)}%), against ${steady.toFixed(1)} ms for the requests after it: the first request waits for set-up the start could have done (STB-10).` });
+    else emit({ check: 'cold-start', rule: 'STB-10', strength: 'SHOULD', severity: 'info', unresolved: true, method: r.method, route, trace,
+      message: `${r.method} ${route}'s first request after a start looked slow, but timing unreliable: ${t.why}.` });
+  }
+
+  // ---- Plans (judge "plans", L03): auto_explain's plan of each statement a
+  // request ran, at the top scale, in both runs after the warm-up. A Seq Scan
+  // with a filter on a table of BIG_TABLE rows or more that returns under
+  // SELECTIVE of the rows it read wants an index on what it filters by
+  // (DAT-07). A small table the owner names (smallTables) is left out.
+  const small = new Set(spec.smallTables ?? []);
+  for (const r of spec.judge === 'plans' ? spec.requests : []) {
+    const x = hi.requests.find((q) => q.id === r.id);
+    if ((x.status ?? 500) >= 400) throw new Error(`${twin}: ${r.method} ${x.path} answered ${x.status}; the fixture or its seed is wrong`);
+    const route = x.route ?? r.path;
+    const seqs = (q) => {
+      const found = [];
+      for (const p of q.plans ?? []) {
+        const walk = (n) => {
+          if (n['Node Type'] === 'Seq Scan' && n.Filter && !small.has(n['Relation Name'])) {
+            const loops = n['Actual Loops'] ?? 1;
+            const kept = (n['Actual Rows'] ?? 0) * loops;
+            const read = kept + (n['Rows Removed by Filter'] ?? 0) * loops;
+            const size = hi.tables?.[n['Relation Name']] ?? 0;
+            if (size >= BIG_TABLE && read > 0 && kept / read < SELECTIVE) found.push({ table: n['Relation Name'], filter: n.Filter, kept, read, size, sql: p['Query Text'] });
+          }
+          for (const c of n.Plans ?? []) walk(c);
+        };
+        walk(p.Plan);
+      }
+      return found;
+    };
+    const [a, b] = [x.first, x.last].map(seqs);
+    for (const f of b) {
+      if (!a.some((g) => g.table === f.table && g.filter === f.filter)) continue;
+      emit({ check: 'missing-index', rule: 'DAT-03', strength: 'SHOULD', severity: 'warning', method: r.method, route, statement: f.sql,
+        trace: { judge: 'plans', path: x.path, plan: 'Seq Scan', table: f.table, statement: f.sql, scales: [{ scale: HI, tableRows: f.size, rows: f.kept, removedRows: f.read - f.kept }] },
+        message: `${r.method} ${route} read ${f.table} with a sequential scan, ${fmt(f.read)} rows of its ${fmt(f.size)} for the ${fmt(f.kept)} that pass ${f.filter}: PostgreSQL had no index to go to them directly (DAT-07). From auto_explain, on seeded data at ${HI}x.` });
+    }
   }
 
   for (const f of out) {

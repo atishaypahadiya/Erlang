@@ -1,0 +1,70 @@
+{
+  "note": "Trace form (research/trace-harness.md) for L09: the static twins, served by scripts/trace.sh, from trace/overlay/trace-entry.js, which fills the twin's in-memory store and imports its src/app.js unchanged. The loop probe records the longest stretch the event loop could not run during each request (monitorEventLoopDelay). A request blocks the loop when that stretch is at least 50 ms and at least 70% of the request's own time, in each of the three runs after the warm-up; the share keeps out work that yields, such as bcryptjs's asynchronous compare, which runs in slices of up to 100 ms. A timing: it counts only under the timing lock, and is otherwise info (timing unreliable). GET /avatars/1 is driven but not a defect here: a synchronous read of a small file holds the loop for well under a millisecond, which no trace can tell from the asynchronous read, so L09-4 is confirmed statically only. POST /login (L09-2) is not driven, pending docs/decisions.md Q4: the clean twin's bcryptjs compare, though asynchronous, runs on the main thread in 100 ms slices, and its first two slices run back to back (about 200 ms), so the trace finds the clean twin's login blocking too. defects are what the planted twin must report and the clean twin must not; every other request is a decoy, in both twins.",
+  "fixture": "L09",
+  "form": "express",
+  "judge": "loop",
+  "entry": "trace-entry.js",
+  "scales": [
+    1
+  ],
+  "n": 1,
+  "runs": 4,
+  "requests": [
+    {
+      "id": "signup",
+      "method": "POST",
+      "path": "/signup",
+      "body": {
+        "email": "new@example.test",
+        "password": "correct horse"
+      },
+      "probes": [
+        "loop"
+      ]
+    },
+    {
+      "id": "export",
+      "method": "GET",
+      "path": "/export",
+      "probes": [
+        "loop"
+      ]
+    },
+    {
+      "id": "changePassword",
+      "method": "PUT",
+      "path": "/password",
+      "body": {
+        "email": "old@example.test",
+        "password": "correct horse"
+      },
+      "probes": [
+        "loop"
+      ]
+    },
+    {
+      "id": "avatar",
+      "method": "GET",
+      "path": "/avatars/1",
+      "probes": [
+        "loop"
+      ]
+    }
+  ],
+  "defects": [
+    {
+      "check": "blocking-work",
+      "rule": "OVL-12",
+      "method": "POST",
+      "route": "/signup",
+      "linked": true
+    },
+    {
+      "check": "blocking-work",
+      "rule": "OVL-12",
+      "method": "GET",
+      "route": "/export",
+      "linked": true
+    }
+  ]
+}

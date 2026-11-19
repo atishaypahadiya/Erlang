@@ -492,7 +492,7 @@
         },
         "symbol": {
           "type": "string",
-          "description": "hang: the function or client the request drove, when no endpoint reaches it."
+          "description": "hang, connections: the function, client or handler the request drove, for linking to a static finding with no endpoint."
         }
       }
     },

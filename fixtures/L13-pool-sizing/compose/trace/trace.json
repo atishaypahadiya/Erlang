@@ -1,0 +1,55 @@
+{
+  "note": "Trace form (research/trace-harness.md) for L13's compose form: the static twins' service, served by scripts/trace.sh against PostgreSQL. REPORTING_URL is the same database as DATABASE_URL. The connections probe lists the app role's backends at the database (pg_stat_activity) before and after each request: a request that opens a connection on every run after the warm-up makes its pool per request (L13-c2). L13-c1, pools across processes and replicas over max_connections, is a sum over the deployment's configuration, which one served process cannot show; it is confirmed by the static check and by the load run. defects are what the planted twin must report and the clean twin must not; every other request is a decoy, in both twins. symbol names the handler each request runs: the static finding for a pool made per request has no endpoint, so it is linked by symbol.",
+  "fixture": "L13",
+  "form": "compose",
+  "judge": "connections",
+  "scales": [
+    1
+  ],
+  "n": 1,
+  "env": {
+    "REPORTING_URL": "$DATABASE_URL"
+  },
+  "requests": [
+    {
+      "id": "oneOrder",
+      "method": "GET",
+      "path": "/orders/1",
+      "probes": [
+        "connections"
+      ],
+      "route": "/orders/:id",
+      "symbol": "oneOrder"
+    },
+    {
+      "id": "daily",
+      "method": "GET",
+      "path": "/reports/daily",
+      "probes": [
+        "connections"
+      ],
+      "route": "/reports/daily",
+      "symbol": "daily"
+    },
+    {
+      "id": "exportPage",
+      "method": "GET",
+      "path": "/reports/export?after=0",
+      "probes": [
+        "connections"
+      ],
+      "route": "/reports/export",
+      "symbol": "exportPage"
+    }
+  ],
+  "defects": [
+    {
+      "check": "pool-sizing",
+      "rule": "CAP-08",
+      "method": "GET",
+      "route": "/reports/export",
+      "linked": true,
+      "symbol": "exportPage"
+    }
+  ]
+}

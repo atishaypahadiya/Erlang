@@ -92,8 +92,13 @@ process.on('message', async (m) => {
       if (global.gc) { global.gc(); global.gc(); }
       const u = process.memoryUsage();
       reply({ heapUsed: u.heapUsed, rss: u.rss, collected: !!global.gc });
-    } else if (m.probe === 'loop-reset') { loop.reset(); reply({}); }
-    else if (m.probe === 'loop') reply({ maxMs: loop.max / 1e6, meanMs: loop.mean / 1e6, count: loop.count });
+    // reset() also forgets the last tick, and the tick after it only notes
+    // the time: wait for that tick, or a stretch that starts before it is
+    // never recorded.
+    } else if (m.probe === 'loop-reset') { loop.reset(); await new Promise((ok) => setTimeout(ok, 5)); reply({}); }
+    // The delay of a stretch is recorded when the monitor's timer next runs:
+    // wait for a timer and an immediate, so the stretch just ended is in.
+    else if (m.probe === 'loop') { await new Promise((ok) => setTimeout(ok, 5)); await new Promise((ok) => setImmediate(ok)); reply({ maxMs: loop.max / 1e6, meanMs: loop.mean / 1e6, count: loop.count }); }
     else reply({ error: `unknown probe ${m.probe}` });
   } catch (e) { reply({ error: String(e?.message ?? e) }); }
 });
@@ -104,7 +109,9 @@ const fastifyRoutes = [];
 const mod = await import(pathToFileURL(join(root, entry)).href);
 const app = mod.app;
 const isFastify = !!app && typeof app.addHook === 'function' && typeof app.inject === 'function';
-if (isFastify) app.addHook('onRoute', (r) => { for (const method of [r.method].flat()) if (method !== 'HEAD') fastifyRoutes.push({ method, url: r.url }); });
+// A Fastify app that awaited listen() when it loaded takes no more hooks; its
+// routes are then unknown here, and trace.json names each request's route.
+if (isFastify && !app.server.listening) app.addHook('onRoute', (r) => { for (const method of [r.method].flat()) if (method !== 'HEAD') fastifyRoutes.push({ method, url: r.url }); });
 if (!servers.length) {
   if (isFastify) await app.listen({ host: '127.0.0.1', port: 0 });
   else if (app && typeof app.listen === 'function') await new Promise((ok) => app.listen(0, '127.0.0.1', ok));
