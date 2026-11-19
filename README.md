@@ -23,12 +23,12 @@ npm install
 node bin/erlang.js <dir> [--out <file>]
 ```
 
-It writes a report/1 to `dist/reports/<dir name>/report.json`, or to `<file>`. Exit codes:
+It writes a report/1 to `dist/reports/<dir name>/report.json`, or to `<file>`. Errors and warnings fail a run; info never does. Exit codes:
 
-- 0: complete, with no findings.
-- 1: findings.
+- 0: complete, with no failing findings.
+- 1: failing findings.
 - 2: refused.
-- 3: partial, with no findings.
+- 3: partial, with no failing findings.
 - 64: bad usage.
 
 `erlang.config.json` at `<dir>` can exclude paths that are not part of the app, and name entry points ERLANG cannot find itself, tables that stay small, and the database's `max_connections` when no file in the repository states it:

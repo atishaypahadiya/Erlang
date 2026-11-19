@@ -23,12 +23,14 @@ The rest is planned. The decisions taken on review are at the end.
   `scripts/fix-test.js` applies each planted finding's auto fix to a fresh copy of the planted twin and runs the check again. The report must be complete, the finding gone, nothing new reported, and every edited file must still parse. A guided fix is never applied. Instead, the test replaces the lines it lists with the clean twin's lines at the same places, and the finding must then be gone. So the listed places are enough, and the clean twin is the fix a person would write. Then every auto fix is applied together, and only guided findings may be left.
 - **One file's failure is that file's.** A file that cannot be read, is not UTF-8, or makes a check throw is recorded as unread. The report is then partial, with the file named and the error described, never quoted (`lib/isolate.js`). The scan goes on, and the CLI exits 3 when there are no findings.
 - **The repository scans clean.** `erlang.config.json` at a scan root may exclude paths that are not part of the app (`lib/scope.js`). Every report names the config and what it excludes, and a config that cannot be read refuses the scan. This repository excludes `fixtures/` and `dist/`. `scripts/self-scan.js` runs the CLI on the repository and requires a complete report with no findings, as part of `npm test`.
-- **Exit codes.**
-  - 0: complete, with no findings.
-  - 1: findings, whether or not the report is also partial.
+- **Exit codes**, shared with ITTEN and KERCKHOFFS. Error and warning fail a run; info never does, and the summary counts it apart.
+  - 0: complete, with no failing findings.
+  - 1: failing findings, whether or not the report is also partial.
   - 2: refused.
-  - 3: partial, with no findings.
+  - 3: partial, with no failing findings.
   - 64: bad usage.
+- **Expected rows.** A fixture's `defects.json` may list `expected` rows: a finding that is right on both twins, such as an `info` finding ERLANG cannot decide. It must be reported on both twins, as `info`, and counts neither as a catch nor as a false positive. Every clean twin must exit 0. `scripts/fixture-test.js` sets expected findings aside before the shared scorer sees the reports.
+- **The timing lock**, shared with ITTEN and KERCKHOFFS (`lib/timing.js`). A timing-based finding counts only when measured at least 3 times with a relative spread of 10% or less, with the 1-minute load average below half the CPU count before and after. Otherwise it is `info`, with the reason `timing unreliable` and the environment recorded, and never fails. Every load finding goes through it.
 
 ## What each fixture proves
 

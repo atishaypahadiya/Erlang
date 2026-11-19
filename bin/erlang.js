@@ -17,10 +17,12 @@
 //       "handlers": [{ "file": "src/worker.js", "function": "handle" }] }
 //   Every report names the config and each excluded path (run.scope); a
 //   config that cannot be read refuses the scan. See lib/scope.js.
-// Exit codes: 0 complete with no findings, 1 findings (whether or not the
-// report is also partial), 2 refused, 3 partial with no findings (a file
-// could not be read, so the silence vouches for nothing; the report's reason
-// names each file and why), 64 bad usage (EX_USAGE in sysexits.h).
+// Exit codes (exitCode below; the same in ITTEN and KERCKHOFFS): 0 complete
+// with no failing findings, 1 failing findings (whether or not the report is
+// also partial), 2 refused, 3 partial with no failing findings (a file could
+// not be read, so the silence vouches for nothing; the report's reason names
+// each file and why), 64 bad usage (EX_USAGE in sysexits.h). An error or a
+// warning fails a run; info never does, and the summary counts it apart.
 
 import { readFileSync, statSync, realpathSync, existsSync } from 'node:fs';
 import { resolve, relative, basename, join, dirname, isAbsolute } from 'node:path';
@@ -126,6 +128,22 @@ export function scan(dir, { started = new Date(), only = null, modules = CHECKS 
   return report({ ...base, findings, run });
 }
 
+// Error and warning fail a run; info never does.
+export const failing = (f) => f.severity === 'error' || f.severity === 'warning';
+
+export function exitCode(r) {
+  if (r.status === 'refused') return 2;
+  if (r.findings.some(failing)) return 1;
+  return r.status === 'partial' ? 3 : 0;
+}
+
+// "complete: 2 failing (1 error, 1 warning), 3 info".
+export function summaryOf(r) {
+  const n = (sev) => r.findings.filter((f) => f.severity === sev).length;
+  const fails = n('error') + n('warning');
+  return `${r.status}: ${fails} failing (${n('error')} error, ${n('warning')} warning), ${n('info')} info`;
+}
+
 if (process.argv[1] && realpathSync(resolve(process.argv[1])) === fileURLToPath(import.meta.url)) {
   const args = process.argv.slice(2);
   if (args.length === 1 && (args[0] === '--version' || args[0] === '-v')) {
@@ -148,6 +166,6 @@ if (process.argv[1] && realpathSync(resolve(process.argv[1])) === fileURLToPath(
     const loc = f.where.locations?.[0];
     console.log(`${f.severity.padEnd(7)} ${f.check}  ${loc ? `${loc.file}:${loc.line ?? ''}` : ''}  ${f.message}`);
   }
-  console.log(`${r.status}: ${r.findings.length} finding(s)${r.reason ? ` (${r.reason})` : ''}. Report: ${relative(process.cwd(), path)}`);
-  process.exit(r.status === 'refused' ? 2 : r.findings.length ? 1 : r.status === 'partial' ? 3 : 0);
+  console.log(`${summaryOf(r)}${r.reason ? ` (${r.reason})` : ''}. Report: ${relative(process.cwd(), path)}`);
+  process.exit(exitCode(r));
 }

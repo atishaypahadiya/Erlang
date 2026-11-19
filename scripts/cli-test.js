@@ -6,7 +6,8 @@
 //   erlang <dir> --out <file>    report to <file>
 //   erlang --out <file> <dir>    the same, flag first
 //   erlang --version
-// Exit codes: 0 complete and clean, 1 findings, 2 refused, 3 partial with no
+// Exit codes: 0 complete with no failing findings, 1 failing findings (error
+// or warning; info never fails), 2 refused, 3 partial with no failing
 // findings, 64 bad usage.
 //
 // Usage: node scripts/cli-test.js            exit 0 when every case holds
@@ -41,7 +42,7 @@ writeFileSync(join(refusedConfig, 'erlang.config.json'), '{ "exclude": ["../outs
   const r = cli(clean);
   const rep = json(at);
   ok('<dir>: a clean subject exits 0 and writes dist/reports/<dir name>/report.json', r.status === 0 && rep?.status === 'complete' && rep.findings.length === 0, `exit ${r.status}${r.stderr ? `, ${r.stderr.trim().split('\n')[0]}` : ''}`);
-  ok('<dir>: the last line says complete and where the report is', /^complete: 0 finding\(s\)\. Report: dist\/reports\/cli-clean\/report\.json$/.test(r.stdout.trim().split('\n').at(-1)), r.stdout.trim().split('\n').at(-1));
+  ok('<dir>: the last line says complete and where the report is', /^complete: 0 failing \(0 error, 0 warning\), 0 info\. Report: dist\/reports\/cli-clean\/report\.json$/.test(r.stdout.trim().split('\n').at(-1)), r.stdout.trim().split('\n').at(-1));
   ok('<dir>: the report names the scope config and what it excludes', rep?.erlang?.scope?.config === 'erlang.config.json' && rep.erlang.scope.exclude.includes('scripts'));
 }
 {
@@ -62,6 +63,20 @@ writeFileSync(join(refusedConfig, 'erlang.config.json'), '{ "exclude": ["../outs
   const r = cli(partial, '--out', at);
   const rep = json(at);
   ok('<dir>: a file that is not UTF-8, and no findings, exits 3 with the file named', r.status === 3 && rep?.status === 'partial' && rep.reason.includes('src/broken.js: not read'), `exit ${r.status}, ${rep?.reason}`);
+}
+{
+  // A pool checkout never released, with no request handler: info only.
+  const dir = join(OUT, 'cli-info');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'job.js'), "import pg from 'pg';\nconst pool = new pg.Pool({ statement_timeout: 5000, connectionTimeoutMillis: 2000 });\nexport async function run() {\n  const c = await pool.connect();\n  await c.query('select 1');\n}\n");
+  const at = join(OUT, 'info.json');
+  const r = cli(dir, '--out', at);
+  const rep = json(at);
+  const last = r.stdout.trim().split('\n').at(-1);
+  ok('<dir>: info findings only exit 0, and the summary counts info apart', r.status === 0 && rep?.findings.length > 0 && rep.findings.every((f) => f.severity === 'info') && /^complete: 0 failing \(0 error, 0 warning\), \d+ info\./.test(last), `exit ${r.status}; ${last}`);
+  writeFileSync(join(dir, 'broken.js'), Buffer.from([0x66, 0x28, 0xff, 0x29, 0x0a]));
+  const r2 = cli(dir, '--out', at);
+  ok('<dir>: partial with info findings only exits 3', r2.status === 3 && json(at)?.status === 'partial', `exit ${r2.status}`);
 }
 {
   const at = join(OUT, 'refused.json');

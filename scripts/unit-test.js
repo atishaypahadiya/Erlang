@@ -14,6 +14,9 @@ import { scan } from '../bin/erlang.js';
 import { apply, syntaxErrors } from '../lib/fix.js';
 import { describe, Plain } from '../lib/isolate.js';
 import * as TJ from '../lib/trace-judge.js';
+import * as TIMING from '../lib/timing.js';
+import { applyExpected } from './fixture-test.js';
+import { score } from '../core/fixture-score.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = join(ROOT, 'dist', 'unit');
@@ -416,6 +419,30 @@ console.log('\nblocking-work: synchronous calls on the request thread');
   expectAutoFixHolds('  the auto fix for fs.readFileSync uses fs.promises', app("import * as fs from 'node:fs';", "  const t = fs.readFileSync('x', 'utf8');"), BW);
   expectAutoFixHolds("  the auto fix for bcrypt's compareSync awaits compare", app("import bcrypt from 'bcrypt';", '  const ok = bcrypt.compareSync(req.body.p, req.body.h);'), BW);
   expectAutoFixHolds('  the auto fix for zlib.brotliCompressSync awaits brotliCompress', app("import zlib from 'node:zlib';", '  const z = zlib.brotliCompressSync(req.body.b, {});'), BW);
+}
+
+console.log('\nShared rules: the timing lock and expected rows');
+{
+  const calm = { load1: 1, cpus: 8 };
+  const busy = { load1: 4, cpus: 8 };
+  const j = (samples, before = calm, after = calm) => TIMING.judge({ samples, before, after });
+  ok('timing: three samples within 10% on a calm machine are reliable', j([100, 104, 108]).reliable);
+  ok('timing: two samples are not', !j([100, 101]).reliable && j([100, 101]).reason === 'timing unreliable');
+  ok('timing: a spread over 10% is not', !j([100, 105, 112]).reliable, JSON.stringify(j([100, 105, 112]).why));
+  ok('timing: a spread of exactly 10% is', j([100, 105, 110.5]).reliable && j([100, 105, 110.5]).spread === 0.1);
+  ok('timing: load at half the CPUs before is not', !j([100, 101, 102], busy).reliable);
+  ok('timing: load at half the CPUs after is not', !j([100, 101, 102], calm, busy).reliable);
+  ok('timing: an unknown environment is not', !j([100, 101, 102], null).reliable);
+  ok('timing: unreliable makes a finding info, reliable keeps its severity', TIMING.severityUnder('error', j([1, 2])) === 'info' && TIMING.severityUnder('error', j([100, 101, 102])) === 'error');
+  const f = (severity, file) => ({ check: 'x', severity, fingerprint: `${file}|${severity}`, message: '', where: { locations: [{ file, line: 1 }] } });
+  const rep = (...findings) => ({ schema: 'report/1', status: 'complete', findings });
+  const spec = { defects: [{ id: 'D', check: 'x', where: { file: 'a.js' } }], decoys: [], expected: [{ id: 'E', check: 'x', where: { file: 'b.js' } }] };
+  const both = applyExpected(spec, { planted: rep(f('error', 'a.js'), f('info', 'b.js')), clean: rep(f('info', 'b.js')) });
+  const scored = score(spec, both.reports);
+  ok('expected: an info finding on both twins is set aside, neither catch nor false positive', !both.problems.length && scored.recall === 1 && scored.falsePositives.length === 0 && both.setAside.length === 2, JSON.stringify(both.problems));
+  ok('  control: without expected rows the same reports give a false positive', score(spec, { planted: rep(f('error', 'a.js'), f('info', 'b.js')), clean: rep(f('info', 'b.js')) }).falsePositives.length === 2);
+  ok('expected: missing from the clean twin is a problem', applyExpected(spec, { planted: rep(f('info', 'b.js')), clean: rep() }).problems.some((p) => p.includes('not reported on the clean twin')));
+  ok('expected: reported as a warning is a problem', applyExpected(spec, { planted: rep(f('warning', 'b.js')), clean: rep(f('warning', 'b.js')) }).problems.some((p) => p.includes('must be info')));
 }
 
 console.log('\nIsolation and scope');

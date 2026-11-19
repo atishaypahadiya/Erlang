@@ -42,7 +42,7 @@ One file, a report/1 in JSON (UTF-8, two-space indent, trailing newline):
 - at `<file>` when `--out` is given;
 - otherwise at `dist/reports/<name of dir>/report.json` inside the ERLANG directory, not the working directory.
 
-Each finding is also printed to standard output, one line per finding. A last line gives the status, the count and the report's path. Standard output is for people; the report is the interface.
+Each finding is also printed to standard output, one line per finding. A last line gives the status, the failing findings (errors and warnings) and the info findings counted apart, and the report's path: `complete: 2 failing (1 error, 1 warning), 3 info. Report: ...`. Standard output is for people; the report is the interface.
 
 **report/1** (`core/schema/report.schema.json`, a copy of ITTEN's at release v0.3.5):
 - `schema`: `"report/1"`. `specialist`: `"erlang"`. `version`. `subject`: the scanned directory, relative to the working directory, so a report does not carry an absolute path such as a home directory.
@@ -56,7 +56,7 @@ Each finding is also printed to standard output, one line per finding. A last li
 
 **finding/1** (`core/schema/finding.schema.json`, ITTEN's at v0.3.5):
 - `check`: one of `no-timeout`, `n-plus-one`, `per-row-writes`, `unbounded-query`, `pool-sizing`, `retry-policy`, `missing-index`, `pool-exhaustion`, `blocking-work`.
-- `severity`: `error`, `warning` or `info`. A MUST rule gives `error` and a SHOULD rule gives `warning`. `info` with `erlang.unresolved` means ERLANG could not decide, for example when no request handler was found or the database's limit is unknown.
+- `severity`: `error`, `warning` or `info`. A MUST rule gives `error` and a SHOULD rule gives `warning`. Errors and warnings fail a run; info never does. `info` with `erlang.unresolved` means ERLANG could not decide, for example when no request handler was found or the database's limit is unknown.
 - `fingerprint`: built from the check, the file and enclosing function (or table and column), and the kind of defect, with no line number, so it survives edits that move lines. Several of the same kind in one function are told apart by their order (`|2`, `|3`). Renaming the file or function changes it.
 - `message`: what is wrong, why it matters and what it rests on.
 - `measured: []` and `floor: null`: nothing is measured by static checks.
@@ -78,11 +78,13 @@ ERLANG never applies a fix. Applying one is the caller's step. Every auto fix in
 
 | Code | Meaning |
 |---|---|
-| 0 | Complete, no findings |
-| 1 | Findings, whether or not the report is also partial |
+| 0 | Complete, with no failing findings (info findings may be present) |
+| 1 | Failing findings (an error or a warning), whether or not the report is also partial |
 | 2 | Refused: `<dir>` is not a readable directory, or its config cannot be read |
-| 3 | Partial with no findings: a file could not be read, so the silence vouches for nothing |
+| 3 | Partial with no failing findings: a file could not be read, so the silence vouches for nothing |
 | 64 | Bad usage (`EX_USAGE`) |
+
+These codes, and the rule that error and warning fail a run while info never does, are shared with ITTEN and KERCKHOFFS.
 
 A refused or partial report is still written. An error inside one check stops only that check, and the report is partial and names it.
 
@@ -95,6 +97,14 @@ None. `erlang` opens no socket, sends no request and generates no load. It start
 - **The report file only:** at `--out <file>`, wherever that is, or else under `dist/reports/` in the ERLANG directory. Its parent directories are created.
 - **Nothing in `<dir>`:** ERLANG does not write, create or modify anything there, and suggested fixes are not applied.
 - **Nothing else:** no cache, temporary file, log or home-directory state.
+
+## Timings
+
+No finding of `erlang` rests on a timing. Where ERLANG judges a timing (the load harness), the shared timing lock applies (`lib/timing.js`): a timing-based finding counts only when it was measured at least 3 times with a relative spread, (max − min) / median, of 10% or less, and the 1-minute load average was below half the CPU count before and after. Otherwise the finding is `info`, with the reason `timing unreliable` and the environment recorded, and it never fails a run.
+
+## Continuous integration
+
+`.github/workflows/ci.yml` runs `npm ci` and `npm test` on every push to `main` and every pull request, except those that change only Markdown (`paths-ignore: ['**/*.md']`), and on every pushed `v*` tag. The rule is shared with ITTEN and KERCKHOFFS.
 
 ## Determinism
 

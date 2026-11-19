@@ -12,15 +12,23 @@
 //      dist/fixtures/<id>/<twin>/report.json.
 //   4. The pair is scored; every result goes to dist/fixtures/result.json.
 //
+// Expected rows (spec.expected: [{ id, check, where, title }]) name a finding
+// that is right on both twins, such as an info finding ERLANG cannot decide.
+// It must be reported on both twins, as info, and counts neither as a catch
+// nor as a false positive: it is set aside before the shared scorer
+// (core/fixture-score.js, which knows nothing of expected rows) sees the
+// reports. Every clean twin must also exit 0 by the CLI's rule (bin/erlang.js,
+// exitCode): no error or warning, and a complete run.
+//
 // Usage: node scripts/fixture-test.js      exit 0 only when everything passes
 
 import { readFileSync, writeFileSync, cpSync, rmSync, mkdirSync, readdirSync, existsSync } from 'node:fs';
 import { join, dirname, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { scan } from '../bin/erlang.js';
+import { scan, exitCode } from '../bin/erlang.js';
 import { write, check } from '../core/report.js';
 import { validate } from '../core/schema.js';
-import { score, format, passed } from '../core/fixture-score.js';
+import { score, format, passed, catches } from '../core/fixture-score.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = join(ROOT, 'dist', 'fixtures');
@@ -72,6 +80,29 @@ export function problemsOf(r, label) {
   return out;
 }
 
+// Sets aside the findings expected rows name. Returns the reports the scorer
+// sees, what was set aside, and any problem: an expected row missing from a
+// twin, or reported at a severity other than info.
+export function applyExpected(spec, reports) {
+  const rows = spec.expected ?? [];
+  const problems = [];
+  const matches = (f) => rows.find((x) => catches(f, { check: x.check, where: x.where }));
+  const kept = {};
+  const setAside = [];
+  for (const [twin, r] of Object.entries(reports)) {
+    kept[twin] = { ...r, findings: r.findings.filter((f) => !matches(f)) };
+    for (const x of rows) {
+      const hits = r.findings.filter((f) => catches(f, { check: x.check, where: x.where }));
+      if (!hits.length) problems.push(`expected ${x.id} is not reported on the ${twin} twin`);
+      for (const f of hits) {
+        if (f.severity !== 'info') problems.push(`expected ${x.id} is reported as ${f.severity} on the ${twin} twin; an expected row must be info`);
+        setAside.push({ id: x.id, twin, fingerprint: f.fingerprint });
+      }
+    }
+  }
+  return { reports: kept, setAside, problems };
+}
+
 function runFixture(id) {
   const spec = specOf(id);
   const reports = {};
@@ -84,7 +115,10 @@ function runFixture(id) {
     write(join(OUT, id, twin, 'report.json'), reports[twin]);
     problems.push(...problemsOf(reports[twin], `${id}/${twin}`));
   }
-  return { fixture: id, check: spec.check, plan: spec.form ? `${spec.plan}, ${spec.form}` : spec.plan, ...score(spec, { planted: reports.planted, clean: reports.clean }), problems };
+  if (exitCode(reports.clean) !== 0) problems.push(`${id}/clean: the clean twin would exit ${exitCode(reports.clean)}, not 0`);
+  const ex = applyExpected(spec, reports);
+  problems.push(...ex.problems.map((p) => `${id}: ${p}`));
+  return { fixture: id, check: spec.check, plan: spec.form ? `${spec.plan}, ${spec.form}` : spec.plan, ...score(spec, ex.reports), expected: ex.setAside, problems };
 }
 
 export function run() {
@@ -99,6 +133,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   for (const c of run()) {
     console.log(`\n${c.fixture}: ${c.check} (${c.plan})`);
     for (const line of format(c)) console.log(`  ${line}`);
+    for (const id of [...new Set(c.expected.map((e) => e.id))]) console.log(`  expected ${id}: info on both twins, set aside`);
     for (const p of c.problems) console.log(`  problem: ${p}`);
     ok = ok && passed(c) && !c.problems.length;
   }
