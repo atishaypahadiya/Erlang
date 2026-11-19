@@ -45,11 +45,11 @@ It writes a report/1 to `dist/reports/<dir name>/report.json`, or to `<file>`. E
 
 `npm test` runs every test, including a scan of this repository, which must come back clean.
 
-`npm run trace` (`scripts/trace.sh`) runs the trace harness on the fixtures: each twin is served against PostgreSQL in Docker with seeded data at 1x and 10x, and the statements, rows, calls and bytes of each request are counted and judged (`research/trace-harness.md`). It needs Docker, sends requests one at a time to the fixture on 127.0.0.1, runs at nice 15, and refuses while ITTEN's inspector runs. It is not part of `npm test`.
+`npm run trace` (`scripts/trace.sh`) runs the trace harness on the fixtures: each twin is served against PostgreSQL in Docker with seeded data at 1x and 10x, and the statements, rows, calls and bytes of each request are counted and judged, with every outbound call going to a stub on 127.0.0.1 that counts it, fails it or never answers it, and the twin's pool counted (`research/trace-harness.md`). It needs Docker, sends requests one at a time to the fixture on 127.0.0.1, runs at nice 15, and refuses while ITTEN's inspector runs. It is not part of `npm test`.
 
 - `reference/`: the rules ERLANG checks against, with their sources.
 - `research/`: the failure model, prior art, the name, and other design notes. `research/first-check.md` explains the order of the checks. `research/probes/` holds runtime probes, such as the Prisma batching probe; it is excluded from the self-scan, since it runs per-item queries on purpose.
-- `fixtures/`: the test bench (`fixtures/PLAN.md`). `L07-no-timeout/`, `L01a-n-plus-one/`, `L01b-per-row-writes/`, `L02-unbounded-query/`, `L03-missing-index/`, `L06-retry-storm/`, `L08-pool-exhaustion/`, `L09-blocking-work/`, `L05-memory-growth/`, `L10-no-cache/`, `L11-cold-start/`, `L12-no-load-shedding/` and `L13-pool-sizing/` are built as static pairs, and so is the `sql/` form of `L04-oversized-payload/`; the `sql/` forms of L01a, L01b and L02, and `L04-oversized-payload/`, have trace forms.
+- `fixtures/`: the test bench (`fixtures/PLAN.md`). `L07-no-timeout/`, `L01a-n-plus-one/`, `L01b-per-row-writes/`, `L02-unbounded-query/`, `L03-missing-index/`, `L06-retry-storm/`, `L08-pool-exhaustion/`, `L09-blocking-work/`, `L05-memory-growth/`, `L10-no-cache/`, `L11-cold-start/`, `L12-no-load-shedding/` and `L13-pool-sizing/` are built as static pairs, and so is the `sql/` form of `L04-oversized-payload/`; the `sql/` forms of L01a, L01b and L02, `L04-oversized-payload/`, the `loops/` form of `L06-retry-storm/`, `L07-no-timeout/` and `L08-pool-exhaustion/` have trace forms.
 - `core/`: a pinned, temporary copy of the shared finding/1 and report/1 code (`core.pin.json`).
 
 ## Part of a set

@@ -130,20 +130,20 @@ No finding of `erlang` rests on a timing. Where ERLANG judges a timing (the load
 
 ## The trace harness
 
-A separate program, for ERLANG's own fixtures: `scripts/trace.sh` (`npm run trace`). It confirms static findings by counts, on a real database. It is not part of `erlang` or `npm test`. Design and decisions: `research/trace-harness.md`.
+A separate program, for ERLANG's own fixtures: `scripts/trace.sh` (`npm run trace`). It confirms static findings by what a served twin does, on a real database: statement and row counts, outbound calls, pool counts, and whether a response comes at all. It is not part of `erlang` or `npm test`. Design and decisions: `research/trace-harness.md`.
 
 ```
 scripts/trace.sh [form ...]      e.g. scripts/trace.sh L01a-n-plus-one/sql
 ```
 
-With no form, it runs every `fixtures/<id>/<form>/trace/trace.json`: today the `sql/` forms of L01a, L01b, L02 and L04.
+With no form, it runs every `fixtures/<id>/<form>/trace/trace.json`: today the `sql/` forms of L01a, L01b, L02 and L04, L06's `loops/` form, L07 and L08.
 
 **Inputs**
 
 | Input | Needed | Notes |
 |---|---|---|
 | Docker | Yes | Runs `postgres:17.11@sha256:ff87138949ad9a46f32ff23bd6852b52ce024a13dffe9b4087be98292cdd3b4f`, the image KERCKHOFFS pins. |
-| A fixture form | Yes | Its twins, and `trace/`: `trace.json` (the requests or page views, and the expected defects), `seed.sql`, a schema (`schema.sql`, or the twins' own migrations), and `package-lock.json`. |
+| A fixture form | Yes | Its twins, and `trace/`: `trace.json` (the requests or page views, how the stub answers each, and the expected defects), `seed.sql`, a schema (`schema.sql`, or the twins' own migrations), and `package-lock.json`. Optional: `package.json`, when the twins ship none, and `overlay/`, files copied over the twin's copy (L07's driver, a server over a library). |
 | Seed size | Fixed | Each form's `seed.sql`, at 1x and 10x. For example, L02 has 10,000 orders and events at 1x, and 100,000 at 10x. The seed is deterministic, and its SHA-256 is recorded. |
 | URL | No | Each twin is started by the harness, on 127.0.0.1, on a port the system picks. |
 | Test logins | No | The fixtures have no authentication. The database passwords are made for each run. |
@@ -155,9 +155,9 @@ With no form, it runs every `fixtures/<id>/<form>/trace/trace.json`: today the `
 
 Trace findings are finding/1:
 - `detection` includes `trace`.
-- `erlang.trace` holds the counts at each scale, and the slope or ratio judged.
+- `erlang.trace` holds what was judged (`judge`): counts at each scale and the slope or ratio, the attempts an upstream host received, the connections checked out of the pool, or whether the response came. A judgement on a time carries the timing lock's verdict in `erlang.trace.timing`; when the lock does not hold, the finding is `info` with reason `timing unreliable` and never fails.
 - `measured` is `[]`, since counts do not vary between runs.
-- A finding that agrees with a static finding (same check, method and route, and the statement that grows is on one of its lines) is that static finding, with `trace` added to its `detection` and the counts added to its message. Its fingerprint, locations and fix stay the static finding's.
+- A finding that agrees with a static finding (same check and rule; same method and route, or, for code no handler reaches, the symbol the trace names; and the statement that grows on one of its lines) is that static finding, with `trace` added to its `detection` and the counts added to its message. Its fingerprint, locations and fix stay the static finding's.
 - A trace finding with no static match names its endpoint. It carries a guided fix when its statement or route is found in the source.
 
 **Exit codes**
@@ -171,7 +171,8 @@ Trace findings are finding/1:
 | 75 | ITTEN's inspector is running, so a timing run may be under way (`EX_TEMPFAIL`). Checked at start and before each twin. |
 
 **Network**
-- PostgreSQL publishes its port on 127.0.0.1 only. Each twin listens on 127.0.0.1 only. Requests go only to the twin, one at a time, at most 5 a second, three per request per scale.
+- PostgreSQL publishes its port on 127.0.0.1 only. Each twin listens on 127.0.0.1 only, whatever host and port it asks for. Requests go only to the twin, one at a time, at most 5 a second, three per request per scale (two for requests that wait out a timeout).
+- Every outbound HTTP call a twin makes (`node:http`, `node:https`, `fetch`, and the clients built on them) goes to a stub the harness runs on 127.0.0.1, as plain HTTP, with the host it meant in `x-erlang-host`. Nothing a twin calls leaves the machine.
 - No load is generated.
 - The first run pulls the image from Docker Hub, and installs each form's packages from the npm registry with `npm ci --ignore-scripts`, from its committed lockfile. Later runs reuse both.
 
@@ -180,6 +181,6 @@ Trace findings are finding/1:
 - One Docker container, removed on exit, including on failure. The image stays in Docker's store.
 - Nothing in `fixtures/`: each twin is copied to `dist/` before it runs.
 
-**Determinism.** The seeds use no randomness, and the counts are exact. For each of the four forms, two consecutive runs gave reports identical apart from `started`, for both twins. Timings are written to the twin's log but never judged.
+**Determinism.** The seeds use no randomness, and the counts are exact. For each of the four first forms, two consecutive runs gave reports identical apart from `started`, for both twins. Timings are judged only under the timing lock (three or more samples, relative spread of 10% or less, one-minute load average below half the CPU count before and after); otherwise the finding is `info`, and a planted defect judged that way is reported as `SKIP ... timing unreliable`, not as missed.
 
-**Load on the machine.** Everything runs at `nice -n 15`. The container is held to one CPU and 1 GB. A full run of the four forms takes about 90 seconds.
+**Load on the machine.** Everything runs at `nice -n 15`. The container is held to one CPU and 1 GB. A full run of the seven forms takes about six minutes, most of it L07 waiting out timeouts.

@@ -253,7 +253,7 @@
     },
     "trace": {
       "type": "object",
-      "description": "Trace evidence (research/trace-harness.md): counts recorded on seeded data at 1x and 10x, one request at a time. Counts are exact, so no field here varies between runs.",
+      "description": "Trace evidence (research/trace-harness.md): counts recorded on seeded data, one request at a time. Counts are exact, so no count varies between runs. Timings (judge timing) carry the timing lock's verdict (lib/timing.js).",
       "required": [
         "judge",
         "scales"
@@ -266,9 +266,17 @@
             "rows",
             "calls",
             "bytes",
-            "fields"
+            "fields",
+            "pool",
+            "attempts",
+            "hang",
+            "repeat",
+            "memory",
+            "connections",
+            "plans",
+            "timing"
           ],
-          "description": "statements: per request, from pg_stat_statements. rows: rows the statements returned. calls: HTTP calls per page view. bytes: a response's bytes as sent. fields: the share of a response's JSON its page never reads."
+          "description": "statements: per request, from pg_stat_statements. rows: rows the statements returned. calls: HTTP calls per page view. bytes: a response's bytes as sent. fields: the share of a response's JSON its page never reads. pool: connections checked out of the twin's pool, during an outbound call or after the response. attempts: outbound calls the stub received for one request. hang: whether the response came while the stub never answered. repeat: statements over the same request sent several times in a row. memory: the twin's heap after a full collection, per request served. connections: connections open at the database. plans: the plan PostgreSQL chose (auto_explain). timing: milliseconds, under the timing lock."
         },
         "scales": {
           "type": "array",
@@ -312,6 +320,47 @@
               },
               "unreadBytes": {
                 "type": "integer",
+                "minimum": 0
+              },
+              "checkedOutDuringCall": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "keptAfterResponse": {
+                "type": "integer"
+              },
+              "attempts": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "timedOut": {
+                "type": "boolean"
+              },
+              "times": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "requests": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "heapBytesPerRequest": {
+                "type": "number"
+              },
+              "connections": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "tableRows": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "removedRows": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "ms": {
+                "type": "number",
                 "minimum": 0
               }
             }
@@ -361,6 +410,89 @@
         "unstable": {
           "type": "boolean",
           "description": "The two measured runs differed, so nothing is judged."
+        },
+        "plan": {
+          "type": "string",
+          "description": "plans: the plan node that reads the table, as auto_explain records it (Seq Scan, Index Scan, ...)."
+        },
+        "table": {
+          "type": "string"
+        },
+        "timing": {
+          "type": "object",
+          "description": "The timing lock's verdict (lib/timing.js): reliable only with three or more samples, relative spread of 10% or less, and the one-minute load average below half the CPU count before and after.",
+          "required": [
+            "reliable",
+            "samples"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "reliable": {
+              "type": "boolean"
+            },
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "why": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "samples": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              }
+            },
+            "median": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "spread": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "before": {
+              "type": "object",
+              "properties": {
+                "load1": {
+                  "type": "number"
+                },
+                "cpus": {
+                  "type": "integer"
+                }
+              },
+              "additionalProperties": false
+            },
+            "after": {
+              "type": "object",
+              "properties": {
+                "load1": {
+                  "type": "number"
+                },
+                "cpus": {
+                  "type": "integer"
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "host": {
+          "type": "string",
+          "description": "attempts, hang: the upstream host the stub failed, as the twin addressed it."
+        },
+        "symbol": {
+          "type": "string",
+          "description": "hang: the function or client the request drove, when no endpoint reaches it."
         }
       }
     },

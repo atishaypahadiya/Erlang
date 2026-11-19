@@ -83,11 +83,20 @@ How it runs:
 - **ITTEN timing runs:** the harness generates no load, but the project rule keeps heavy work off this Mac while ITTEN timing runs. ITTEN has no lock file for its timed phases yet. The harness refuses to start while ITTEN's inspector process is running (decision 1). This is temporary: it changes to ITTEN's lock file once ITTEN 0.5 writes one.
 - **Fixture installs:** the fixtures are never installed today. The harness installs each form from a committed `package-lock.json` into `dist/trace/install/<form>/`, as `research/probes/prisma7-batching/run.sh` does, with `--ignore-scripts` and an explicit `prisma generate`. Making the lockfiles needs the npm registry once. After that, installs are pinned.
 
+## Beyond counting statements
+
+Added for L06, L07 and L08 (19 November 2026). Requests stay serial; nothing here is load.
+
+- **A stub for every outbound call.** `scripts/trace/serve.js` patches `node:http`, `node:https` and `fetch` before it imports the twin, so every call the twin makes (axios, got and the rest are built on these) reaches a stub that `scripts/trace/run.js` runs on 127.0.0.1. A request's `upstream` says how the stub answers while it runs: a status and body, after a delay, never (`hang`), or per host. The stub records each call it receives, with its time.
+- **Probes over IPC.** The served twin answers the harness's questions on its IPC channel: its pool's counts (`total`, `idle`, `waiting`, from the pool `src/db.js` exports), its heap after a full collection (node runs with `--expose-gc`), and the event loop's delay over a request.
+- **New judges.** `attempts` (L06): calls one failing host received for one request, the gaps between them, and whether the twin was still retrying when the harness gave up. `pool` (L08): connections checked out while the stub answered the outbound call (STB-09), and after the response against before the request (STB-08); a request that leaks runs on a twin of its own (`restart`). `hang` (L07): whether any response came within a limit longer than every deadline the clean twin sets.
+- **A driver for a library.** L07's twins are a library with no server. Its trace form adds `trace/overlay/trace-driver.js`, one route per function, copied over the twin's copy; the twins are unchanged. A static finding with no endpoint is linked by the symbol the request drives.
+
 ## What it does not do
 
-- **No load and no concurrency.** Pool exhaustion (L08), load shedding (L12) and every capacity rule stay with a separate load harness, which runs in CI or on another machine.
-- **No production data, and no service but the fixture.**
-- **No timing judgement.** Statement counts, row counts and plans are deterministic on seeded data. Latency on a shared laptop is not, so the harness reports it but never judges on it.
+- **No load and no concurrency.** Load shedding (L12) and every capacity rule stay with a separate load harness. Pool exhaustion (L08) is traced one request at a time, from the pool's own counts, not by exhausting it.
+- **No production data, and no service but the fixture.** Outbound calls go to the stub, never to the hosts the twin names.
+- **No timing judgement outside the timing lock.** Counts are deterministic on seeded data; latency on a shared laptop is not. A judgement on a time (the fixed wait between retries in L06) counts only under the shared timing lock (`lib/timing.js`); otherwise it is info with reason `timing unreliable`, and the harness's self-check reports the planted defect as inconclusive, not missed (docs/decisions.md, Q2).
 
 ## Decisions
 

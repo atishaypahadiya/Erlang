@@ -1,0 +1,210 @@
+{
+  "note": "Trace form (research/trace-harness.md) for L06, loops form: the static twins, served by scripts/trace.sh. Every outbound call goes to the harness's stub on 127.0.0.1. Each request fails one upstream host (upstream.hosts) and the stub answers 200 to the rest, so the attempts counted are that host's alone; hosts names the function that calls each one, for linking to static findings. Judged per host: still retrying when the harness gives up (RTY-01), no wait between attempts or the same wait every time under the timing lock (RTY-03), a 404 retried (RTY-06). defects are what the planted twin must report and the clean twin must not; every other host is a decoy, in both twins.",
+  "fixture": "L06",
+  "form": "loops",
+  "judge": "attempts",
+  "scales": [
+    1
+  ],
+  "n": 1,
+  "env": {
+    "ACCOUNTS_URL": "http://accounts.test",
+    "RECS_URL": "http://recs.test",
+    "FRAUD_URL": "http://fraud.test",
+    "TAX_URL": "http://tax.test",
+    "DELIVERY_URL": "http://delivery.test",
+    "EXPORTS_URL": "http://exports.test",
+    "ORDERS_URL": "http://orders.test",
+    "PRICING_URL": "http://pricing.test"
+  },
+  "hosts": {
+    "accounts.test": "profile",
+    "recs.test": "recommendations",
+    "fraud.test": "fraudScore",
+    "tax.test": "tax",
+    "delivery.test": "slots",
+    "exports.test": "exportResult",
+    "orders.test": "orderPages",
+    "pricing.test": "prices"
+  },
+  "requests": [
+    {
+      "id": "home-accounts",
+      "method": "GET",
+      "path": "/home/1",
+      "route": "/home/:id",
+      "upstream": {
+        "hosts": {
+          "accounts.test": {
+            "status": 503
+          }
+        }
+      },
+      "timeoutMs": 15000
+    },
+    {
+      "id": "home-recs",
+      "method": "GET",
+      "path": "/home/1",
+      "route": "/home/:id",
+      "upstream": {
+        "hosts": {
+          "recs.test": {
+            "status": 503
+          }
+        }
+      },
+      "timeoutMs": 15000
+    },
+    {
+      "id": "home-orders",
+      "method": "GET",
+      "path": "/home/1",
+      "route": "/home/:id",
+      "upstream": {
+        "hosts": {
+          "orders.test": {
+            "status": 503
+          }
+        }
+      },
+      "timeoutMs": 15000
+    },
+    {
+      "id": "order-fraud",
+      "method": "POST",
+      "path": "/orders",
+      "route": "/orders",
+      "body": {
+        "zip": "1000",
+        "skus": [
+          "a",
+          "b"
+        ]
+      },
+      "upstream": {
+        "hosts": {
+          "fraud.test": {
+            "status": 503
+          }
+        }
+      },
+      "timeoutMs": 6000
+    },
+    {
+      "id": "order-tax",
+      "method": "POST",
+      "path": "/orders",
+      "route": "/orders",
+      "body": {
+        "zip": "1000",
+        "skus": [
+          "a",
+          "b"
+        ]
+      },
+      "upstream": {
+        "hosts": {
+          "tax.test": {
+            "status": 404
+          }
+        }
+      },
+      "timeoutMs": 15000
+    },
+    {
+      "id": "order-slots",
+      "method": "POST",
+      "path": "/orders",
+      "route": "/orders",
+      "body": {
+        "zip": "1000",
+        "skus": [
+          "a",
+          "b"
+        ]
+      },
+      "upstream": {
+        "hosts": {
+          "delivery.test": {
+            "status": 503
+          }
+        }
+      },
+      "timeoutMs": 15000
+    },
+    {
+      "id": "order-prices",
+      "method": "POST",
+      "path": "/orders",
+      "route": "/orders",
+      "body": {
+        "zip": "1000",
+        "skus": [
+          "a",
+          "b"
+        ]
+      },
+      "upstream": {
+        "hosts": {
+          "pricing.test": {
+            "status": 503
+          }
+        }
+      },
+      "timeoutMs": 15000
+    },
+    {
+      "id": "export",
+      "method": "GET",
+      "path": "/exports/1",
+      "route": "/exports/:id",
+      "upstream": {
+        "hosts": {
+          "exports.test": {
+            "status": 200,
+            "body": {
+              "done": true,
+              "result": 1
+            }
+          }
+        }
+      },
+      "timeoutMs": 15000
+    }
+  ],
+  "defects": [
+    {
+      "check": "retry-policy",
+      "rule": "RTY-03",
+      "method": "GET",
+      "route": "/home/:id",
+      "host": "accounts.test",
+      "linked": true
+    },
+    {
+      "check": "retry-policy",
+      "rule": "RTY-03",
+      "method": "GET",
+      "route": "/home/:id",
+      "host": "recs.test",
+      "linked": true
+    },
+    {
+      "check": "retry-policy",
+      "rule": "RTY-01",
+      "method": "POST",
+      "route": "/orders",
+      "host": "fraud.test",
+      "linked": true
+    },
+    {
+      "check": "retry-policy",
+      "rule": "RTY-06",
+      "method": "POST",
+      "route": "/orders",
+      "host": "tax.test",
+      "linked": true
+    }
+  ]
+}

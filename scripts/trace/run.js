@@ -11,6 +11,23 @@
 // so everything counted is a statement that request sent. Page views (trace.json "pages") run the twin's own page
 // code against the twin, counting its calls and the fields it reads.
 //
+// Every outbound call the twin makes goes to a stub on 127.0.0.1 run here
+// (scripts/trace/serve.js redirects them). A request's "upstream" says how
+// the stub answers while it runs: { status, body, delayMs }, or { hang: true }
+// to accept and never answer, and per host under "hosts" ({ host: answer }).
+// What the stub receives is recorded per
+// request, with times. "probes" asks the twin, over IPC, for its pool counts
+// while the stub is answering ("pool-during") and after the response
+// ("pool-after"), and for the event loop's delay over the request ("loop").
+// "timeoutMs" is how long the harness waits before giving up on a response,
+// recorded as timedOut. Other measurements, each optional in trace.json:
+//   "repeats": a request sent k times in a row with no reset between, for
+//     statements that every request repeats;
+//   "soaks": a request with a unique key ($i) sent n times, the twin's heap
+//     after a full collection read before and after;
+//   "starts": the first requests after the twin starts, against later ones,
+//     restarting the twin for each sample.
+//
 // Usage: node scripts/trace/run.js <form dir> <out dir> <node_modules dir>
 // Environment: ERLANG_TRACE_CONTAINER, ERLANG_TRACE_PORT, ERLANG_TRACE_APP_PASSWORD_FILE.
 // Writes <out dir>/<twin>/raw.json and the twin's log.
@@ -20,10 +37,11 @@ import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { request as httpRequest } from 'node:http';
+import { request as httpRequest, createServer } from 'node:http';
 import { gunzipSync, brotliDecompressSync, inflateSync } from 'node:zlib';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { expand, routeOf, track, unreadBytes, unreadFields } from '../../lib/trace-judge.js';
+import { environment } from '../../lib/timing.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const [formDir, outDir, modules] = process.argv.slice(2).map((p) => p && resolve(p));
@@ -80,7 +98,7 @@ from (select s.query, sum(s.calls)::int as calls, sum(s.rows)::int as rows
 }
 
 // One HTTP request to the twin, offering compression, with the bytes as sent.
-function send(port, method, path, body) {
+function send(port, method, path, body, timeoutMs = 30_000) {
   return new Promise((ok, fail) => {
     const data = body === undefined ? null : Buffer.from(JSON.stringify(body));
     const req = httpRequest({ host: '127.0.0.1', port, method, path, headers: { 'accept-encoding': 'gzip, br', ...(data ? { 'content-type': 'application/json', 'content-length': data.length } : {}) } }, (res) => {
@@ -89,10 +107,38 @@ function send(port, method, path, body) {
       res.on('end', () => ok({ status: res.statusCode, headers: res.headers, raw: Buffer.concat(chunks) }));
       res.on('error', fail);
     });
-    req.setTimeout(30_000, () => req.destroy(new Error(`${method} ${path}: no response in 30 s`)));
+    req.setTimeout(timeoutMs, () => req.destroy(Object.assign(new Error(`${method} ${path}: no response in ${timeoutMs} ms`), { code: 'ERLANG_TIMEOUT' })));
     req.on('error', fail);
     req.end(data);
   });
+}
+
+// The stub every outbound call of the twin reaches.
+const stub = { conf: {}, hits: [], open: new Set(), onHit: null };
+const stubServer = createServer((req, res) => {
+  const chunks = [];
+  req.on('data', (c) => chunks.push(c));
+  req.on('end', async () => {
+    const hit = { host: req.headers['x-erlang-host'] ?? null, method: req.method, path: req.url, at: Number(process.hrtime.bigint() / 1000n) / 1000 };
+    stub.hits.push(hit);
+    if (stub.onHit) { try { hit.probe = await stub.onHit(hit); } catch (e) { hit.probe = { error: String(e.message) }; } }
+    const c = stub.conf.hosts?.[hit.host] ?? stub.conf;
+    if (c.hang) { stub.open.add(res); res.on('close', () => stub.open.delete(res)); return; }
+    const answer = () => {
+      res.writeHead(c.status ?? 200, { 'content-type': 'application/json', ...(c.status === 503 || c.status === 429 ? { 'retry-after': '1' } : {}) });
+      res.end(JSON.stringify(c.body ?? {}));
+    };
+    if (c.delayMs) setTimeout(answer, c.delayMs); else answer();
+  });
+});
+await new Promise((ok) => stubServer.listen({ host: '127.0.0.1', port: 0 }, ok));
+const STUB = `127.0.0.1:${stubServer.address().port}`;
+function stubFor(conf = {}) {
+  for (const r of stub.open) r.destroy();
+  stub.open.clear();
+  stub.conf = conf;
+  stub.hits = [];
+  stub.onHit = null;
 }
 
 function decode(res) {
@@ -119,32 +165,86 @@ async function paced() {
   last = Date.now();
 }
 
-async function measureRequest(port, routes, r, n) {
+// One request, with the stub and probes as the request asks; a response
+// that does not come within timeoutMs is recorded as timedOut.
+async function once(app, r, path, body) {
+  stubFor(r.upstream);
+  const probes = r.probes ?? [];
+  if (probes.includes('pool-during')) stub.onHit = () => app.probe('pool');
+  if (probes.includes('loop')) await app.probe('loop-reset');
+  const poolBefore = probes.includes('pool-after') ? await app.probe('pool') : null;
+  const t0 = performance.now();
+  let res = null;
+  let timedOut = false;
+  try { res = await send(app.port, r.method, path, body, r.timeoutMs); } catch (e) { if (e.code === 'ERLANG_TIMEOUT') timedOut = true; else throw e; }
+  const ms = performance.now() - t0;
+  const hits = stub.hits.map((h) => ({ ...h, at: Number((h.at - stub.hits[0].at).toFixed(3)) }));
+  const extra = {
+    ...(r.upstream || hits.length ? { upstream: hits } : {}),
+    ...(probes.includes('pool-after') ? { poolBefore, poolAfter: await app.probe('pool') } : {}),
+    ...(probes.includes('loop') ? { loop: await app.probe('loop') } : {}),
+    ms: Number(ms.toFixed(3)),
+  };
+  stubFor();
+  return { res, timedOut, extra };
+}
+
+async function measureRequest(app, r, n) {
   const path = expand(r.path, n);
   const body = r.body === undefined ? undefined : expand(r.body, n);
   const runs = [];
-  for (let k = 0; k < 3; k++) {
+  // Three runs, the first a warm-up; two when trace.json says so (runs: 2),
+  // for requests that wait out a timeout.
+  const count = r.runs ?? spec.runs ?? 3;
+  for (let k = 0; k < count; k++) {
     await paced();
     resetStats();
-    const res = await send(port, r.method, path, body);
+    const { res, timedOut, extra } = await once(app, r, path, body);
     const stats = readStats();
-    const decoded = decode(res);
+    const decoded = res ? decode(res) : { text: '', json: undefined };
     runs.push({
-      status: res.status,
-      bytes: res.raw.length,
-      encoding: res.headers['content-encoding'] ?? null,
-      contentType: res.headers['content-type'] ?? null,
-      streamed: res.headers['content-length'] === undefined,
-      items: itemsOf(r.items, body, decoded),
+      status: res?.status ?? null,
+      timedOut,
+      bytes: res?.raw.length ?? 0,
+      encoding: res?.headers['content-encoding'] ?? null,
+      contentType: res?.headers['content-type'] ?? null,
+      streamed: res ? res.headers['content-length'] === undefined : false,
+      items: res ? itemsOf(r.items, body, decoded) : null,
       statements: stats,
+      ...extra,
     });
   }
-  const [, a, b] = runs;
-  const stable = JSON.stringify({ ...a, bytes: 0 }) === JSON.stringify({ ...b, bytes: 0 });
-  return { id: r.id, method: r.method, path, route: routeOf(routes, r.method, path), ...b, stable, ...(stable ? {} : { other: a }) };
+  const [w, a, b] = count === 3 ? runs : [null, ...runs];
+  const kept = (x) => x.poolAfter && (x.poolAfter.total - x.poolAfter.idle) - (x.poolBefore.total - x.poolBefore.idle);
+  const shape = (x) => JSON.stringify({ ...x, bytes: 0, ms: 0, upstream: x.upstream?.length, loop: undefined, poolBefore: undefined, poolAfter: kept(x) });
+  const stable = shape(a) === shape(b);
+  const keep = (x) => ({ timedOut: x.timedOut, ...(x.upstream ? { upstream: x.upstream } : {}), ...(x.poolAfter ? { poolBefore: x.poolBefore, poolAfter: x.poolAfter } : {}), ms: x.ms, ...(x.loop ? { loop: x.loop } : {}) });
+  return { id: r.id, method: r.method, path, route: r.route ?? routeOf(app.routes, r.method, path), ...b, stable, ...(stable ? {} : { other: a }), ...(r.upstream || r.probes ? { ...(w ? { warm: keep(w) } : {}), first: keep(a) } : {}), samples: [w, a, b].filter(Boolean).map((x) => ({ ms: x.ms, ...(x.loop ? { loopMaxMs: x.loop.maxMs } : {}), ...(x.upstream ? { attempts: x.upstream.length } : {}) })) };
 }
 
-async function measurePage(port, routes, page, work, n) {
+// The same request k times in a row, statements counted over all of them.
+async function measureRepeat(app, r, n) {
+  const path = expand(r.path, n);
+  await paced();
+  await once(app, r, path); // warm-up, outside the count
+  resetStats();
+  for (let k = 0; k < r.times; k++) { await paced(); const { res } = await once(app, r, path); if (!res || res.status >= 400) throw new Error(`${r.method} ${path} answered ${res?.status ?? 'nothing'} in repeat ${r.id}`); }
+  return { id: r.id, method: r.method, path, route: r.route ?? routeOf(app.routes, r.method, path), times: r.times, statements: readStats() };
+}
+
+// The twin's heap after a full collection, before and after n requests each
+// with a key ($i) of its own.
+async function measureSoak(app, r) {
+  const points = [{ requests: 0, ...(await app.probe('memory')) }];
+  let sent = 0;
+  for (const target of r.counts) {
+    for (; sent < target; sent++) { const { res } = await once(app, r, expand(r.path, 0, sent)); if (!res || res.status >= 400) throw new Error(`soak ${r.id}: ${r.method} answered ${res?.status ?? 'nothing'}`); }
+    points.push({ requests: sent, ...(await app.probe('memory')) });
+  }
+  return { id: r.id, method: r.method, route: r.route ?? null, points };
+}
+
+async function measurePage({ port, routes }, page, work, n) {
   const mod = await import(pathToFileURL(join(work, page.module)).href);
   const calls = [];
   const api = {
@@ -170,9 +270,18 @@ async function serve(work, scale, log) {
   rmSync(ready, { force: true });
   const password = readFileSync(PW_FILE, 'utf8').trim();
   const fd = openSync(log, 'a');
-  const child = spawn(process.execPath, [join(HERE, 'serve.js'), work, ready], {
-    env: { PATH: process.env.PATH, NODE_ENV: 'production', DATABASE_URL: `postgres://${ROLE}:${encodeURIComponent(password)}@127.0.0.1:${PORT}/${DB}` },
-    stdio: ['ignore', fd, fd],
+  const child = spawn(process.execPath, ['--expose-gc', join(HERE, 'serve.js'), work, ready, spec.entry ?? ''], {
+    env: { ...(spec.env ?? {}), PATH: process.env.PATH, NODE_ENV: 'production', DATABASE_URL: `postgres://${ROLE}:${encodeURIComponent(password)}@127.0.0.1:${PORT}/${DB}`, ERLANG_TRACE_STUB: STUB },
+    stdio: ['ignore', fd, fd, 'ipc'],
+  });
+  let seq = 0;
+  const waiting = new Map();
+  child.on('message', (m) => { const w = waiting.get(m.id); if (w) { waiting.delete(m.id); w(m); } });
+  const probe = (name) => new Promise((ok, fail) => {
+    const id = ++seq;
+    const t = setTimeout(() => { waiting.delete(id); fail(new Error(`probe ${name}: no answer in 10 s`)); }, 10_000);
+    waiting.set(id, (m) => { clearTimeout(t); const { id: _, ...rest } = m; ok(rest); });
+    child.send({ id, probe: name });
   });
   closeSync(fd);
   let exited = null;
@@ -184,7 +293,7 @@ async function serve(work, scale, log) {
   if (!existsSync(ready)) { child.kill('SIGKILL'); throw new Error(`the twin did not listen within 20 s at ${scale}x; see ${log}`); }
   const info = JSON.parse(readFileSync(ready, 'utf8'));
   rmSync(ready);
-  return { ...info, stop: () => new Promise((ok) => { if (exited !== null) return ok(); child.once('exit', ok); child.kill('SIGTERM'); setTimeout(() => child.kill('SIGKILL'), 5000).unref(); }) };
+  return { ...info, probe, stop: () => new Promise((ok) => { if (exited !== null) return ok(); child.once('exit', ok); child.kill('SIGTERM'); setTimeout(() => child.kill('SIGKILL'), 5000).unref(); }) };
 }
 
 for (const twin of ['planted', 'clean']) {
@@ -197,24 +306,55 @@ for (const twin of ['planted', 'clean']) {
   rmSync(out, { recursive: true, force: true });
   mkdirSync(out, { recursive: true });
   cpSync(join(formDir, twin), work, { recursive: true });
+  // Trace-only files (a driver for a library with no server) go over the twin.
+  if (existsSync(join(formDir, 'trace', 'overlay'))) cpSync(join(formDir, 'trace', 'overlay'), work, { recursive: true });
   symlinkSync(modules, join(work, 'node_modules'), 'dir');
   const log = join(out, 'twin.log');
-  const raw = { image: process.env.ERLANG_TRACE_IMAGE ?? null, started: new Date().toISOString(), fixture: spec.fixture, form: spec.form, twin, seed: { schema: Object.fromEntries(schemaFiles(join(formDir, twin)).map((f) => [f.slice(formDir.length + 1), sha256(f)])), seed: sha256(join(formDir, 'trace', 'seed.sql')) }, scales: {} };
+  const raw = { image: process.env.ERLANG_TRACE_IMAGE ?? null, started: new Date().toISOString(), environment: { before: environment() }, fixture: spec.fixture, form: spec.form, twin, seed: { schema: Object.fromEntries(schemaFiles(join(formDir, twin)).map((f) => [f.slice(formDir.length + 1), sha256(f)])), seed: sha256(join(formDir, 'trace', 'seed.sql')) }, scales: {} };
   for (const scale of spec.scales) {
     const n = spec.n * scale;
     const tables = freshDatabase(scale, join(formDir, twin));
-    const app = await serve(work, scale, log);
+    let app = await serve(work, scale, log);
     try {
       const requests = [];
-      for (const r of spec.requests ?? []) requests.push(await measureRequest(app.port, app.routes, r, n));
+      for (const r of spec.requests ?? []) {
+        // A request that leaves state behind (a leaked connection) gets a
+        // twin of its own.
+        if (r.restart) { await app.stop(); app = await serve(work, scale, log); }
+        requests.push(await measureRequest(app, r, n));
+      }
       const pages = [];
-      for (const p of spec.pages ?? []) pages.push(await measurePage(app.port, app.routes, p, work, n));
-      raw.scales[scale] = { n, tables, requests, pages };
+      for (const p of spec.pages ?? []) pages.push(await measurePage(app, p, work, n));
+      const repeats = [];
+      for (const r of spec.repeats ?? []) repeats.push(await measureRepeat(app, r, n));
+      const soaks = [];
+      for (const r of scale === spec.scales.at(-1) ? spec.soaks ?? [] : []) soaks.push(await measureSoak(app, r));
+      raw.scales[scale] = { n, tables, requests, pages, ...(repeats.length ? { repeats } : {}), ...(soaks.length ? { soaks } : {}) };
     } finally {
       await app.stop();
+    }
+    // The first requests after a start, against later ones, one start per sample.
+    if (spec.starts && scale === spec.scales.at(-1)) {
+      const starts = [];
+      for (const r of spec.starts) {
+        const samples = [];
+        for (let k = 0; k < (r.samples ?? 3); k++) {
+          const fresh = await serve(work, scale, log);
+          try {
+            const runs = [];
+            for (let j = 0; j < (r.after ?? 5) + 1; j++) { await paced(); const { res, extra } = await once(fresh, r, expand(r.path, n)); if (!res || res.status >= 400) throw new Error(`start ${r.id}: ${r.method} answered ${res?.status ?? 'nothing'}`); runs.push({ ms: extra.ms }); }
+            samples.push({ firstMs: runs[0].ms, laterMs: runs.slice(1).map((x) => x.ms) });
+          } finally { await fresh.stop(); }
+        }
+        starts.push({ id: r.id, method: r.method, path: expand(r.path, n), route: r.route ?? null, samples });
+      }
+      raw.scales[scale].starts = starts;
     }
     console.log(`trace: ${spec.fixture} ${spec.form} ${twin} at ${scale}x: ${(spec.requests ?? []).length} request(s), ${(spec.pages ?? []).length} page view(s)`);
   }
   rmSync(work, { recursive: true, force: true });
+  raw.environment.after = environment();
   writeFileSync(join(out, 'raw.json'), JSON.stringify(raw, null, 2) + '\n');
 }
+stubFor();
+await new Promise((ok) => stubServer.close(ok));

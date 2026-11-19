@@ -1,0 +1,11 @@
+{
+  "name": "l07-trace",
+  "private": true,
+  "description": "What the L07 twins import, for the trace form: the twins ship no package.json. search-sdk is left out (no such package), so search() is not driven.",
+  "type": "module",
+  "dependencies": {
+    "axios": "1.21.1",
+    "got": "16.2.0",
+    "pg": "8.23.1"
+  }
+}

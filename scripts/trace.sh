@@ -116,11 +116,14 @@ failed=0
 for form in "${forms[@]}"; do
   id="$(printf '%s' "$form" | tr '/' '-')"
   install="$ROOT/dist/trace/install/$id"
-  stamp="$(cat "fixtures/$form/planted/package.json" "fixtures/$form/trace/package-lock.json" | shasum -a 256 | cut -d' ' -f1)"
+  # The twins' package.json, or the trace form's own when the twins ship none.
+  manifest="fixtures/$form/planted/package.json"
+  [ -f "fixtures/$form/trace/package.json" ] && manifest="fixtures/$form/trace/package.json"
+  stamp="$(cat "$manifest" "fixtures/$form/trace/package-lock.json" | shasum -a 256 | cut -d' ' -f1)"
   if [ ! -f "$install/.stamp" ] || [ "$(cat "$install/.stamp")" != "$stamp" ]; then
     rm -rf "$install"
     mkdir -p "$install"
-    cp "fixtures/$form/planted/package.json" "$install/package.json"
+    cp "$manifest" "$install/package.json"
     cp "fixtures/$form/trace/package-lock.json" "$install/package-lock.json"
     (cd "$install" && npm ci --ignore-scripts --no-audit --no-fund --loglevel=error)
     printf '%s\n' "$stamp" > "$install/.stamp"

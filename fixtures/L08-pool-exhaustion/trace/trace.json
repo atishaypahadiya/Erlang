@@ -1,0 +1,27 @@
+{
+  "note": "Trace form (research/trace-harness.md) for L08: the static twins, served by scripts/trace.sh against PostgreSQL. Every outbound call goes to the harness's stub on 127.0.0.1, which answers as each request's upstream says. probes ask the twin's own pool (src/db.js) how many connections are checked out: while the stub answers the outbound call (pool-during, STB-09), and after the response against before the request (pool-after, STB-08). A request that leaks a connection runs on a twin of its own (restart), so one leak cannot exhaust the pool for the next. expect: error marks a request whose error path is the point; the trace schema makes it fail. defects are what the planted twin must report and the clean twin must not; every other request is a decoy, in both twins.",
+  "fixture": "L08",
+  "form": "fastify",
+  "judge": "pool",
+  "scales": [1],
+  "n": 1,
+  "requests": [
+    { "id": "payOrder", "method": "POST", "path": "/orders/1/pay", "body": { "amount": 100 }, "upstream": { "status": 200, "body": { "id": "ch_1" } }, "probes": ["pool-during"] },
+    { "id": "shipOrder", "method": "POST", "path": "/orders/2/ship", "upstream": { "status": 200, "body": { "id": "res_1" } }, "probes": ["pool-during"] },
+    { "id": "refundOrder", "method": "POST", "path": "/orders/3/refund", "body": { "chargeId": "ch_1" }, "upstream": { "status": 200, "body": { "id": "rf_1" } }, "probes": ["pool-during"] },
+    { "id": "getOrder", "method": "GET", "path": "/orders/1", "probes": ["pool-after"] },
+    { "id": "createOrder", "method": "POST", "path": "/orders", "body": { "total": 100, "items": [{ "sku": "sku-1", "quantity": 1 }] }, "probes": ["pool-after"] },
+    { "id": "replaceOrder", "method": "PUT", "path": "/orders/1", "body": { "items": [{ "sku": "sku-1", "quantity": 2 }] }, "probes": ["pool-after"] },
+    { "id": "orderCount", "method": "GET", "path": "/reports/count", "probes": ["pool-after"] },
+    { "id": "checkImport", "method": "POST", "path": "/imports/check", "body": { "batchId": 1 }, "probes": ["pool-after"] },
+    { "id": "dbHealth", "method": "GET", "path": "/health/db", "probes": ["pool-after"] },
+    { "id": "dailyReport", "method": "GET", "path": "/reports/daily", "expect": "error", "restart": true, "probes": ["pool-after"] },
+    { "id": "importRows", "method": "POST", "path": "/imports", "body": { "rows": ["not json"] }, "expect": "error", "restart": true, "probes": ["pool-after"] }
+  ],
+  "defects": [
+    { "check": "pool-exhaustion", "rule": "STB-09", "method": "POST", "route": "/orders/:id/pay", "linked": true },
+    { "check": "pool-exhaustion", "rule": "STB-09", "method": "POST", "route": "/orders/:id/ship", "linked": true },
+    { "check": "pool-exhaustion", "rule": "STB-08", "method": "GET", "route": "/reports/daily", "linked": true },
+    { "check": "pool-exhaustion", "rule": "STB-08", "method": "POST", "route": "/imports", "linked": true }
+  ]
+}

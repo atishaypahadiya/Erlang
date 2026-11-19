@@ -1,0 +1,355 @@
+{
+  "note": "Trace form (research/trace-harness.md) for L07: the twins are a library with no server, so trace/overlay adds a driver (trace-driver.js, one route per function) over the twin's copy; the twins ship no package.json, so trace/package.json names what they import. Every outbound call goes to the harness's stub on 127.0.0.1, which accepts it and never answers; GET /call/orders instead runs the pool's query while another session holds a lock on orders. A request with no response after timeoutMs, longer than every deadline the clean twin sets (5 s at most), in both runs, has no deadline (TMO-01). symbol is the function or client the request drives, for linking to the static finding, which has no endpoint. search() is not driven: it imports search-sdk, a package that does not exist (its static finding is info). defects are what the planted twin must report and the clean twin must not; every other request is a decoy, in both twins. rate and convert wait 25 s: got's timeout.request covers one attempt, and got retries a GET twice after a timeout, waiting about a second between attempts, so a 5 s deadline answers after about 17 s.",
+  "fixture": "L07",
+  "form": "library",
+  "judge": "hang",
+  "entry": "trace-driver.js",
+  "scales": [
+    1
+  ],
+  "n": 1,
+  "runs": 2,
+  "env": {
+    "PRICING_URL": "http://pricing.test",
+    "PAYMENTS_URL": "http://payments.test",
+    "INVENTORY_URL": "http://inventory.test",
+    "BILLING_URL": "http://billing.test",
+    "CATALOG_URL": "http://catalog.test",
+    "SHIPPING_URL": "http://shipping.test",
+    "RATES_URL": "http://rates.test",
+    "FX_URL": "http://fx.test"
+  },
+  "requests": [
+    {
+      "id": "getQuote",
+      "method": "GET",
+      "path": "/call/getQuote",
+      "route": "/call/getQuote",
+      "symbol": "getQuote",
+      "waitsOn": "pricing.test",
+      "timeoutMs": 6500,
+      "upstream": {
+        "hang": true
+      }
+    },
+    {
+      "id": "charge",
+      "method": "GET",
+      "path": "/call/charge",
+      "route": "/call/charge",
+      "symbol": "charge",
+      "waitsOn": "payments.test",
+      "timeoutMs": 6500,
+      "upstream": {
+        "hang": true
+      }
+    },
+    {
+      "id": "stockLevel",
+      "method": "GET",
+      "path": "/call/stockLevel",
+      "route": "/call/stockLevel",
+      "symbol": "stockLevel",
+      "waitsOn": "inventory.test",
+      "timeoutMs": 6500,
+      "upstream": {
+        "hang": true
+      }
+    },
+    {
+      "id": "billing",
+      "method": "GET",
+      "path": "/call/billing",
+      "route": "/call/billing",
+      "symbol": "billing",
+      "waitsOn": "billing.test",
+      "timeoutMs": 6500,
+      "upstream": {
+        "hang": true
+      }
+    },
+    {
+      "id": "track",
+      "method": "GET",
+      "path": "/call/track",
+      "route": "/call/track",
+      "symbol": "track",
+      "waitsOn": "shipping.test",
+      "timeoutMs": 6500,
+      "upstream": {
+        "hang": true
+      }
+    },
+    {
+      "id": "rate",
+      "method": "GET",
+      "path": "/call/rate",
+      "route": "/call/rate",
+      "symbol": "rate",
+      "waitsOn": "rates.test",
+      "timeoutMs": 25000,
+      "upstream": {
+        "hang": true
+      }
+    },
+    {
+      "id": "lookup",
+      "method": "GET",
+      "path": "/call/lookup",
+      "route": "/call/lookup",
+      "symbol": "lookup",
+      "waitsOn": "geo.internal",
+      "timeoutMs": 6500,
+      "upstream": {
+        "hang": true
+      }
+    },
+    {
+      "id": "orders",
+      "method": "GET",
+      "path": "/call/orders",
+      "route": "/call/orders",
+      "symbol": "pool",
+      "waitsOn": "PostgreSQL (orders locked)",
+      "timeoutMs": 6500
+    },
+    {
+      "id": "avatar",
+      "method": "GET",
+      "path": "/call/avatar",
+      "route": "/call/avatar",
+      "symbol": "avatar",
+      "waitsOn": "avatars.internal",
+      "timeoutMs": 6500,
+      "upstream": {
+        "hang": true
+      }
+    },
+    {
+      "id": "thumbnail",
+      "method": "GET",
+      "path": "/call/thumbnail",
+      "route": "/call/thumbnail",
+      "symbol": "thumbnail",
+      "waitsOn": "thumbs.internal",
+      "timeoutMs": 6500,
+      "upstream": {
+        "hang": true
+      }
+    },
+    {
+      "id": "getQuoteHistory",
+      "method": "GET",
+      "path": "/call/getQuoteHistory",
+      "route": "/call/getQuoteHistory",
+      "symbol": "getQuoteHistory",
+      "waitsOn": "pricing.test",
+      "timeoutMs": 6500,
+      "upstream": {
+        "hang": true
+      }
+    },
+    {
+      "id": "refund",
+      "method": "GET",
+      "path": "/call/refund",
+      "route": "/call/refund",
+      "symbol": "refund",
+      "waitsOn": "payments.test",
+      "timeoutMs": 6500,
+      "upstream": {
+        "hang": true
+      }
+    },
+    {
+      "id": "reservations",
+      "method": "GET",
+      "path": "/call/reservations",
+      "route": "/call/reservations",
+      "symbol": "reservations",
+      "waitsOn": "inventory.test",
+      "timeoutMs": 6500,
+      "upstream": {
+        "hang": true
+      }
+    },
+    {
+      "id": "warehouses",
+      "method": "GET",
+      "path": "/call/warehouses",
+      "route": "/call/warehouses",
+      "symbol": "warehouses",
+      "waitsOn": "inventory.test",
+      "timeoutMs": 6500,
+      "upstream": {
+        "hang": true
+      }
+    },
+    {
+      "id": "catalog",
+      "method": "GET",
+      "path": "/call/catalog",
+      "route": "/call/catalog",
+      "symbol": "catalog",
+      "waitsOn": "catalog.test",
+      "timeoutMs": 6500,
+      "upstream": {
+        "hang": true
+      }
+    },
+    {
+      "id": "label",
+      "method": "GET",
+      "path": "/call/label",
+      "route": "/call/label",
+      "symbol": "label",
+      "waitsOn": "shipping.test",
+      "timeoutMs": 6500,
+      "upstream": {
+        "hang": true
+      }
+    },
+    {
+      "id": "convert",
+      "method": "GET",
+      "path": "/call/convert",
+      "route": "/call/convert",
+      "symbol": "convert",
+      "waitsOn": "fx.test",
+      "timeoutMs": 25000,
+      "upstream": {
+        "hang": true
+      }
+    },
+    {
+      "id": "region",
+      "method": "GET",
+      "path": "/call/region",
+      "route": "/call/region",
+      "symbol": "region",
+      "waitsOn": "region.internal",
+      "timeoutMs": 6500,
+      "upstream": {
+        "hang": true
+      }
+    },
+    {
+      "id": "banner",
+      "method": "GET",
+      "path": "/call/banner",
+      "route": "/call/banner",
+      "symbol": "banner",
+      "waitsOn": "banners.internal",
+      "timeoutMs": 6500,
+      "upstream": {
+        "hang": true
+      }
+    },
+    {
+      "id": "badge",
+      "method": "GET",
+      "path": "/call/badge",
+      "route": "/call/badge",
+      "symbol": "badge",
+      "waitsOn": "badges.internal",
+      "timeoutMs": 6500,
+      "upstream": {
+        "hang": true
+      }
+    },
+    {
+      "id": "slowReport",
+      "method": "GET",
+      "path": "/call/slowReport",
+      "route": "/call/slowReport",
+      "symbol": "slowReport",
+      "waitsOn": "reports.test",
+      "timeoutMs": 6500,
+      "upstream": {
+        "hang": true
+      }
+    }
+  ],
+  "defects": [
+    {
+      "check": "no-timeout",
+      "rule": "TMO-01",
+      "method": "GET",
+      "route": "/call/getQuote",
+      "symbol": "getQuote",
+      "linked": true
+    },
+    {
+      "check": "no-timeout",
+      "rule": "TMO-01",
+      "method": "GET",
+      "route": "/call/charge",
+      "symbol": "charge",
+      "linked": true
+    },
+    {
+      "check": "no-timeout",
+      "rule": "TMO-01",
+      "method": "GET",
+      "route": "/call/stockLevel",
+      "symbol": "stockLevel",
+      "linked": true
+    },
+    {
+      "check": "no-timeout",
+      "rule": "TMO-01",
+      "method": "GET",
+      "route": "/call/billing",
+      "symbol": "billing",
+      "linked": true
+    },
+    {
+      "check": "no-timeout",
+      "rule": "TMO-01",
+      "method": "GET",
+      "route": "/call/track",
+      "symbol": "track",
+      "linked": true
+    },
+    {
+      "check": "no-timeout",
+      "rule": "TMO-01",
+      "method": "GET",
+      "route": "/call/rate",
+      "symbol": "rate",
+      "linked": true
+    },
+    {
+      "check": "no-timeout",
+      "rule": "TMO-01",
+      "method": "GET",
+      "route": "/call/lookup",
+      "symbol": "lookup",
+      "linked": true
+    },
+    {
+      "check": "no-timeout",
+      "rule": "TMO-01",
+      "method": "GET",
+      "route": "/call/orders",
+      "symbol": "pool",
+      "linked": true
+    },
+    {
+      "check": "no-timeout",
+      "rule": "TMO-01",
+      "method": "GET",
+      "route": "/call/avatar",
+      "symbol": "avatar",
+      "linked": true
+    },
+    {
+      "check": "no-timeout",
+      "rule": "TMO-01",
+      "method": "GET",
+      "route": "/call/thumbnail",
+      "symbol": "thumbnail",
+      "linked": true
+    }
+  ]
+}

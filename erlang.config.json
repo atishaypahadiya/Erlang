@@ -1,1 +1,1 @@
-{"exclude": ["dist/", "fixtures/", "research/probes/"]}
+{"exclude": ["dist/", "fixtures/", "research/probes/", "scripts/trace/serve.js"]}
