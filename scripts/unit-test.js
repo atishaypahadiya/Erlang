@@ -7,7 +7,7 @@
 //
 // Usage: node scripts/unit-test.js           exit 0 when every case holds
 
-import { writeFileSync, mkdirSync, rmSync, readFileSync, cpSync, existsSync } from 'node:fs';
+import { writeFileSync, mkdirSync, rmSync, readFileSync, cpSync, existsSync, symlinkSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { scan } from '../bin/erlang.js';
@@ -173,6 +173,17 @@ console.log('\nThe edit unit (shared with ITTEN and KERCKHOFFS)');
   refused('a length past the end of the file', { 'a.js': 'a();\n' }, [{ file: 'a.js', line: 1, column: 1, length: 9, replace: 'x' }], /past the end/);
   refused('a 0-based line or column', { 'a.js': 'a();\n' }, [{ file: 'a.js', line: 0, column: 0, length: 0, replace: 'x' }], /malformed/);
   refused('a file both edited and removed, changing nothing', { 'a.js': 'a();\n', 'b.js': 'b();\n' }, [{ file: 'b.js', line: 1, column: 1, length: 1, replace: 'c' }, { file: 'a.js', line: 1, column: 1, length: 0, replace: 'x' }, { remove: 'a.js' }], /edited and removed/);
+  // Symbolic links: a directory link out of the root, a file link, and a
+  // dangling link where a file would be created.
+  const outside = join(OUT, 'edit-unit-outside');
+  rmSync(outside, { recursive: true, force: true }); mkdirSync(outside, { recursive: true }); writeFileSync(join(outside, 'x.js'), 'x();\n');
+  const linked = (what, make, edits, re) => { fresh({ 'a.js': 'a();\n' }); make(); let threw = ''; try { apply(dir, [{ kind: 'auto', edits }]); } catch (e) { threw = e.message; } ok(`apply refuses ${what}`, re.test(threw) && readFileSync(join(outside, 'x.js'), 'utf8') === 'x();\n' && !existsSync(join(outside, 'new.sql')), threw || 'it did not throw'); };
+  linked('a create through a directory link out of the root', () => symlinkSync(outside, join(dir, 'db'), 'dir'), [{ create: 'db/new.sql', content: 'x' }], /outside the project root/);
+  linked('an edit through a directory link out of the root', () => symlinkSync(outside, join(dir, 'db'), 'dir'), [{ file: 'db/x.js', line: 1, column: 1, length: 1, replace: 'y' }], /outside the project root/);
+  linked('a remove through a directory link out of the root', () => symlinkSync(outside, join(dir, 'db'), 'dir'), [{ remove: 'db/x.js' }], /outside the project root/);
+  linked('a create over a dangling link', () => symlinkSync(join(outside, 'new.sql'), join(dir, 'new.sql')), [{ create: 'new.sql', content: 'x' }], /symbolic link|outside the project root/);
+  linked('an edit of a file that is a link', () => symlinkSync(join(dir, 'a.js'), join(dir, 'b.js')), [{ file: 'b.js', line: 1, column: 1, length: 1, replace: 'y' }], /symbolic link/);
+  rmSync(outside, { recursive: true, force: true });
   rmSync(dir, { recursive: true, force: true });
 }
 
