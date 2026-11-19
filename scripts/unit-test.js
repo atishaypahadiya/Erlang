@@ -10,12 +10,15 @@
 import { writeFileSync, mkdirSync, rmSync, readFileSync, cpSync, existsSync, symlinkSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
 import { scan } from '../bin/erlang.js';
 import { apply, syntaxErrors, fileOf } from '../lib/fix.js';
 import { describe, Plain } from '../lib/isolate.js';
 import * as TJ from '../lib/trace-judge.js';
 import * as TIMING from '../lib/timing.js';
 import * as LOCK from '../lib/itten-lock.js';
+import * as GUARD from '../lib/load-guard.js';
+import { scenario as k6Scenario } from '../lib/k6-scenario.js';
 import { applyExpected } from './fixture-test.js';
 import { score } from '../core/fixture-score.js';
 
@@ -179,6 +182,81 @@ console.log('\nITTEN\'s timing lock (honoured, never written)');
   for (const f of ['timing-1.json', 'timing-4.json']) rmSync(join(dir, f));
   ok('with only stale, other and non-lock files left, nothing is active', (await LOCK.waitForNoLock({ env, now, isAlive, limitMs: 0 })) === null);
   rmSync(dir, { recursive: true, force: true });
+}
+
+console.log('\nThe load guard: loopback only, within caps');
+{
+  const refused = (f) => { try { f(); return false; } catch (e) { return e instanceof GUARD.Refused; } };
+  ok('checkTarget: a twin on 127.0.0.1 with a port is loaded', GUARD.checkTarget('http://127.0.0.1:41234/orders/1').port === '41234');
+  ok('checkTarget: ::1 and localhost are loopback too', !refused(() => GUARD.checkTarget('http://[::1]:8080/')) && !refused(() => GUARD.checkTarget('http://localhost:8080/')));
+  ok('checkTarget: any other host is refused, with no override', ['http://10.0.0.5:80/', 'http://example.com:80/', 'http://127.0.0.2:80/', 'http://0.0.0.0:80/', 'http://169.254.169.254:80/'].every((u) => refused(() => GUARD.checkTarget(u))));
+  ok('checkTarget: https, and a URL with no port, are refused', refused(() => GUARD.checkTarget('https://127.0.0.1:443/')) && refused(() => GUARD.checkTarget('http://127.0.0.1/')));
+  ok('profile: CI=true is ci, anything else local', GUARD.profile({ CI: 'true' }) === 'ci' && GUARD.profile({}) === 'local');
+  ok('checkStep: within the local caps', !refused(() => GUARD.checkStep({ id: 's', rate: 150, seconds: 20 }, GUARD.CAPS.local)));
+  ok('checkStep: over the local rate or step length is refused; CI allows more', refused(() => GUARD.checkStep({ id: 's', rate: 300, seconds: 10 }, GUARD.CAPS.local)) && refused(() => GUARD.checkStep({ id: 's', rate: 50, seconds: 30 }, GUARD.CAPS.local)) && !refused(() => GUARD.checkStep({ id: 's', rate: 300, seconds: 30 }, GUARD.CAPS.ci)));
+  ok('checkStep: a rate or length that is not positive is refused', refused(() => GUARD.checkStep({ id: 's', rate: 0, seconds: 10 }, GUARD.CAPS.ci)) && refused(() => GUARD.checkStep({ id: 's', rate: 10 }, GUARD.CAPS.ci)));
+  ok('checkRun: both twins, every repeat: 2 x 3 x 35 s = 210 s', GUARD.checkRun({ steps: [{ id: 'a', rate: 50, seconds: 15 }, { id: 'b', rate: 150, seconds: 20 }] }, GUARD.CAPS.local) === 210);
+  ok('checkRun: over the run cap is refused', refused(() => GUARD.checkRun({ repeats: 10, steps: [{ id: 'a', rate: 50, seconds: 20 }, { id: 'b', rate: 50, seconds: 20 }] }, GUARD.CAPS.local)));
+  const text = k6Scenario({ base: 'http://127.0.0.1:5000', step: { id: 'past', method: 'GET', path: '/orders/1', rate: 150, seconds: 20, okMs: 500, timeoutMs: 5000 }, summaryFile: '/x/s.json', vus: 400 });
+  ok('k6 scenario: an open model at the step\'s rate, to the twin only', text.includes("executor: 'constant-arrival-rate', rate: 150") && text.includes("duration: '20s'") && text.includes('"http://127.0.0.1:5000/orders/1"') && text.includes('maxVUs: 400'));
+  ok('k6 scenario: a target that is not loopback is refused before any script is written', refused(() => k6Scenario({ base: 'http://203.0.113.9:80', step: { id: 'x', path: '/', rate: 1, seconds: 1 }, summaryFile: 'x', vus: 1 })));
+}
+
+console.log('\nThe load judge (shedding), on recorded runs');
+{
+  const form = join(OUT, 'load-l12');
+  rmSync(form, { recursive: true, force: true });
+  for (const d of ['planted', 'clean', 'load']) cpSync(join(ROOT, 'fixtures', 'L12-no-load-shedding', d), join(form, d), { recursive: true });
+  const out = join(form, 'out');
+  // A step's record: ok, late, refused and failed out of rate x seconds.
+  const step = (id, rate, seconds, [okN, late, refused, failed], env = { load1: 0.5 }) => ({ id, method: 'GET', path: '/orders/1', route: '/orders/:id', rate, seconds, interrupted: false, counts: { requests: okN + late + refused + failed, ok: okN, late, refused, failed, dropped: 0 }, served: { medMs: 100, p90Ms: 150, p99Ms: late ? 2100 : 180, maxMs: 2200 }, refusals: refused ? { medMs: 2, p90Ms: 3, p99Ms: 4, maxMs: 9 } : null, samples: [], environment: { before: { load1: env.load1, cpus: 8 }, after: { load1: env.load1, cpus: 8, cooledAfterS: env.cooled === false ? null : 5 } } });
+  const run = (twins) => {
+    rmSync(out, { recursive: true, force: true });
+    for (const t of ['planted', 'clean']) mkdirSync(join(out, t), { recursive: true });
+    writeFileSync(join(out, 'raw.json'), JSON.stringify({ profile: 'ci', k6: 'k6 v2.3.0', fixture: 'L12', form: 'express', repeats: twins }));
+    const r = spawnSync(process.execPath, [join(ROOT, 'scripts', 'load', 'judge.js'), form, out], { encoding: 'utf8' });
+    return { code: r.status, text: r.stdout + r.stderr, planted: existsSync(join(out, 'planted', 'report.json')) ? JSON.parse(readFileSync(join(out, 'planted', 'report.json'), 'utf8')) : null };
+  };
+  const queued = (k, env) => ({ planted: { steps: [step('below', 50, 15, [745, 0, 0, 5], env), step('past', 150, 20, [30 + k, 1960, 0, 1010 - k], env)] }, clean: { steps: [step('below', 50, 15, [748, 0, 0, 2], env), step('past', 150, 20, [1990 - k, 0, 1010 + k, 0], env)] } });
+  const good = run([0, 7, 15].map((k) => queued(k)));
+  const f = good.planted?.findings[0];
+  ok('shedding: the queueing twin is reported, the capped twin is not', good.code === 0 && /PASS  L12 express load planted: 1\/1/.test(good.text) && /PASS  L12 express load clean: 0/.test(good.text), good.text.trim());
+  ok('  linked to the static finding by symbol, with load in its detection and its fingerprint unchanged', !!f && f.detection.includes('static') && f.detection.includes('load') && f.fingerprint === scan(join(form, 'planted')).findings.find((s) => s.check === 'no-load-shedding')?.fingerprint, f && JSON.stringify(f.detection));
+  ok('  the measured shares are in erlang.load, never in the fingerprint', !!f && f.erlang.load.samples.length === 3 && f.erlang.load.timing.reliable === true && !/\d\.\d/.test(f.fingerprint), f?.fingerprint);
+  const same = run([0, 7, 15].map((k) => { const q = queued(k); return { planted: q.clean, clean: q.clean }; }));
+  ok('  the control: twins that behave alike give no finding, and the planted defect is missed', same.code === 1 && /missed no-load-shedding step past/.test(same.text), same.text.trim());
+  const busy = run([0, 7, 15].map((k) => queued(k, { load1: 6 })));
+  ok('shedding: on a busy machine the finding is info, timing unreliable, and skipped, not failed', busy.code === 0 && /SKIP  L12 express load planted: .*timing unreliable/.test(busy.text) && busy.planted?.findings[0]?.severity === 'info', busy.text.trim());
+  const hot = run([0, 7, 15].map((k) => queued(k, { load1: 0.5, cooled: false })));
+  ok('  a step whose load average never cooled is unreliable too (docs/decisions.md, Q6)', hot.code === 0 && /SKIP/.test(hot.text), hot.text.trim());
+  const broken = run([0, 7, 15].map((k) => { const q = queued(k); q.clean.steps[0] = step('below', 50, 15, [300, 450, 0, 0]); return q; }));
+  ok('shedding: a twin that is late below the knee stops the judge: the form is wrong', broken.code !== 0 && /below the knee: the fixture or its load form is wrong/.test(broken.text), broken.text.trim().slice(0, 300));
+  rmSync(form, { recursive: true, force: true });
+}
+
+console.log('\nThe load judge (compare), on recorded runs');
+{
+  const form = join(OUT, 'load-l08');
+  rmSync(form, { recursive: true, force: true });
+  for (const d of ['planted', 'clean', 'load']) cpSync(join(ROOT, 'fixtures', 'L08-pool-exhaustion', d), join(form, d), { recursive: true });
+  const out = join(form, 'out');
+  const step = (id, route, failed, k = 0) => ({ id, method: id === 'getOrder' ? 'GET' : 'POST', path: '/x', route, rate: 20, seconds: 10, interrupted: false, counts: { requests: 200, ok: 200 - failed - k, late: k, refused: 0, failed, dropped: 0 }, served: { medMs: 510, p90Ms: 600, p99Ms: 900, maxMs: 1000 }, refusals: null, samples: [], environment: { before: { load1: 0.5, cpus: 8 }, after: { load1: 0.5, cpus: 8, cooledAfterS: 5 } } });
+  const run = (planted, clean) => {
+    rmSync(out, { recursive: true, force: true });
+    for (const t of ['planted', 'clean']) mkdirSync(join(out, t), { recursive: true });
+    writeFileSync(join(out, 'raw.json'), JSON.stringify({ profile: 'ci', fixture: 'L08', form: 'fastify', repeats: [0, 1, 2].map((k) => ({ planted: { steps: planted(k) }, clean: { steps: clean(k) } })) }));
+    const r = spawnSync(process.execPath, [join(ROOT, 'scripts', 'load', 'judge.js'), form, out], { encoding: 'utf8' });
+    return { code: r.status, text: (r.stdout + r.stderr).trim() };
+  };
+  const held = (k) => [step('getOrder', '/orders/:id', 0), step('payOrder', '/orders/:id/pay', 100 + k), step('shipOrder', '/orders/:id/ship', 98 + k)];
+  const released = () => [step('getOrder', '/orders/:id', 0), step('payOrder', '/orders/:id/pay', 0), step('shipOrder', '/orders/:id/ship', 0)];
+  const good = run(held, released);
+  ok('compare: requests failing to get a connection, on the two routes that call out, in the planted twin only', good.code === 0 && /planted: 2\/2/.test(good.text) && /clean: 0/.test(good.text), good.text);
+  const alike = run(released, released);
+  ok('  the control: twins that both release in time give nothing, and both defects are missed', alike.code === 1 && /missed pool-exhaustion step payOrder; missed pool-exhaustion step shipOrder/.test(alike.text), alike.text);
+  const decoy = run((k) => [step('getOrder', '/orders/:id', 90 + k), ...held(k).slice(1)], released);
+  ok('  a decoy step that fails in the planted twin only is a false positive', decoy.code === 1 && /decoy reported: pool-exhaustion STB-09 getOrder/.test(decoy.text), decoy.text);
+  rmSync(form, { recursive: true, force: true });
 }
 
 console.log('\nThe edit unit (shared with ITTEN and KERCKHOFFS)');
@@ -416,6 +494,15 @@ console.log('\nTrace judgements (lib/trace-judge.js)');
 {
   const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
   ok('expand: $n and $i as whole values become numbers, inside strings they are substituted', eq(TJ.expand({ ids: { $repeat: '$n', item: '$i' }, rows: { $repeat: 2, item: { sku: 'sku-$i', n: '$n' } }, path: '/x?limit=$n' }, 3), { ids: [1, 2, 3], rows: [{ sku: 'sku-1', n: 3 }, { sku: 'sku-2', n: 3 }], path: '/x?limit=3' }));
+  {
+    const s = { check: 'n-plus-one', rules: ['DAT-07'], where: { endpoints: [{ method: 'GET', route: '/orders' }], locations: [{ file: 'a.js', line: 3 }] }, erlang: { client: 'prisma' } };
+    const t = { check: 'n-plus-one', rule: 'DAT-07', method: 'GET', route: '/orders', statement: 'SELECT "public"."Customer"."id" FROM "public"."Customer" WHERE "id" = $1' };
+    const line = () => 'for (const o of orders) o.customer = await prisma.customer.findUnique({ where: { id: o.customerId } });';
+    ok('linkStatic: a Prisma finding links by check, rule and endpoint, with no SQL in its source', TJ.linkStatic(t, [s], line) === s);
+    ok('  the control: the same finding from pg needs the statement on its line', TJ.linkStatic(t, [{ ...s, erlang: { client: 'pg' } }], line) === null);
+    ok('  and a Prisma finding at another endpoint does not link', TJ.linkStatic({ ...t, route: '/invoices' }, [s], line) === null);
+  }
+  ok('expand: $list in a string becomes 1,2,...,n', TJ.expand('/p?ids=$list&n=$n', 3) === '/p?ids=1,2,3&n=3');
   const routes = [{ method: 'GET', url: '/products/:id' }, { method: 'GET', url: '/products/prices' }, { method: 'GET', url: '/products/:id/price' }, { method: 'POST', url: '/products/:id' }];
   ok('routeOf: a static segment wins over a parameter, the method matters, the query is ignored', TJ.routeOf(routes, 'GET', '/products/prices?ids=1,2') === '/products/prices' && TJ.routeOf(routes, 'GET', '/products/7') === '/products/:id' && TJ.routeOf(routes, 'GET', '/products/7/price') === '/products/:id/price' && TJ.routeOf(routes, 'DELETE', '/products/7') === null);
   ok('growth: one statement per item grows (11 for 10, 51 for 50)', TJ.growth({ n1: 10, n10: 50, c1: 11, c10: 51 }).verdict === 'grows');
@@ -507,6 +594,19 @@ console.log('\nblocking-work: synchronous calls on the request thread');
   expectAutoFixHolds('  the auto fix for generateKeyPairSync resolves { publicKey, privateKey }', app("import crypto from 'node:crypto';", "  const { publicKey } = crypto.generateKeyPairSync('ed25519');"), BW);
   expectAutoFixHolds('  the auto fix for fs.readFileSync uses fs.promises', app("import * as fs from 'node:fs';", "  const t = fs.readFileSync('x', 'utf8');"), BW);
   expectAutoFixHolds("  the auto fix for bcrypt's compareSync awaits compare", app("import bcrypt from 'bcrypt';", '  const ok = bcrypt.compareSync(req.body.p, req.body.h);'), BW);
+  const BJ = "import bcrypt from 'bcryptjs';";
+  bw('bcryptjs: the asynchronous hash at cost 12 is a warning, guided (Q4)', BJ, '  const h = await bcrypt.hash(req.body.p, 12);', [['warning', 'app.js', 5, 'guided']]);
+  bw('  the control: the native bcrypt package\'s asynchronous hash is not reported', "import bcrypt from 'bcrypt';", '  const h = await bcrypt.hash(req.body.p, 12);', []);
+  bw('bcryptjs at cost 9, through a const: nothing', `${BJ}\nconst COST = 9;`, '  const h = await bcrypt.hash(req.body.p, COST);', []);
+  bw('bcryptjs with genSalt() and no cost: 10, the default, a warning', BJ, '  const h = await bcrypt.hash(req.body.p, await bcrypt.genSalt());', [['warning', 'app.js', 5, 'guided']]);
+  bw('bcryptjs with a literal salt at $2b$08$: nothing', BJ, "  const h = bcrypt.hashSync(req.body.p, '$2b$08$abcdefghijklmnopqrstuu');", []);
+  bw('bcryptjs at a cost from the request: info, the cost unknown', BJ, '  const h = await bcrypt.hash(req.body.p, req.body.cost);', [['info', 'app.js', 5, 'guided']]);
+  bw('bcryptjs compare: the cost of the hashes stored under the same name', BJ, '  const ok = await bcrypt.compare(req.body.p, req.user.pin);\n  const ok2 = await bcrypt.compare(req.body.p, req.user.password);\n  req.user.pin = await bcrypt.hash(req.body.pin, 4);\n  const password = await bcrypt.hash(req.body.p, 11);', [['warning', 'app.js', 6, 'guided'], ['warning', 'app.js', 8, 'guided']]);
+  {
+    const r = scanOf(subject(app(BJ, '  const h = await bcrypt.hash(req.body.p, 12);')), BW);
+    const f = r.findings[0];
+    ok('  the fix note gives a migration path, and the fingerprint holds no cost', /verify a login with the old hash, then re-hash/.test(f?.erlang.fix.note ?? '') && !/12/.test(f?.fingerprint ?? ''), f?.fingerprint);
+  }
   expectAutoFixHolds('  the auto fix for zlib.brotliCompressSync awaits brotliCompress', app("import zlib from 'node:zlib';", '  const z = zlib.brotliCompressSync(req.body.b, {});'), BW);
 }
 

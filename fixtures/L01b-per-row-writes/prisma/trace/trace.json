@@ -1,0 +1,131 @@
+{
+  "note": "Trace form (research/trace-harness.md) for L01b's Prisma 7.10.1 twins, with @prisma/adapter-pg: run as they are against PostgreSQL, their tables made from each twin's prisma/schema.prisma by prisma migrate diff, the data from seed.sql at 1x and 10x. Each request is sent three times (a warm-up, then two measured), statements counted with pg_stat_statements, which leaves out BEGIN and COMMIT. n is the rows a request writes at 1x, counted in its body. Decoys, in both twins: updateMany once, a create per label over a fixed list of two (each run's email made unique with $run), and deleteMany once.",
+  "fixture": "L01b",
+  "form": "prisma",
+  "judge": "statements",
+  "schema": "twin:prisma",
+  "scales": [
+    1,
+    10
+  ],
+  "n": 10,
+  "requests": [
+    {
+      "id": "importOrders",
+      "method": "POST",
+      "path": "/orders/import",
+      "body": {
+        "rows": {
+          "$repeat": "$n",
+          "item": {
+            "customerId": "$i",
+            "total": 100
+          }
+        }
+      },
+      "items": "body.rows"
+    },
+    {
+      "id": "addItems",
+      "method": "POST",
+      "path": "/orders/1/items",
+      "body": {
+        "items": {
+          "$repeat": "$n",
+          "item": {
+            "productId": "$i",
+            "quantity": 1
+          }
+        }
+      },
+      "items": "body.items"
+    },
+    {
+      "id": "shipOrders",
+      "method": "POST",
+      "path": "/orders/ship",
+      "body": {
+        "ids": {
+          "$repeat": "$n",
+          "item": "$i"
+        }
+      },
+      "items": "body.ids"
+    },
+    {
+      "id": "setPrices",
+      "method": "PUT",
+      "path": "/products/prices",
+      "body": {
+        "prices": {
+          "$repeat": "$n",
+          "item": {
+            "id": "$i",
+            "price": "$i"
+          }
+        }
+      },
+      "items": "body.prices"
+    },
+    {
+      "id": "cancelOrders",
+      "method": "POST",
+      "path": "/orders/cancel",
+      "body": {
+        "ids": {
+          "$repeat": "$n",
+          "item": "$i"
+        }
+      },
+      "items": "body.ids"
+    },
+    {
+      "id": "createCustomer",
+      "method": "POST",
+      "path": "/customers",
+      "body": {
+        "email": "new-$run@example.test",
+        "name": "New"
+      },
+      "items": null
+    },
+    {
+      "id": "archiveCustomer",
+      "method": "DELETE",
+      "path": "/customers/1",
+      "items": null
+    }
+  ],
+  "defects": [
+    {
+      "check": "per-row-writes",
+      "method": "POST",
+      "route": "/orders/import",
+      "linked": true
+    },
+    {
+      "check": "per-row-writes",
+      "method": "POST",
+      "route": "/orders/:id/items",
+      "linked": true
+    },
+    {
+      "check": "per-row-writes",
+      "method": "POST",
+      "route": "/orders/ship",
+      "linked": true
+    },
+    {
+      "check": "per-row-writes",
+      "method": "PUT",
+      "route": "/products/prices",
+      "linked": true
+    },
+    {
+      "check": "per-row-writes",
+      "method": "POST",
+      "route": "/orders/cancel",
+      "linked": true
+    }
+  ]
+}

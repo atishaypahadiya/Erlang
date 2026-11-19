@@ -1,0 +1,114 @@
+{
+  "note": "Trace form (research/trace-harness.md) for L01a's Prisma 7.10.1 twins, with @prisma/adapter-pg: run as they are against PostgreSQL, their tables made from each twin's prisma/schema.prisma by prisma migrate diff, the data from seed.sql at 1x and 10x. Each request is sent three times (a warm-up, then two measured), statements counted with pg_stat_statements. n is the items a request handles at 1x; items says where they are counted. The twins take at most 50 orders and customers and 100 invoices, so at 10x those requests handle 50 or 100 items, not 100: still more than five times as many. Decoys, in both twins: findUnique per order in Promise.all, which Prisma 7 sends as one query (research/probes/prisma7-batching); include; the customer-name helper once; three fixed settings; a batch $transaction of findUnique. GET /invoices is mounted on a router, so its route is given.",
+  "fixture": "L01a",
+  "form": "prisma",
+  "judge": "statements",
+  "schema": "twin:prisma",
+  "scales": [
+    1,
+    10
+  ],
+  "n": 10,
+  "requests": [
+    {
+      "id": "listOrders",
+      "method": "GET",
+      "path": "/orders",
+      "items": "response"
+    },
+    {
+      "id": "orderItems",
+      "method": "GET",
+      "path": "/orders/1/items",
+      "items": "response"
+    },
+    {
+      "id": "lookupOrders",
+      "method": "POST",
+      "path": "/orders/lookup",
+      "body": {
+        "ids": {
+          "$repeat": "$n",
+          "item": "$i"
+        }
+      },
+      "items": "body.ids"
+    },
+    {
+      "id": "listCustomers",
+      "method": "GET",
+      "path": "/customers",
+      "items": "response"
+    },
+    {
+      "id": "listInvoices",
+      "method": "GET",
+      "path": "/invoices",
+      "route": "/invoices",
+      "items": "response"
+    },
+    {
+      "id": "orderCustomers",
+      "method": "GET",
+      "path": "/orders/customers",
+      "items": "response"
+    },
+    {
+      "id": "customerOrders",
+      "method": "GET",
+      "path": "/customers/1/orders",
+      "items": null
+    },
+    {
+      "id": "oneInvoice",
+      "method": "GET",
+      "path": "/invoices/1",
+      "route": "/invoices/:id",
+      "items": null
+    },
+    {
+      "id": "getSettings",
+      "method": "GET",
+      "path": "/settings",
+      "items": null
+    },
+    {
+      "id": "someProducts",
+      "method": "GET",
+      "path": "/products?ids=$list",
+      "items": "response"
+    }
+  ],
+  "defects": [
+    {
+      "check": "n-plus-one",
+      "method": "GET",
+      "route": "/orders",
+      "linked": true
+    },
+    {
+      "check": "n-plus-one",
+      "method": "GET",
+      "route": "/orders/:id/items",
+      "linked": true
+    },
+    {
+      "check": "n-plus-one",
+      "method": "POST",
+      "route": "/orders/lookup",
+      "linked": true
+    },
+    {
+      "check": "n-plus-one",
+      "method": "GET",
+      "route": "/customers",
+      "linked": true
+    },
+    {
+      "check": "n-plus-one",
+      "method": "GET",
+      "route": "/invoices",
+      "linked": true
+    }
+  ]
+}

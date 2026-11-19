@@ -1,0 +1,83 @@
+{
+  "note": "Trace form (research/trace-harness.md) for L03's Prisma 7.10.1 twins, with @prisma/adapter-pg: run as they are against PostgreSQL, their tables made from each twin's prisma/schema.prisma by prisma migrate diff (the clean twin's @@index lines become its indexes), the data from seed.sql at 1x and 10x, plans logged by auto_explain. A request reads a table without an index when its plan has a Seq Scan with a filter on a table of 10,000 rows or more that keeps under 5% of the rows it reads, at both scales. L03-p3 (OrderItem.orderId, which include: { items } reads by) is a finding on the schema with no endpoint, so its trace, at GET /orders/:id, is not linked. The app does not export itself, so each request names its route. Decoys, in both twins: findUnique by id, findFirst by an @unique field, a filter whose first field is indexed, filters on an enum and a Boolean that keep about half the rows, and a model named under smallTables.",
+  "fixture": "L03",
+  "form": "prisma",
+  "judge": "plans",
+  "plans": true,
+  "schema": "twin:prisma",
+  "smallTables": [
+    "Country"
+  ],
+  "scales": [
+    1,
+    10
+  ],
+  "n": 1,
+  "requests": [
+    {
+      "id": "userEvents",
+      "method": "GET",
+      "path": "/users/7/events",
+      "route": "/users/:id/events"
+    },
+    {
+      "id": "oneOrder",
+      "method": "GET",
+      "path": "/orders/7",
+      "route": "/orders/:id"
+    },
+    {
+      "id": "recentOrders",
+      "method": "GET",
+      "path": "/orders/recent?since=2026-10-01T00:00:00Z",
+      "route": "/orders/recent"
+    },
+    {
+      "id": "userByEmail",
+      "method": "GET",
+      "path": "/users/by-email?email=u7@example.test",
+      "route": "/users/by-email"
+    },
+    {
+      "id": "userOrders",
+      "method": "GET",
+      "path": "/users/7/orders",
+      "route": "/users/:id/orders"
+    },
+    {
+      "id": "proUsers",
+      "method": "GET",
+      "path": "/users/pro",
+      "route": "/users/pro"
+    },
+    {
+      "id": "countryByName",
+      "method": "GET",
+      "path": "/countries/Country%207",
+      "route": "/countries/:name"
+    }
+  ],
+  "defects": [
+    {
+      "check": "missing-index",
+      "rule": "DAT-03",
+      "method": "GET",
+      "route": "/users/:id/events",
+      "linked": true
+    },
+    {
+      "check": "missing-index",
+      "rule": "DAT-03",
+      "method": "GET",
+      "route": "/orders/recent",
+      "linked": true
+    },
+    {
+      "check": "missing-index",
+      "rule": "DAT-03",
+      "method": "GET",
+      "route": "/orders/:id",
+      "linked": false
+    }
+  ]
+}

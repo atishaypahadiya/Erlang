@@ -32,8 +32,8 @@
 // Environment: ERLANG_TRACE_CONTAINER, ERLANG_TRACE_PORT, ERLANG_TRACE_APP_PASSWORD_FILE.
 // Writes <out dir>/<twin>/raw.json and the twin's log.
 
-import { readFileSync, writeFileSync, mkdirSync, rmSync, cpSync, symlinkSync, existsSync, openSync, closeSync, readdirSync } from 'node:fs';
-import { join, resolve, dirname } from 'node:path';
+import { readFileSync, writeFileSync, mkdirSync, rmSync, cpSync, symlinkSync, existsSync, openSync, closeSync, readdirSync, statSync } from 'node:fs';
+import { join, resolve, dirname, basename } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -42,10 +42,16 @@ import { gunzipSync, brotliDecompressSync, inflateSync } from 'node:zlib';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { expand, routeOf, track, unreadBytes, unreadFields } from '../../lib/trace-judge.js';
 import { environment } from '../../lib/timing.js';
-import { waitForNoLock, describe as describeLock, EXIT_LOCKED } from '../../lib/itten-lock.js';
+import { waitForNoLock, active, describe as describeLock, EXIT_LOCKED } from '../../lib/itten-lock.js';
+import { CAPS, profile, checkRun, checkStep, Refused } from '../../lib/load-guard.js';
+import { scenario } from '../../lib/k6-scenario.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const [formDir, outDir, modules] = process.argv.slice(2).map((p) => p && resolve(p));
+// --load: the load harness (scripts/load.sh, research/load-harness.md), which
+// shares this runner: the form's load/load.json steps, run by k6, over the
+// same database, seed and served twin.
+const LOAD = process.argv.includes('--load');
+const [formDir, outDir, modules] = process.argv.slice(2).filter((a) => a !== '--load').map((p) => p && resolve(p));
 const { ERLANG_TRACE_CONTAINER: CONTAINER, ERLANG_TRACE_PORT: PORT, ERLANG_TRACE_APP_PASSWORD_FILE: PW_FILE } = process.env;
 if (!formDir || !outDir || !modules || !CONTAINER || !PORT || !PW_FILE) {
   console.error('usage: node scripts/trace/run.js <form dir> <out dir> <node_modules dir>, with ERLANG_TRACE_CONTAINER, ERLANG_TRACE_PORT and ERLANG_TRACE_APP_PASSWORD_FILE set (scripts/trace.sh sets them)');
@@ -54,7 +60,13 @@ if (!formDir || !outDir || !modules || !CONTAINER || !PORT || !PW_FILE) {
 const DB = 'erlang_trace';
 const ROLE = 'erlang_app';
 const MIN_GAP_MS = 200; // at most 5 requests a second
-const spec = JSON.parse(readFileSync(join(formDir, 'trace', 'trace.json'), 'utf8'));
+const readJson = (p) => JSON.parse(readFileSync(p, 'utf8'));
+// A setup file (seed.sql, schema.sql, overlay/): the load form's own when it
+// has one, else the trace form's.
+const setup = (name) => (LOAD && existsSync(join(formDir, 'load', name)) ? join(formDir, 'load', name) : join(formDir, 'trace', name));
+const spec = LOAD
+  ? { ...(existsSync(join(formDir, 'trace', 'trace.json')) ? readJson(join(formDir, 'trace', 'trace.json')) : {}), requests: [], pages: [], soaks: [], starts: null, ...readJson(join(formDir, 'load', 'load.json')) }
+  : readJson(join(formDir, 'trace', 'trace.json'));
 const sha256 = (p) => createHash('sha256').update(readFileSync(p)).digest('hex');
 
 
@@ -75,15 +87,36 @@ function psql(user, db, sql, vars = {}) {
 
 // The schema: the form's trace/schema.sql, or, with "schema": "twin:<dir>",
 // the twin's own migrations in that directory, in name order.
-const schemaFiles = (twinDir) => spec.schema?.startsWith('twin:')
-  ? readdirSync(join(twinDir, spec.schema.slice(5))).filter((f) => f.endsWith('.sql')).sort().map((f) => join(twinDir, spec.schema.slice(5), f))
-  : [join(formDir, 'trace', 'schema.sql')];
+// With "schema": "twin:prisma", the twin's prisma/schema.prisma, rendered
+// to SQL by the installed Prisma CLI (prisma migrate diff, which connects to
+// nothing) into the twin's output folder.
+const schemaFiles = (twinDir) => spec.schema === 'twin:prisma'
+  ? [join(twinDir, 'prisma', 'schema.prisma')]
+  : spec.schema?.startsWith('twin:')
+    ? readdirSync(join(twinDir, spec.schema.slice(5))).filter((f) => f.endsWith('.sql')).sort().map((f) => join(twinDir, spec.schema.slice(5), f))
+    : [setup('schema.sql')];
+const prismaSqlOf = new Map();
+function prismaSql(schema, out) {
+  const install = dirname(modules);
+  const sql = join(out, 'schema.sql');
+  const r = spawnSync(join(modules, '.bin', 'prisma'), ['migrate', 'diff', '--from-empty', '--to-schema', schema, '--script', '-o', sql, '--config', join(install, 'prisma.config.ts')], { cwd: install, encoding: 'utf8', env: { ...process.env, CHECKPOINT_DISABLE: '1' } });
+  if (r.status !== 0 || !existsSync(sql) || !statSync(sql).size) throw new Error(`prisma migrate diff gave no SQL for ${schema}: ${r.stderr || r.stdout}`);
+  // The role owns its database, not the public schema's creation.
+  return readFileSync(sql, 'utf8').replace(/^CREATE SCHEMA IF NOT EXISTS "public";$/m, '');
+}
 
 function freshDatabase(scale, twinDir) {
   psql('postgres', 'postgres', `drop database if exists ${DB} with (force);\ncreate database ${DB} owner ${ROLE};\n`);
   psql('postgres', DB, 'create extension pg_stat_statements;\n');
-  for (const f of schemaFiles(twinDir)) psql(ROLE, DB, readFileSync(f, 'utf8'));
-  psql(ROLE, DB, readFileSync(join(formDir, 'trace', 'seed.sql'), 'utf8'), { scale });
+  for (const f of schemaFiles(twinDir)) {
+    if (f.endsWith('.prisma')) {
+      const out = join(outDir, basename(twinDir));
+      mkdirSync(out, { recursive: true });
+      prismaSqlOf.set(f, prismaSqlOf.get(f) ?? prismaSql(f, out));
+      psql(ROLE, DB, prismaSqlOf.get(f));
+    } else psql(ROLE, DB, readFileSync(f, 'utf8'));
+  }
+  psql(ROLE, DB, readFileSync(setup('seed.sql'), 'utf8'), { scale });
   psql(ROLE, DB, 'analyze;\n');
   const counts = psql(ROLE, DB, "select format('select %L, count(*) from %I', table_name, table_name) from information_schema.tables where table_schema = 'public' and table_type = 'BASE TABLE' order by 1\n\\gexec\n");
   return Object.fromEntries(counts.split('\n').filter(Boolean).map((l) => { const [t, c] = l.split('|'); return [t, Number(c)]; }));
@@ -263,7 +296,10 @@ async function measureRequest(app, r, n) {
   for (let k = 0; k < count; k++) {
     await paced();
     resetStats();
-    const { res, timedOut, extra } = await once(app, r, path, body);
+    // "$run" in the body: this run's index, for values that must differ per
+    // run (a unique email).
+    const sent = body === undefined || !JSON.stringify(body).includes('$run') ? body : JSON.parse(JSON.stringify(body).replaceAll('$run', String(k)));
+    const { res, timedOut, extra } = await once(app, r, path, sent);
     const stats = readStats();
     const decoded = res ? decode(res) : { text: '', json: undefined };
     runs.push({
@@ -367,6 +403,13 @@ async function serve(work, scale, log) {
   return { ...info, probe, stop: () => new Promise((ok) => { if (exited !== null) return ok(); child.once('exit', ok); child.kill('SIGTERM'); setTimeout(() => child.kill('SIGKILL'), 5000).unref(); }) };
 }
 
+if (LOAD) {
+  await loadMain();
+  stubFor();
+  await new Promise((ok) => stubServer.close(ok));
+  process.exit(0);
+}
+
 for (const twin of ['planted', 'clean']) {
   // ITTEN's timing lock, reread immediately before each twin starts.
   const held = await waitForNoLock({ limitMs: 1000 * Number(process.env.ERLANG_LOCK_WAIT_S ?? 600), onWait: (l) => console.error(`trace: waiting for ITTEN's timing lock: ${describeLock(l)}`) });
@@ -431,3 +474,121 @@ for (const twin of ['planted', 'clean']) {
 }
 stubFor();
 await new Promise((ok) => stubServer.close(ok));
+
+// ---- The load harness (--load). For each repeat, the planted twin and then
+// the clean one, each fresh, each step run by k6 at a fixed arrival rate.
+// ITTEN's lock is read before each step and every 5 s during it; the load
+// average is read before each step and, after it, once the harness's own
+// load has stopped and the average has fallen below half the CPU count (up
+// to 120 s; docs/decisions.md, Q6).
+async function loadMain() {
+  const mode = profile();
+  const caps = CAPS[mode];
+  try { checkRun(spec, caps); } catch (e) { if (e instanceof Refused) { console.error(`load: refused: ${e.message}`); process.exit(2); } throw e; }
+  const k6 = process.env.ERLANG_K6 || 'k6';
+  const v = spawnSync(k6, ['version'], { encoding: 'utf8' });
+  if (v.status !== 0) { console.error('load: k6 is not on the path. Install it from https://grafana.com/docs/k6/latest/set-up/install-k6/ (ERLANG runs it as a separate program and does not install it), or set ERLANG_K6 to its path.'); process.exit(2); }
+  const lockWait = 1000 * Number(process.env.ERLANG_LOCK_WAIT_S ?? 600);
+  const scale = spec.scale ?? 1;
+  const raw = { profile: mode, caps, k6: v.stdout.trim().split('\n')[0], image: process.env.ERLANG_TRACE_IMAGE ?? null, started: new Date().toISOString(), fixture: spec.fixture, form: spec.form, scale, repeats: [] };
+  const works = {};
+  for (const twin of ['planted', 'clean']) {
+    const out = join(outDir, twin);
+    rmSync(out, { recursive: true, force: true });
+    mkdirSync(out, { recursive: true });
+    const work = join(out, 'work');
+    cpSync(join(formDir, twin), work, { recursive: true });
+    if (existsSync(setup('overlay'))) cpSync(setup('overlay'), work, { recursive: true });
+    symlinkSync(modules, join(work, 'node_modules'), 'dir');
+    works[twin] = { out, work, log: join(out, 'twin.log') };
+  }
+  for (let k = 0; k < (spec.repeats ?? 3); k++) {
+    const rep = {};
+    for (const twin of ['planted', 'clean']) {
+      const { out, work, log } = works[twin];
+      const tables = freshDatabase(scale, join(formDir, twin));
+      let app = await serve(work, scale, log);
+      const steps = [];
+      try {
+        for (const step of spec.steps) {
+          if (step.restart) { await app.stop(); app = await serve(work, scale, log); }
+          const held = await waitForNoLock({ limitMs: lockWait, onWait: (l) => console.error(`load: waiting for ITTEN's timing lock: ${describeLock(l)}`) });
+          if (held) { console.error(`load: ITTEN's timing lock is still active; not starting step ${step.id}. ${describeLock(held)}`); process.exit(EXIT_LOCKED); }
+          stubFor(step.upstream ?? {});
+          const before = environment();
+          const result = await runK6(k6, app, step, join(out, `r${k + 1}-${step.id}`), caps);
+          const after = await cooled();
+          console.log(`load: ${spec.fixture} ${twin} repeat ${k + 1} ${step.id}: ${result.interrupted ? 'interrupted by ITTEN\'s lock' : `${result.counts.requests} requests, ${result.counts.ok} ok, ${result.counts.refused} refused, ${result.counts.failed} failed`}`);
+          steps.push({ id: step.id, method: step.method ?? 'GET', path: step.path, route: step.route ?? routeOf(app.routes, step.method ?? 'GET', step.path), rate: step.rate, seconds: step.seconds, ...result, environment: { before, after } });
+        }
+      } finally { await app.stop(); }
+      rep[twin] = { tables, steps };
+    }
+    raw.repeats.push(rep);
+  }
+  for (const twin of ['planted', 'clean']) rmSync(works[twin].work, { recursive: true, force: true });
+  writeFileSync(join(outDir, 'raw.json'), JSON.stringify(raw, null, 2) + '\n');
+}
+
+// The load average after a step: once below half the CPU count, rereading
+// every 5 s for up to 120 s.
+async function cooled() {
+  const t0 = Date.now();
+  for (;;) {
+    const e = environment();
+    const waited = Math.round((Date.now() - t0) / 1000);
+    if (e.load1 < e.cpus / 2) return { ...e, cooledAfterS: waited };
+    if (waited >= 120) return { ...e, cooledAfterS: null };
+    await sleep(5000);
+  }
+}
+
+// One step under k6, with the twin's probes sampled every second, and ITTEN's
+// lock every 5 s: a lock that appears stops k6 and marks the step interrupted.
+async function runK6(k6, app, step, base, caps) {
+  checkStep(step, caps);
+  const script = `${base}.k6.js`;
+  const summary = `${base}.summary.json`;
+  // n: the trace form's items at 1x, times the load form's scale.
+  const n = (spec.n ?? 1) * (spec.scale ?? 1);
+  writeFileSync(script, scenario({ base: `http://127.0.0.1:${app.port}`, step: { ...step, path: expand(step.path, n), ...(step.body === undefined ? {} : { body: expand(step.body, n) }) }, summaryFile: summary, vus: Math.min(caps.maxVUs, step.vus ?? caps.maxVUs) }));
+  // Statements (step "measure": ["statements"]): pg_stat_statements over the
+  // whole step, for statements per request.
+  if (step.measure?.includes('statements')) resetStats();
+  let heapBefore = null;
+  let heapAfter = null;
+  if (step.measure?.includes('memory')) heapBefore = await app.probe('memory');
+  const child = spawn(k6, ['run', '--no-usage-report', '--quiet', '--no-color', script], { stdio: ['ignore', 'ignore', 'pipe'], env: { PATH: process.env.PATH, HOME: process.env.HOME, K6_NO_USAGE_REPORT: 'true' } });
+  let stderr = '';
+  child.stderr.on('data', (d) => { stderr += d; });
+  const exited = new Promise((ok) => child.on('exit', (code) => ok(code)));
+  let interrupted = false;
+  const samples = [];
+  const t0 = Date.now();
+  const timer = setInterval(async () => {
+    const t = Math.round((Date.now() - t0) / 100) / 10;
+    const s = { t };
+    for (const p of step.probes ?? []) {
+      try { s[p] = p === 'connections' ? backends().length : p === 'stub-open' ? stub.open.size : await app.probe(p); } catch (e) { s[p] = { error: e.message }; }
+    }
+    if (step.probes?.length) samples.push(s);
+    if (Math.round(t) % 5 === 0 && active().length) { interrupted = true; child.kill('SIGINT'); }
+  }, 1000);
+  const code = await exited;
+  clearInterval(timer);
+  if (interrupted) return { interrupted: true, counts: {}, samples };
+  if (code !== 0 || !existsSync(summary)) throw new Error(`k6 exited ${code} on step ${step.id}: ${stderr.slice(-2000)}`);
+  const m = readJson(summary).metrics;
+  const count = (name) => m[name]?.values?.count ?? 0;
+  const trend = (name) => (m[name] ? { medMs: m[name].values.med, p90Ms: m[name].values['p(90)'], p99Ms: m[name].values['p(99)'], maxMs: m[name].values.max } : null);
+  // Heap after a full collection, before and after the step (L05).
+  if (step.measure?.includes('memory')) { try { heapAfter = await app.probe('memory'); } catch { heapAfter = null; } }
+  // The step's own requests: with a background scenario, http_reqs counts
+  // both, so the step's are its four outcomes.
+  const own = count('erlang_ok') + count('erlang_late') + count('erlang_refused') + count('erlang_failed');
+  const counts = { requests: step.background ? own : count('http_reqs'), ok: count('erlang_ok'), late: count('erlang_late'), refused: count('erlang_refused'), failed: count('erlang_failed'), dropped: count('dropped_iterations'), wireBytes: count('data_received') };
+  const statements = step.measure?.includes('statements') ? readStats() : null;
+  // The calls the stub received during the step, by host (attempts, L06).
+  const upstream = stub.hits.length ? Object.entries(stub.hits.reduce((m, h) => ({ ...m, [h.host]: (m[h.host] ?? 0) + 1 }), {})).map(([host, calls]) => ({ host, calls })) : null;
+  return { interrupted: false, counts, served: trend('erlang_served_ms'), refusals: trend('erlang_refused_ms'), ...(statements ? { statements: { calls: Object.values(statements).reduce((a, x) => a + x.calls, 0), byQuery: statements } } : {}), ...(upstream ? { upstream } : {}), ...(heapBefore ? { heap: { before: heapBefore.heapUsed, after: heapAfter?.heapUsed ?? null } } : {}), samples };
+}

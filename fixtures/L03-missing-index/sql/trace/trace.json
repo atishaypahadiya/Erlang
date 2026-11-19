@@ -1,0 +1,89 @@
+{
+  "note": "Trace form (research/trace-harness.md) for L03's sql form: the static twins, served by scripts/trace.sh against PostgreSQL at 1x and 10x, with their own migrations (the clean twin's 002_indexes.sql adds the indexes). plans loads auto_explain in the app role's sessions in the trace database only (log_analyze on, timing off, JSON), so each statement's plan as run is read from the log between markers the harness logs around each request. A Seq Scan with a filter, on a table of 10,000 rows or more, returning under 5% of the rows it read, wants an index (DAT-03, DAT-07); smallTables repeats the owner's erlang.config.json. L03-s4, an unindexed foreign key no query uses, has no plan to read, so it is confirmed statically only. The server exports no app, so each request names its route. defects are what the planted twin must report and the clean twin must not; every other request is a decoy, in both twins.",
+  "fixture": "L03",
+  "form": "sql",
+  "judge": "plans",
+  "plans": true,
+  "schema": "twin:migrations",
+  "smallTables": [
+    "countries"
+  ],
+  "scales": [
+    1,
+    10
+  ],
+  "n": 1,
+  "requests": [
+    {
+      "id": "userEvents",
+      "method": "GET",
+      "path": "/users/7/events",
+      "route": "/users/:id/events"
+    },
+    {
+      "id": "orderItems",
+      "method": "GET",
+      "path": "/orders/7/items",
+      "route": "/orders/:id/items"
+    },
+    {
+      "id": "recentOrders",
+      "method": "GET",
+      "path": "/orders/recent?since=2026-10-01T00:00:00Z",
+      "route": "/orders/recent"
+    },
+    {
+      "id": "oneUser",
+      "method": "GET",
+      "path": "/users/7",
+      "route": "/users/:id"
+    },
+    {
+      "id": "userByEmail",
+      "method": "GET",
+      "path": "/users/by-email?email=u7@example.test",
+      "route": "/users/by-email"
+    },
+    {
+      "id": "userOrders",
+      "method": "GET",
+      "path": "/users/7/orders",
+      "route": "/users/:id/orders"
+    },
+    {
+      "id": "activeUsers",
+      "method": "GET",
+      "path": "/users/active",
+      "route": "/users/active"
+    },
+    {
+      "id": "countryByName",
+      "method": "GET",
+      "path": "/countries/Country%207",
+      "route": "/countries/:name"
+    }
+  ],
+  "defects": [
+    {
+      "check": "missing-index",
+      "rule": "DAT-03",
+      "method": "GET",
+      "route": "/users/:id/events",
+      "linked": true
+    },
+    {
+      "check": "missing-index",
+      "rule": "DAT-03",
+      "method": "GET",
+      "route": "/orders/:id/items",
+      "linked": true
+    },
+    {
+      "check": "missing-index",
+      "rule": "DAT-03",
+      "method": "GET",
+      "route": "/orders/recent",
+      "linked": true
+    }
+  ]
+}

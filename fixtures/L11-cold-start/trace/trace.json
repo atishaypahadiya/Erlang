@@ -1,0 +1,78 @@
+{
+  "note": "Trace form (research/trace-harness.md) for L11: the static twins, served by scripts/trace.sh, from trace/overlay/trace-entry.js, which makes the work behind each lazily built value its real size (a 600,000-line postcode file; a PDF module that builds its tables when it loads, replacing the twin's tiny stand-in; 50,000 countries in the seed) and then imports the twin's src/app.js unchanged. For each request, the twin is started three times, and each time the first request is timed against the five after it. A first request at least 20 ms and three times slower than the median of the later ones, in every start, waits for set-up (STB-10). A timing: it counts only under the timing lock (the three first-request times), and is otherwise info (timing unreliable). defects are what the planted twin must report and the clean twin must not; every other request is a decoy, in both twins.",
+  "fixture": "L11",
+  "form": "express",
+  "judge": "starts",
+  "entry": "trace-entry.js",
+  "scales": [
+    1
+  ],
+  "n": 1,
+  "requests": [],
+  "starts": [
+    {
+      "id": "region",
+      "method": "GET",
+      "path": "/regions/P123",
+      "route": "/regions/:postcode",
+      "samples": 3,
+      "after": 5
+    },
+    {
+      "id": "countries",
+      "method": "GET",
+      "path": "/checkout/countries",
+      "route": "/checkout/countries",
+      "samples": 3,
+      "after": 5
+    },
+    {
+      "id": "invoicePdf",
+      "method": "GET",
+      "path": "/invoices/1.pdf",
+      "route": "/invoices/:id.pdf",
+      "samples": 3,
+      "after": 5
+    },
+    {
+      "id": "price",
+      "method": "GET",
+      "path": "/prices/1",
+      "route": "/prices/:id",
+      "samples": 3,
+      "after": 5
+    },
+    {
+      "id": "createOrder",
+      "method": "POST",
+      "path": "/orders",
+      "route": "/orders",
+      "body": {},
+      "samples": 3,
+      "after": 5
+    }
+  ],
+  "defects": [
+    {
+      "check": "cold-start",
+      "rule": "STB-10",
+      "method": "GET",
+      "route": "/regions/:postcode",
+      "linked": true
+    },
+    {
+      "check": "cold-start",
+      "rule": "STB-10",
+      "method": "GET",
+      "route": "/checkout/countries",
+      "linked": true
+    },
+    {
+      "check": "cold-start",
+      "rule": "STB-10",
+      "method": "GET",
+      "route": "/invoices/:id.pdf",
+      "linked": true
+    }
+  ]
+}

@@ -4,13 +4,17 @@
 // scripts/trace/run.js copies trace/overlay over the twin's copy.
 // The overlay also supplies the files the twin reads when it loads, which
 // the static pair does not ship: assets/placeholder.png (1x1) and templates/.
-//   - one account from before PBKDF2, with a bcrypt hash at cost 12, for
-//     POST /login;
+//   - one account with both hashes of its password, for POST /login: a
+//     bcrypt hash at cost 12, which the planted twin checks, and a scrypt
+//     hash, which the clean twin checks;
 //   - 200,000 orders, about 30 MB of JSON, for GET /export.
+import crypto from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import { store } from './src/store.js';
 
-await store.saveUser({ email: 'old@example.test', legacyHash: bcrypt.hashSync('correct horse', 12) });
+const scryptSalt = crypto.randomBytes(16).toString('hex');
+const scryptHash = crypto.scryptSync('correct horse', Buffer.from(scryptSalt, 'hex'), 64).toString('hex');
+await store.saveUser({ email: 'old@example.test', legacyHash: bcrypt.hashSync('correct horse', 12), scryptSalt, scryptHash });
 const orders = await store.allOrders();
 for (let i = 1; i <= 200_000; i++) {
   orders.push({ id: i, customer: `c${i % 997}`, total: 1000 + (i % 5000), status: ['new', 'paid', 'shipped'][i % 3], items: [{ sku: `sku-${i % 211}`, quantity: 1 + (i % 4) }] });

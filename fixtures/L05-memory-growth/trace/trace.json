@@ -1,0 +1,73 @@
+{
+  "note": "Trace form (research/trace-harness.md) for L05: the static twins, served by scripts/trace.sh. Each soak sends one request many times, each with a key of its own ($i), one at a time at most 50 a second, and reads the twin's heap after a full collection (node --expose-gc) before and at each count. Judged on the last stretch, which the counts put past every bound the clean twin sets (search: 1,000 entries; recent orders: 100; suggestions: 500): a heap still growing there by 32 bytes or more a request is memory kept per request (STB-05). Not soaked: POST /login (L05-3), whose clean twin is bounded at 100,000 sessions, more than a trace sends, so it is confirmed statically and by the load soak; PUT /rates/:pair (d5, d6), whose entries a timer removes after an hour in both twins. defects are what the planted twin must report and the clean twin must not; every other soak is a decoy, in both twins. createOrder's last stretch is 3,000 requests: the planted twin keeps about 128 bytes an order, and a stretch of 1,000 left the clean twin's collection-to-collection noise (about 60 KB) near the 32-byte bar.",
+  "fixture": "L05",
+  "form": "express",
+  "judge": "memory",
+  "scales": [
+    1
+  ],
+  "n": 1,
+  "requests": [],
+  "soaks": [
+    {
+      "id": "searchProducts",
+      "method": "GET",
+      "path": "/search?q=a&page=$i",
+      "route": "/search",
+      "counts": [
+        1500,
+        2500
+      ]
+    },
+    {
+      "id": "suggest",
+      "method": "GET",
+      "path": "/suggest?q=p$i",
+      "route": "/suggest",
+      "counts": [
+        700,
+        1200
+      ]
+    },
+    {
+      "id": "createOrder",
+      "method": "POST",
+      "path": "/orders",
+      "route": "/orders",
+      "body": {
+        "total": "$i",
+        "currency": "EUR"
+      },
+      "counts": [
+        500,
+        3500
+      ]
+    },
+    {
+      "id": "orderLines",
+      "method": "GET",
+      "path": "/orders/1/lines?k=$i",
+      "route": "/orders/:id/lines",
+      "counts": [
+        100,
+        300
+      ]
+    }
+  ],
+  "defects": [
+    {
+      "check": "memory-growth",
+      "rule": "STB-05",
+      "method": "GET",
+      "route": "/search",
+      "linked": true
+    },
+    {
+      "check": "memory-growth",
+      "rule": "STB-05",
+      "method": "POST",
+      "route": "/orders",
+      "linked": true
+    }
+  ]
+}

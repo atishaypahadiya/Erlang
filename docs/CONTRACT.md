@@ -136,14 +136,14 @@ A separate program, for ERLANG's own fixtures: `scripts/trace.sh` (`npm run trac
 scripts/trace.sh [form ...]      e.g. scripts/trace.sh L01a-n-plus-one/sql
 ```
 
-With no form, it runs every `fixtures/<id>/<form>/trace/trace.json`: today the `sql/` forms of L01a, L01b, L02 and L04, L06's `loops/` form, L07, L08, L09 and L13's `compose/` form.
+With no form, it runs every `fixtures/<id>/<form>/trace/trace.json`: today the `sql/` and `prisma/` forms of L01a, L01b, L02 and L03, L04's `sql/` form, L05, L06's `loops/` form, L07, L08, L09, L10, L11, and L13's `compose/` and `kubernetes/` forms. L12's trace cell is covered by its load cell (docs/decisions.md, Q3).
 
 **Inputs**
 
 | Input | Needed | Notes |
 |---|---|---|
 | Docker | Yes | Runs `postgres:17.11@sha256:ff87138949ad9a46f32ff23bd6852b52ce024a13dffe9b4087be98292cdd3b4f`, the image KERCKHOFFS pins. |
-| A fixture form | Yes | Its twins, and `trace/`: `trace.json` (the requests or page views, how the stub answers each, and the expected defects), `seed.sql`, a schema (`schema.sql`, or the twins' own migrations), and `package-lock.json`. Optional: `package.json`, when the twins ship none, and `overlay/`, files copied over the twin's copy (L07's driver, a server over a library). |
+| A fixture form | Yes | Its twins, and `trace/`: `trace.json` (the requests or page views, how the stub answers each, and the expected defects), `seed.sql`, a schema (`schema.sql`, the twins' own migrations, or, for a Prisma form, each twin's `prisma/schema.prisma`, rendered to SQL by `prisma migrate diff`, which connects to nothing), and `package-lock.json`. Optional: `package.json`, when the twins ship none, and `overlay/`, files copied over the twin's copy (L07's driver, a server over a library). |
 | Seed size | Fixed | Each form's `seed.sql`, at 1x and 10x. For example, L02 has 10,000 orders and events at 1x, and 100,000 at 10x. The seed is deterministic, and its SHA-256 is recorded. |
 | URL | No | Each twin is started by the harness, on 127.0.0.1, on a port the system picks. |
 | Test logins | No | The fixtures have no authentication. The database passwords are made for each run. |
@@ -157,7 +157,9 @@ Trace findings are finding/1:
 - `detection` includes `trace`.
 - `erlang.trace` holds what was judged (`judge`): counts at each scale and the slope or ratio, the attempts an upstream host received, the connections checked out of the pool, or whether the response came. A judgement on a time carries the timing lock's verdict in `erlang.trace.timing`; when the lock does not hold, the finding is `info` with reason `timing unreliable` and never fails.
 - `measured` is `[]`, since counts do not vary between runs.
-- A finding that agrees with a static finding (same check and rule; same method and route, or, for code no handler reaches, the symbol the trace names; and the statement that grows on one of its lines) is that static finding, with `trace` added to its `detection` and the counts added to its message. Its fingerprint, locations and fix stay the static finding's.
+- What is judged, by form: statements and rows per request (pg_stat_statements); the statement log with its parameters (`log_statement`, for repeated reads, L10); plans (`auto_explain`, for sequential scans, L03); outbound attempts at the stub (L06, L07); pool and connection counts (L08, L13); the event loop's longest blocked stretch (L09); heap after a full collection, over a soak (L05); and the time of a fresh process's first request against its later ones (L11).
+- Request templates: `$n` (the items at this scale), `$i` (an item's index inside `{ $repeat }`), `$list` (`1,2,...,n`, for ids in a query string) and, in a body, `$run` (the run's index, for values that must differ per run).
+- A finding that agrees with a static finding (same check and rule; same method and route, or, for code no handler reaches, the symbol the trace names; and the statement that grows on one of its lines, except for Prisma, whose source holds a model call rather than SQL) is that static finding, with `trace` added to its `detection` and the counts added to its message. Its fingerprint, locations and fix stay the static finding's.
 - A trace finding with no static match names its endpoint. It carries a guided fix when its statement or route is found in the source.
 
 **Exit codes**
@@ -171,10 +173,10 @@ Trace findings are finding/1:
 | 75 | ITTEN's timing lock stayed active past the wait (`EX_TEMPFAIL`): read at start and immediately before each twin, waited on, rereading about once a second, for `ERLANG_LOCK_WAIT_S` seconds (600 by default), and named in the message (`research/itten-lock.md`). |
 
 **Network**
-- PostgreSQL publishes its port on 127.0.0.1 only. Each twin listens on 127.0.0.1 only, whatever host and port it asks for. Requests go only to the twin, one at a time, at most 5 a second, three per request per scale (two for requests that wait out a timeout).
+- PostgreSQL publishes its port on 127.0.0.1 only. Each twin listens on 127.0.0.1 only, whatever host and port it asks for. Requests go only to the twin, one at a time, at most 5 a second, three per request per scale (two for requests that wait out a timeout), apart from soaks.
 - Every outbound HTTP call a twin makes (`node:http`, `node:https`, `fetch`, and the clients built on them) goes to a stub the harness runs on 127.0.0.1, as plain HTTP, with the host it meant in `x-erlang-host`. Nothing a twin calls leaves the machine.
-- No load is generated.
-- The first run pulls the image from Docker Hub, and installs each form's packages from the npm registry with `npm ci --ignore-scripts`, from its committed lockfile. Later runs reuse both.
+- No load is generated. Soaks (L05) send one request at a time, at most 50 a second.
+- The first run pulls the image from Docker Hub, and installs each form's packages from the npm registry with `npm ci --ignore-scripts`, from its committed lockfile. For a Prisma form it then runs `prisma generate`, whose first use downloads Prisma's schema engine from Prisma's download host; `CHECKPOINT_DISABLE=1` keeps the CLI from sending its usage check. Later runs reuse all of it.
 
 **Writes**
 - `dist/trace/`: results; installs, in `dist/trace/install/`; and the run's passwords, in a mode-700 directory, `dist/trace/run/<pid>/`, removed on exit.
@@ -183,4 +185,33 @@ Trace findings are finding/1:
 
 **Determinism.** The seeds use no randomness, and the counts are exact. For each of the four first forms, two consecutive runs gave reports identical apart from `started`, for both twins. Timings are judged only under the timing lock (three or more samples, relative spread of 10% or less, one-minute load average below half the CPU count before and after); otherwise the finding is `info`, and a planted defect judged that way is reported as `SKIP ... timing unreliable`, not as missed.
 
-**Load on the machine.** Everything runs at `nice -n 15`. The container is held to one CPU and 1 GB. A full run of the nine forms takes about eight minutes, most of it L07 waiting out timeouts.
+**Load on the machine.** Everything runs at `nice -n 15`. The container is held to one CPU and 1 GB. A full run of the nineteen forms takes about twenty minutes, most of it L07 waiting out timeouts and L05's soaks.
+
+## The load harness
+
+A separate program, for ERLANG's own fixtures: `scripts/load.sh` (`npm run load`). It serves a form's twins on 127.0.0.1 against PostgreSQL, as the trace harness does, and drives them with k6 at a fixed arrival rate, each twin judged against the other. Design: `research/load-harness.md`.
+
+```
+scripts/load.sh form ...         e.g. scripts/load.sh L12-no-load-shedding
+```
+
+Each form's `load/load.json` lists its steps (method, path, rate, seconds, the latency that counts as served in time, a timeout), which steps are controls and which are judged, how many repeats, and the expected defects. Schema, seed and lockfile come from `load/` when the form has its own, else from `trace/`.
+
+**k6.** The `k6` on the path, or `ERLANG_K6`; with neither, the run stops (exit 2) with an install hint. ERLANG never installs, vendors or links k6. Each step's script is written at run time into the form's output folder; k6 runs it with `--no-usage-report`, so it sends nothing about the run anywhere. CI installs k6 v2.3.0 from Grafana's release, checked by SHA-256.
+
+**The guard** (`lib/load-guard.js`). The target is only ever the twin the harness started, on the loopback interface, over plain HTTP; any other host is refused, and no flag widens it. Caps, refused before anything runs (exit 2):
+
+| | Rate | A step | A run | Forms per run |
+|---|---|---|---|---|
+| CI (`CI=true`) | 500 a second | 60 s | 1,200 s of load | any |
+| A workstation | 200 a second | 20 s | 600 s of load | one |
+
+**ITTEN's timing lock** is read before each step and every 5 seconds during it. A lock that appears mid-step stops k6; the step is discarded and the run judged again later. At the wait's limit the run stops with exit 75, naming the lock.
+
+**Judging.** Each twin against the other, never against an absolute number. Every load finding goes through the timing rule: the judged quantity in each repeat (at least 3), a relative spread of 10% or less, and the one-minute load average below half the CPU count before every step and after it, "after" read once the harness's own load has stopped and the average has fallen (up to 120 s; docs/decisions.md, Q6). Otherwise the finding is `info`, `timing unreliable`, and never fails; a planted defect judged that way is reported as `SKIP`, not as missed. A finding that agrees with a static finding (check, rule, and the symbol or endpoint) is that finding, with `load` in its `detection` and the measurements in `erlang.load`; its fingerprint stays the static finding's, and never holds a measured value.
+
+**Output.** `dist/load/<id>/<form>/raw.json` (every step of every repeat: counts of requests served in time, late, refused and failed, latency percentiles, the twin's probes, the load average before and after), the k6 scripts and summaries, and `<twin>/report.json`, a report/1.
+
+**Exit codes**: as the trace harness's; 2 also when k6 is missing or a step is over its caps.
+
+**Network and writes**: as the trace harness's. Load goes only to the twin, on 127.0.0.1.

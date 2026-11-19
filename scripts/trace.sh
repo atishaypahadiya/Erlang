@@ -5,9 +5,12 @@
 # no load; development and CI only, not part of npm test, since it needs
 # Docker and, the first time, the npm registry and Docker Hub.
 #
-# Usage: scripts/trace.sh [form ...]   a form is e.g. L01a-n-plus-one/sql;
-#        with none, every fixtures/<id>/<form>/trace/trace.json.
-# Outputs: dist/trace/<id>/<form>/<twin>/{raw.json,report.json,twin.log}.
+# Usage: scripts/trace.sh [--load] [form ...]   a form is e.g.
+#        L01a-n-plus-one/sql; with none, every fixtures/<id>/<form>/trace/
+#        trace.json. --load runs the load harness instead (scripts/load.sh,
+#        research/load-harness.md) on each form's load/load.json, with k6.
+# Outputs: dist/trace/<id>/<form>/<twin>/{raw.json,report.json,twin.log};
+#          with --load, dist/load/<id>/<form>/{raw.json,<twin>/report.json}.
 # Exit codes: 0 every form as expected; 1 a form was not; 2 cannot run
 # (Docker, or Postgres did not start); 64 bad usage; 75 ITTEN's timing lock
 # stayed active past the wait (ERLANG_LOCK_WAIT_S, 600 s by default).
@@ -36,17 +39,32 @@ if [ "$current" -lt 15 ]; then
   exec nice -n "$((15 - current))" "$0" "$@"
 fi
 
+MODE=trace
+SPEC=trace/trace.json
+LOADFLAG=""
+if [ "${1:-}" = "--load" ]; then
+  MODE=load
+  SPEC=load/load.json
+  LOADFLAG=--load
+  shift
+fi
 for a in "$@"; do
   case "$a" in
-    -*) echo "usage: scripts/trace.sh [form ...]   e.g. L01a-n-plus-one/sql" >&2; exit 64 ;;
+    -*) echo "usage: scripts/trace.sh [--load] [form ...]   e.g. L01a-n-plus-one/sql" >&2; exit 64 ;;
   esac
-  if [ ! -f "fixtures/$a/trace/trace.json" ]; then
-    echo "trace: fixtures/$a/trace/trace.json does not exist" >&2
+  if [ ! -f "fixtures/$a/$SPEC" ]; then
+    echo "$MODE: fixtures/$a/$SPEC does not exist" >&2
     exit 64
   fi
 done
+# Load on a workstation: one form per run (lib/load-guard.js); the full
+# suite runs in CI.
+if [ "$MODE" = "load" ] && [ "${CI:-}" != "true" ] && [ "$#" -ne 1 ]; then
+  echo "load: on a workstation, name exactly one form; the full load suite runs in CI" >&2
+  exit 64
+fi
 
-node scripts/itten-lock.js trace || exit $?
+node scripts/itten-lock.js "$MODE" || exit $?
 if ! docker info >/dev/null 2>&1; then
   echo "trace: Docker is not running" >&2
   exit 2
@@ -56,7 +74,7 @@ if [ "$#" -gt 0 ]; then
   forms=("$@")
 else
   forms=()
-  while IFS= read -r f; do forms+=("$f"); done < <(cd fixtures && find . -path '*/trace/trace.json' | sed -e 's|^\./||' -e 's|/trace/trace.json$||' | sort)
+  while IFS= read -r f; do forms+=("$f"); done < <(cd fixtures && find . -path "*/$SPEC" | sed -e 's|^\./||' -e "s|/$SPEC\$||" | sort)
 fi
 
 NAME="erlang-trace-$$"
@@ -114,23 +132,42 @@ failed=0
 for form in "${forms[@]}"; do
   id="$(printf '%s' "$form" | tr '/' '-')"
   install="$ROOT/dist/trace/install/$id"
-  # The twins' package.json, or the trace form's own when the twins ship none.
+  # The twins' package.json, or the form's own when the twins ship none; the
+  # load form's lockfile, else the trace form's.
   manifest="fixtures/$form/planted/package.json"
   [ -f "fixtures/$form/trace/package.json" ] && manifest="fixtures/$form/trace/package.json"
-  stamp="$(cat "$manifest" "fixtures/$form/trace/package-lock.json" | shasum -a 256 | cut -d' ' -f1)"
+  [ "$MODE" = "load" ] && [ -f "fixtures/$form/load/package.json" ] && manifest="fixtures/$form/load/package.json"
+  lock="fixtures/$form/trace/package-lock.json"
+  [ "$MODE" = "load" ] && [ -f "fixtures/$form/load/package-lock.json" ] && lock="fixtures/$form/load/package-lock.json"
+  # A Prisma form: its client is generated into the install from the planted
+  # twin's schema (the twins' models are the same; L03's differ only in an
+  # index, which the client does not hold), and run.js renders each twin's
+  # own schema to SQL with the same CLI.
+  prisma_schema="fixtures/$form/planted/prisma/schema.prisma"
+  [ -f "$prisma_schema" ] || prisma_schema=""
+  stamp="$(cat "$manifest" "$lock" ${prisma_schema:+"$prisma_schema"} | shasum -a 256 | cut -d' ' -f1)"
   if [ ! -f "$install/.stamp" ] || [ "$(cat "$install/.stamp")" != "$stamp" ]; then
     rm -rf "$install"
     mkdir -p "$install"
     cp "$manifest" "$install/package.json"
-    cp "fixtures/$form/trace/package-lock.json" "$install/package-lock.json"
+    cp "$lock" "$install/package-lock.json"
     (cd "$install" && npm ci --ignore-scripts --no-audit --no-fund --loglevel=error)
+    if [ -n "$prisma_schema" ]; then
+      mkdir -p "$install/prisma"
+      cp "$prisma_schema" "$install/prisma/schema.prisma"
+      # The schema engine wants a datasource even for a diff from nothing; this
+      # one is never connected to.
+      printf '%s\n' "import { defineConfig } from 'prisma/config';" \
+        "export default defineConfig({ schema: 'prisma/schema.prisma', datasource: { url: 'postgresql://unused@127.0.0.1:1/unused' } });" > "$install/prisma.config.ts"
+      (cd "$install" && CHECKPOINT_DISABLE=1 node_modules/.bin/prisma generate > generate.log 2>&1) || { cat "$install/generate.log" >&2; exit 2; }
+    fi
     printf '%s\n' "$stamp" > "$install/.stamp"
   fi
 
   set +e
   ERLANG_TRACE_CONTAINER="$NAME" ERLANG_TRACE_PORT="$PORT" ERLANG_TRACE_IMAGE="$IMAGE" \
     ERLANG_TRACE_APP_PASSWORD_FILE="$RUN/app-password" \
-    node scripts/trace/run.js "fixtures/$form" "dist/trace/$form" "$install/node_modules"
+    node scripts/trace/run.js ${LOADFLAG:+"$LOADFLAG"} "fixtures/$form" "dist/$MODE/$form" "$install/node_modules"
   rc=$?
   set -e
   if [ "$rc" = "75" ]; then exit 75; fi
@@ -139,6 +176,6 @@ for form in "${forms[@]}"; do
     failed=1
     continue
   fi
-  node scripts/trace/judge.js "fixtures/$form" "dist/trace/$form" || failed=1
+  node "scripts/$MODE/judge.js" "fixtures/$form" "dist/$MODE/$form" || failed=1
 done
 exit "$failed"

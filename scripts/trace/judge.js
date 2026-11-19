@@ -46,6 +46,9 @@ const BLOCK_SHARE = 0.7;
 // judge "cache": a read repeated across requests counts when its cost grows
 // with the table (blocks per call at the top scale over the bottom one) and
 // its result does not (rows per call): an aggregate, not a list.
+// A Cache-Control that lets a client or proxy reuse the response: max-age or
+// s-maxage above 0, and neither no-store nor no-cache.
+const fresh = (cc) => !!cc && !/\b(no-store|no-cache)\b/i.test(cc) && /\b(s-)?max-age=0*[1-9]/i.test(cc);
 const COST_RATIO = 5;
 // judge "memory": heap kept per request, after a full collection, over the
 // soak's last stretch (past every bound a clean twin sets).
@@ -367,7 +370,7 @@ function judgeTwin(twin) {
   // with parameters. Within one request: the same read with the same
   // parameters twice, with no write between, in both runs after the warm-up
   // (DAT-06). Across requests, for a GET whose response carries no
-  // Cache-Control or ETag: the same read with the same parameters in every
+  // a freshness lifetime in its Cache-Control: the same read with the same parameters in every
   // request after the warm-up, whose blocks grow with the table while its
   // rows do not (DAT-06).
   for (const r of spec.judge === 'cache' ? spec.requests : []) {
@@ -395,7 +398,10 @@ function judgeTwin(twin) {
         trace: { judge: 'repeat', path: x.path, statement: s.sql, scales: [{ scale: HI, times: s.times }] },
         message: `${r.method} ${route} ran \`${s.sql}\` ${s.times} times in one request with the same parameters (${s.params ?? 'none'}) and no write between: every run after the first reads what the request already has (DAT-06). From the statement log.` });
     }
-    if (r.method !== 'GET' || x.cacheHeaders?.cacheControl || x.cacheHeaders?.etag) continue;
+    // Only a freshness lifetime lets a client or proxy skip the request; an
+    // ETag alone (Express adds a weak one to every response) still has the
+    // server do the work to answer 304.
+    if (r.method !== 'GET' || fresh(x.cacheHeaders?.cacheControl)) continue;
     const lx = lo?.requests.find((q) => q.id === r.id);
     const per = (stats, sql) => { const e = Object.entries(stats ?? {}).find(([q]) => normalizeSql(q) === normalizeSql(sql)); return e && e[1].calls ? { blocks: e[1].blocks / e[1].calls, rows: e[1].rows / e[1].calls } : null; };
     const inAll = (q) => new Set(q.logged.filter((s) => READ.test(s.sql)).map(keyOf));
@@ -408,7 +414,7 @@ function judgeTwin(twin) {
       const ratio = b.blocks / a.blocks;
       emit({ check: 'no-cache', rule: 'DAT-06', strength: 'SHOULD', severity: 'warning', method: r.method, route, statement: s.sql,
         trace: { judge: 'repeat', path: x.path, statement: s.sql, ratio, scales: [{ scale: LO, rows: Math.round(a.rows) }, { scale: HI, rows: Math.round(b.rows) }] },
-        message: `${r.method} ${route} ran \`${s.sql}\` on every request with the same parameters, nothing cached in front and no Cache-Control or ETag on the response, and its cost grows with the table: ${fmt(Math.round(b.blocks))} blocks a call at ${HI}x against ${fmt(Math.round(a.blocks))} at ${LO}x, for the same ${Math.round(b.rows)} row(s) (DAT-06).` });
+        message: `${r.method} ${route} ran \`${s.sql}\` on every request with the same parameters, nothing cached in front and no freshness lifetime in its Cache-Control, and its cost grows with the table: ${fmt(Math.round(b.blocks))} blocks a call at ${HI}x against ${fmt(Math.round(a.blocks))} at ${LO}x, for the same ${Math.round(b.rows)} row(s) (DAT-06).` });
     }
   }
 

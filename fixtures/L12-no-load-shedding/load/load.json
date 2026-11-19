@@ -1,0 +1,46 @@
+{
+  "note": "Load form (research/load-harness.md) for L12, the row only load can test (docs/decisions.md, Q3). Every order read takes 100 ms at the database (schema.sql), so the twins' pool of 10 serves at most 100 requests a second. Step below, at half that, is the control: both twins must answer at least 90% of it within 500 ms, or the form is wrong. Step past, at one and a half times the knee, is judged: goodput, the share of offered requests answered 2xx within 500 ms, of each twin against the other. The planted twin queues every request for a connection, and each waits up to the pool's connectionTimeoutMillis (2 s) before it is served late or fails; the clean twin holds at most 20 in flight and answers the rest 503 at once. defects are what the planted twin must report and the clean twin must not; the static finding has no endpoint, so it is linked by symbol (the app).",
+  "fixture": "L12",
+  "form": "express",
+  "judge": "shedding",
+  "scale": 1,
+  "n": 1,
+  "repeats": 3,
+  "steps": [
+    {
+      "id": "below",
+      "method": "GET",
+      "path": "/orders/1",
+      "route": "/orders/:id",
+      "rate": 50,
+      "seconds": 15,
+      "okMs": 500,
+      "timeoutMs": 5000
+    },
+    {
+      "id": "past",
+      "method": "GET",
+      "path": "/orders/1",
+      "route": "/orders/:id",
+      "rate": 150,
+      "seconds": 20,
+      "okMs": 500,
+      "timeoutMs": 5000
+    }
+  ],
+  "control": [
+    "below"
+  ],
+  "judged": [
+    "past"
+  ],
+  "defects": [
+    {
+      "check": "no-load-shedding",
+      "rule": "OVL-02",
+      "step": "past",
+      "symbol": "app",
+      "linked": true
+    }
+  ]
+}

@@ -1,0 +1,96 @@
+{
+  "note": "Trace form (research/trace-harness.md) for L10: the static twins, served by scripts/trace.sh against PostgreSQL at 1x and 10x. params turns on the app role's statement log (log_statement, in the trace database only), so each request's statements are read with their parameters, between two markers the harness logs around it; pg_stat_statements adds the blocks each statement touched. Judged on the two runs after the warm-up: the same read with the same parameters twice in one request with no write between (L10-2, L10-3); and, for a GET whose response carries no Cache-Control or ETag, the same read in every request whose blocks grow with the table while its rows do not, an aggregate (L10-1, info statically, which the trace resolves). defects are what the planted twin must report and the clean twin must not; every other request is a decoy, in both twins.",
+  "fixture": "L10",
+  "form": "express",
+  "judge": "cache",
+  "params": true,
+  "scales": [
+    1,
+    10
+  ],
+  "n": 1,
+  "requests": [
+    {
+      "id": "orderTotals",
+      "method": "GET",
+      "path": "/stats"
+    },
+    {
+      "id": "categoryCount",
+      "method": "GET",
+      "path": "/stats/categories/1"
+    },
+    {
+      "id": "customerOrders",
+      "method": "GET",
+      "path": "/stats/customers/1"
+    },
+    {
+      "id": "refundTotals",
+      "method": "GET",
+      "path": "/stats/refunds"
+    },
+    {
+      "id": "rebuild",
+      "method": "POST",
+      "path": "/stats/rebuild",
+      "body": {}
+    },
+    {
+      "id": "orderLines",
+      "method": "GET",
+      "path": "/orders/1/lines?region=eu",
+      "route": "/orders/:id/lines"
+    },
+    {
+      "id": "quote",
+      "method": "GET",
+      "path": "/checkout/quote?ids=1,2,3",
+      "route": "/checkout/quote"
+    },
+    {
+      "id": "products",
+      "method": "GET",
+      "path": "/orders/products?ids=1,2,3",
+      "route": "/orders/products"
+    },
+    {
+      "id": "credit",
+      "method": "POST",
+      "path": "/accounts/1/credit",
+      "body": {
+        "cents": 100
+      },
+      "route": "/accounts/:id/credit"
+    },
+    {
+      "id": "exportReady",
+      "method": "GET",
+      "path": "/exports/1/ready",
+      "route": "/exports/:id/ready"
+    }
+  ],
+  "defects": [
+    {
+      "check": "no-cache",
+      "rule": "DAT-06",
+      "method": "GET",
+      "route": "/stats",
+      "linked": true
+    },
+    {
+      "check": "no-cache",
+      "rule": "DAT-06",
+      "method": "GET",
+      "route": "/orders/:id/lines",
+      "linked": true
+    },
+    {
+      "check": "no-cache",
+      "rule": "DAT-06",
+      "method": "GET",
+      "route": "/checkout/quote",
+      "linked": true
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import crypto from 'node:crypto';
-import bcrypt from 'bcryptjs';
+// No bcryptjs: it is pure JavaScript, so even its asynchronous form hashes on the request thread.
 import { store } from '../store.js';
 
 export const accounts = Router();
@@ -13,16 +13,16 @@ accounts.post('/signup', async function signup(req, res) {
   res.status(201).json({ id: crypto.randomUUID() });
 });
 
-// POST /login: accounts from before the move to PBKDF2 still have a bcrypt hash.
+// POST /login: accounts moved off bcrypt keep a scrypt hash, checked on the worker pool.
 accounts.post('/login', async function login(req, res) {
   const user = await store.findUser(req.body.email);
-  const ok = user?.legacyHash && (await bcrypt.compare(req.body.password, user.legacyHash));
+  const ok = !!user?.scryptHash && crypto.timingSafeEqual(Buffer.from(user.scryptHash, 'hex'), await new Promise((resolve, reject) => crypto.scrypt(req.body.password, Buffer.from(user.scryptSalt, 'hex'), 64, (err, key) => (err ? reject(err) : resolve(key)))));
   res.status(ok ? 204 : 401).end();
 });
 
-// PUT /password: a new password, hashed with bcrypt's asynchronous form.
+// PUT /password: a new password, hashed with scrypt on the worker pool.
 accounts.put('/password', async function changePassword(req, res) {
-  const legacyHash = await bcrypt.hash(req.body.password, 12);
-  await store.saveUser({ ...(await store.findUser(req.body.email)), legacyHash });
+  const scryptSalt = crypto.randomBytes(16).toString('hex'), scryptHash = (await new Promise((resolve, reject) => crypto.scrypt(req.body.password, Buffer.from(scryptSalt, 'hex'), 64, (err, key) => (err ? reject(err) : resolve(key))))).toString('hex');
+  await store.saveUser({ ...(await store.findUser(req.body.email)), scryptSalt, scryptHash });
   res.status(204).end();
 });

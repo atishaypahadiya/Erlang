@@ -10,7 +10,17 @@
 //   - node:zlib, every *Sync function;
 //   - node:fs, every *Sync function;
 //   - node:child_process execSync, execFileSync and spawnSync;
-//   - bcrypt and bcryptjs hashSync and compareSync.
+//   - bcrypt (the native package) hashSync and compareSync;
+//   - bcryptjs hash, compare, hashSync and compareSync at a cost of 10 or
+//     more, asynchronous forms included: bcryptjs is pure JavaScript, so its
+//     asynchronous form does the same work on the request thread, in slices
+//     of up to 100 ms (bcryptjs 3.0.3, MAX_EXECUTION_TIME; measured by the
+//     L09 trace). The cost is the rounds argument, a genSalt(N) call (10
+//     when N is left out) or a literal salt, through a const. compare reads
+//     its cost from the stored hash: the cost of the hashes the project
+//     stores under the same name (compare(p, user.legacyHash) and
+//     legacyHash = hash(p, 12)), or else the highest cost it hashes with.
+//     A cost that cannot be found is info. Fixes are guided only.
 // Only code a request handler reaches is judged. With no request handler
 // found, nothing is reported: synchronous calls are ordinary in scripts and
 // command-line tools, and the run data says so.
@@ -35,6 +45,9 @@ const SMALL_RANDOM = 1024;
 const CRYPTO = { pbkdf2Sync: 'pbkdf2', scryptSync: 'scrypt', generateKeyPairSync: 'generateKeyPair', generatePrimeSync: 'generatePrime', randomFillSync: 'randomFill', randomBytes: 'randomBytes' };
 const CHILD = new Set(['execSync', 'execFileSync', 'spawnSync']);
 const BCRYPT = { hashSync: 'hash', compareSync: 'compare' };
+const BCRYPTJS = new Set(['hash', 'compare', 'hashSync', 'compareSync']);
+const BCRYPTJS_COST = 10;
+const BCRYPTJS_DEFAULT = 10;
 const FS_PROMISES = new Set(['readFile', 'writeFile', 'appendFile', 'readdir', 'stat', 'lstat', 'mkdir', 'mkdtemp', 'unlink', 'rm', 'rmdir', 'copyFile', 'cp', 'rename', 'access', 'realpath', 'readlink', 'chmod', 'utimes', 'truncate', 'symlink', 'link']);
 const WHY = {
   pbkdf2Sync: 'key derivation is slow by design, and the synchronous form runs on the request thread',
@@ -55,6 +68,7 @@ const GUIDED_NOTE = {
   fs: 'Use node:fs/promises and await it, or read the file once at startup if it does not change (OVL-12). existsSync has no promise form: use fs.promises.access, or open the file and handle ENOENT.',
   child_process: 'Use execFile or spawn, promisified or with their events, so the request thread is free while the child runs (OVL-12).',
   bcrypt: 'Use bcrypt.hash and bcrypt.compare, which return promises, and await them (OVL-12).',
+  bcryptjs: 'Hash off the request thread: Node\'s crypto.scrypt (its callback form runs on the worker pool), the native bcrypt package, or bcryptjs in a worker thread. Existing bcrypt hashes need a migration path: verify a login with the old hash, then re-hash the password with the new scheme and store it, so each account moves over at its next login (OVL-12).',
 };
 
 export function run(root, { handlers: brief = [] } = {}) {
@@ -79,7 +93,8 @@ export function run(root, { handlers: brief = [] } = {}) {
     else if (module === 'zlib' && name.endsWith('Sync')) kind = 'zlib';
     else if (module === 'fs' && name.endsWith('Sync')) kind = 'fs';
     else if (module === 'child_process' && CHILD.has(name)) kind = 'child_process';
-    else if ((module === 'bcrypt' || module === 'bcryptjs') && name in BCRYPT) kind = 'bcrypt';
+    else if (module === 'bcrypt' && name in BCRYPT) kind = 'bcrypt';
+    else if (module === 'bcryptjs' && BCRYPTJS.has(name)) kind = 'bcryptjs';
     if (!kind) return null;
     const callee = unwrap(call.expression);
     const ns = viaNs && ts.isPropertyAccessExpression(callee) ? callee.expression.getText() : null;
@@ -100,6 +115,69 @@ export function run(root, { handlers: brief = [] } = {}) {
     }
     return null;
   }
+
+  // bcryptjs's cost: the rounds, from a number, a genSalt(N) call or a salt
+  // string; null when it cannot be read.
+  function costOf(arg, depth = 0) {
+    const a = unwrap(arg);
+    if (!a) return null;
+    if (ts.isNumericLiteral(a)) return Number(a.text.replaceAll('_', ''));
+    if (ts.isStringLiteralLike(a)) { const m = /^\$2[abxy]?\$(\d\d)\$/.exec(a.text); return m ? Number(m[1]) : null; }
+    if (ts.isAwaitExpression(a)) return costOf(a.expression, depth);
+    if (ts.isCallExpression(a)) {
+      const o = origin(cx, a.expression);
+      if (o.k === 'import' && o.module === 'bcryptjs' && ['genSalt', 'genSaltSync'].includes(o.path?.at(-1))) return a.arguments.length && !ts.isFunctionLike(unwrap(a.arguments[0])) ? costOf(a.arguments[0], depth) : BCRYPTJS_DEFAULT;
+      return null;
+    }
+    if (ts.isIdentifier(a) && depth < 2) {
+      const d = cx.checker.getSymbolAtLocation(a)?.declarations?.[0];
+      if (d && ts.isVariableDeclaration(d) && d.initializer && (ts.getCombinedNodeFlags(d) & ts.NodeFlags.Const)) return costOf(d.initializer, depth + 1);
+    }
+    return null;
+  }
+  // The costs the project hashes with through bcryptjs: the highest overall,
+  // and the highest per name the hash is stored under (a variable or a
+  // property). null when none is known.
+  let hashing;
+  const nameOf = (n) => (n && (ts.isIdentifier(n) || ts.isPrivateIdentifier(n) || ts.isStringLiteral(n)) ? n.text : null);
+  function storedUnder(call) {
+    let n = call;
+    while (n.parent && (ts.isAwaitExpression(n.parent) || ts.isParenthesizedExpression(n.parent))) n = n.parent;
+    const p = n.parent;
+    if (p && (ts.isVariableDeclaration(p) || ts.isPropertyAssignment(p)) && p.initializer === n) return nameOf(p.name);
+    if (p && ts.isBinaryExpression(p) && p.right === n && p.operatorToken.kind === ts.SyntaxKind.EqualsToken) return ts.isPropertyAccessExpression(p.left) ? p.left.name.text : nameOf(p.left);
+    return null;
+  }
+  function hashingCosts() {
+    if (hashing) return hashing;
+    hashing = { max: null, byName: new Map() };
+    for (const rel of rels) {
+      const visit = (n) => {
+        if (ts.isCallExpression(n)) {
+          const o = origin(cx, n.expression);
+          if (o.k === 'import' && o.module === 'bcryptjs' && ['hash', 'hashSync'].includes(o.path?.at(-1))) {
+            const c = costOf(n.arguments[1]);
+            if (c !== null) {
+              hashing.max = Math.max(hashing.max ?? 0, c);
+              const name = storedUnder(n);
+              if (name) hashing.byName.set(name, Math.max(hashing.byName.get(name) ?? 0, c));
+            }
+          }
+        }
+        ts.forEachChild(n, visit);
+      };
+      try { visit(cx.sourceFile(rel)); } catch { /* an unreadable file adds nothing */ }
+    }
+    return hashing;
+  }
+  // compare's cost: that of the hashes stored under the name it reads.
+  function compareCost(call) {
+    const h = hashingCosts();
+    const a = unwrap(call.arguments[1]);
+    const name = !a ? null : ts.isPropertyAccessExpression(a) ? a.name.text : ts.isElementAccessExpression(a) ? nameOf(unwrap(a.argumentExpression)) : nameOf(a);
+    return (name && h.byName.get(name)) ?? h.max;
+  }
+  const bcryptjsCost = (b, call) => (b.name.startsWith('hash') ? costOf(call.arguments[1]) : compareCost(call));
 
   function whyOf(b) {
     if (b.kind === 'crypto') return WHY[b.name];
@@ -148,7 +226,7 @@ export function run(root, { handlers: brief = [] } = {}) {
   }
 
   function fixOf(b, call) {
-    const text = isAsync(enclosingFunction(call)) ? asyncText(b, call) : null;
+    const text = b.kind !== 'bcryptjs' && isAsync(enclosingFunction(call)) ? asyncText(b, call) : null;
     if (text) {
       const sf = call.getSourceFile();
       const p = sf.getLineAndCharacterOfPosition(call.getStart());
@@ -168,7 +246,9 @@ export function run(root, { handlers: brief = [] } = {}) {
       const visit = (n) => {
         if (ts.isCallExpression(n)) {
           const b = blockingOf(n);
-          if (b && !quick(b, n)) {
+          const cost = b?.kind === 'bcryptjs' ? bcryptjsCost(b, n) : null;
+          if (b?.kind === 'bcryptjs' && cost !== null && cost < BCRYPTJS_COST) stats.skipped.lowCost = (stats.skipped.lowCost ?? 0) + 1;
+          else if (b && !quick(b, n)) {
             stats.calls++;
             const reach = H.reach(n);
             if (!H.handlers.length) stats.skipped.noHandlers++;
@@ -184,9 +264,12 @@ export function run(root, { handlers: brief = [] } = {}) {
               findings.push({
                 keyParts: [`${loc.file}#${loc.symbol ?? '<module>'}`, `${b.module}.${b.name}`],
                 locations: [loc], endpoints,
-                message: `${who} calls ${callee}(), synchronous, in code that ${labels.join(' and ')} run${labels.length > 1 ? '' : 's'}: ${whyOf(b)}. While it runs, the process serves no other request, so every request waits behind it, and a client that can make it slow can stall the service (Node.js, "Don't Block the Event Loop"; OVL-12).`,
+                message: b.kind === 'bcryptjs'
+                  ? `${who} calls ${callee}()${b.name.endsWith('Sync') ? ', synchronous,' : ''} in code that ${labels.join(' and ')} run${labels.length > 1 ? '' : 's'}, ${cost === null ? 'at a cost ERLANG cannot read' : `at cost ${cost} (2^${cost} rounds)`}. bcryptjs is pure JavaScript: ${b.name.endsWith('Sync') ? 'the whole hash runs' : 'even its asynchronous form runs the whole hash'} on the request thread${b.name.endsWith('Sync') ? '' : ', in slices of up to 100 ms with a yield between them (bcryptjs 3.0.3)'}, so the process serves fewer requests while it hashes, and a client that sends many logins can stall the service (OVL-12).${cost === null ? ' At a cost of 10 or more this is a warning.' : ''}`
+                  : `${who} calls ${callee}(), synchronous, in code that ${labels.join(' and ')} run${labels.length > 1 ? '' : 's'}: ${whyOf(b)}. While it runs, the process serves no other request, so every request waits behind it, and a client that can make it slow can stall the service (Node.js, "Don't Block the Event Loop"; OVL-12).`,
                 fix: fixOf(b, n),
                 blocking: b.kind,
+                unresolved: b.kind === 'bcryptjs' && cost === null,
               });
             }
           }
@@ -206,7 +289,7 @@ export function run(root, { handlers: brief = [] } = {}) {
     return finding({
       specialist: 'erlang',
       check: CHECK,
-      severity: 'warning',
+      severity: f.unresolved ? 'info' : 'warning',
       fingerprint: n === 1 ? fp : `${fp}|${n}`,
       message: f.message,
       detection: ['static'],

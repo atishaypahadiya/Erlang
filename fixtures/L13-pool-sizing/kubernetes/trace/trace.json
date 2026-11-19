@@ -1,0 +1,44 @@
+{
+  "note": "Trace form (research/trace-harness.md) for L13's kubernetes form: the static twins' API (src/server.js), Prisma 7.10.1 with @prisma/adapter-pg, served by scripts/trace.sh against PostgreSQL, its table made from each twin's prisma/schema.prisma by prisma migrate diff. The connections probe lists the app role's backends at the database (pg_stat_activity) before and after each request: a request that opens a connection on every run after the warm-up makes its client, and so its pool, per request (L13-k2). L13-k1, the adapter's pool times the HorizontalPodAutoscaler's maximum and the worker's replicas, plus the CronJob, over max_connections, is a sum over the manifests, which one served process cannot show; it is confirmed by the static check and by the load run. The app does not export itself, so each request names its route, and symbol names the handler it runs. Decoy, in both twins: GET /orders/:id, through the globalThis singleton client.",
+  "fixture": "L13",
+  "form": "kubernetes",
+  "judge": "connections",
+  "schema": "twin:prisma",
+  "entry": "src/server.js",
+  "scales": [
+    1
+  ],
+  "n": 1,
+  "requests": [
+    {
+      "id": "oneOrder",
+      "method": "GET",
+      "path": "/orders/1",
+      "probes": [
+        "connections"
+      ],
+      "route": "/orders/:id",
+      "symbol": "oneOrder"
+    },
+    {
+      "id": "orderStatus",
+      "method": "GET",
+      "path": "/orders/1/status",
+      "probes": [
+        "connections"
+      ],
+      "route": "/orders/:id/status",
+      "symbol": "orderStatus"
+    }
+  ],
+  "defects": [
+    {
+      "check": "pool-sizing",
+      "rule": "CAP-08",
+      "method": "GET",
+      "route": "/orders/:id/status",
+      "linked": true,
+      "symbol": "orderStatus"
+    }
+  ]
+}

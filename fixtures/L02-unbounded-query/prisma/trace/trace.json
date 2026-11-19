@@ -1,0 +1,112 @@
+{
+  "note": "Trace form (research/trace-harness.md) for L02's Prisma 7.10.1 twins, with @prisma/adapter-pg: run as they are against PostgreSQL, their tables made from each twin's prisma/schema.prisma by prisma migrate diff, the data from seed.sql at 1x and 10x. Each request is sent three times (a warm-up, then two measured), rows counted with pg_stat_statements: a read whose rows grow with the table is unbounded. Decoys, in both twins: take capped with Math.min, findMany by the primary key, by a capped list of keys and by an @unique field, every row of a table erlang.config.json names as small, and a count.",
+  "fixture": "L02",
+  "form": "prisma",
+  "judge": "rows",
+  "schema": "twin:prisma",
+  "scales": [
+    1,
+    10
+  ],
+  "n": 10,
+  "requests": [
+    {
+      "id": "listEvents",
+      "method": "GET",
+      "path": "/events",
+      "items": "response"
+    },
+    {
+      "id": "listCustomers",
+      "method": "GET",
+      "path": "/customers?limit=1000000",
+      "items": "response"
+    },
+    {
+      "id": "revenue",
+      "method": "GET",
+      "path": "/stats/revenue",
+      "items": null
+    },
+    {
+      "id": "products",
+      "method": "GET",
+      "path": "/products",
+      "items": "response"
+    },
+    {
+      "id": "topCustomers",
+      "method": "GET",
+      "path": "/reports/top-customers",
+      "items": "response"
+    },
+    {
+      "id": "listOrders",
+      "method": "GET",
+      "path": "/orders?limit=1000000",
+      "items": "response"
+    },
+    {
+      "id": "oneOrder",
+      "method": "GET",
+      "path": "/orders/1",
+      "items": null
+    },
+    {
+      "id": "ordersByIds",
+      "method": "GET",
+      "path": "/orders/batch?ids=1,2,3,4,5,6,7,8,9,10",
+      "items": "response"
+    },
+    {
+      "id": "customerByEmail",
+      "method": "GET",
+      "path": "/customers/by-email?email=c1%40example.test",
+      "items": "response"
+    },
+    {
+      "id": "settings",
+      "method": "GET",
+      "path": "/settings",
+      "items": "response"
+    },
+    {
+      "id": "orderCount",
+      "method": "GET",
+      "path": "/stats/orders",
+      "items": null
+    }
+  ],
+  "defects": [
+    {
+      "check": "unbounded-query",
+      "method": "GET",
+      "route": "/events",
+      "linked": true
+    },
+    {
+      "check": "unbounded-query",
+      "method": "GET",
+      "route": "/customers",
+      "linked": true
+    },
+    {
+      "check": "unbounded-query",
+      "method": "GET",
+      "route": "/stats/revenue",
+      "linked": true
+    },
+    {
+      "check": "unbounded-query",
+      "method": "GET",
+      "route": "/products",
+      "linked": true
+    },
+    {
+      "check": "unbounded-query",
+      "method": "GET",
+      "route": "/reports/top-customers",
+      "linked": true
+    }
+  ]
+}

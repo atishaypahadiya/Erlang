@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/atishaypahadiya/erlang/schema/finding-erlang.schema.json",
   "title": "finding/1, ERLANG's extension",
-  "description": "The erlang object of a finding/1 written by ERLANG. Fields are added as checks need them; see research/finding1-requirements.md. Every static finding carries a fix; a trace finding carries one when its statement or route is found in the source, and its counts in trace either way.",
+  "description": "The erlang object of a finding/1 written by ERLANG. Fields are added as checks need them; see research/finding1-requirements.md. Every static finding carries a fix; a trace finding carries one when its statement or route is found in the source, and its counts in trace either way; a load finding carries its measurements in load.",
   "type": "object",
   "required": [
     "strength"
@@ -511,7 +511,8 @@
         "zlib",
         "fs",
         "child_process",
-        "bcrypt"
+        "bcrypt",
+        "bcryptjs"
       ],
       "description": "blocking-work: what the synchronous call blocks on."
     },
@@ -522,6 +523,141 @@
         "chatty"
       ],
       "description": "oversized-payload: what makes the response or the page view too big: every column selected, no compression, or one call per item."
+    },
+    "load": {
+      "type": "object",
+      "description": "Load evidence (research/load-harness.md): one step of a load run at a fixed arrival rate (k6), repeated, this twin against the other. Every load finding carries the timing rule's verdict; an unreliable one is info.",
+      "required": [
+        "judge",
+        "step",
+        "rate",
+        "seconds",
+        "repeats",
+        "samples",
+        "timing"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "judge": {
+          "enum": [
+            "shedding",
+            "statements",
+            "bytes",
+            "latency",
+            "memory",
+            "attempts",
+            "inflight",
+            "pool-errors",
+            "throughput",
+            "first-request",
+            "connection-errors"
+          ]
+        },
+        "step": {
+          "type": "string",
+          "description": "The judged step's id in load.json."
+        },
+        "path": {
+          "type": "string"
+        },
+        "rate": {
+          "type": "number",
+          "description": "Requests started a second (open model)."
+        },
+        "seconds": {
+          "type": "number"
+        },
+        "repeats": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "samples": {
+          "type": "array",
+          "items": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "description": "The judged quantity in each repeat."
+        },
+        "twin": {
+          "type": "object",
+          "description": "This twin's medians over the repeats."
+        },
+        "other": {
+          "type": "object",
+          "description": "The other twin's medians over the repeats."
+        },
+        "timing": {
+          "type": "object",
+          "description": "The timing lock's verdict (lib/timing.js): reliable only with three or more samples, relative spread of 10% or less, and the one-minute load average below half the CPU count before and after.",
+          "required": [
+            "reliable",
+            "samples"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "reliable": {
+              "type": "boolean"
+            },
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "why": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "samples": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              }
+            },
+            "median": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "spread": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "before": {
+              "type": "object",
+              "properties": {
+                "load1": {
+                  "type": "number"
+                },
+                "cpus": {
+                  "type": "integer"
+                }
+              },
+              "additionalProperties": false
+            },
+            "after": {
+              "type": "object",
+              "properties": {
+                "load1": {
+                  "type": "number"
+                },
+                "cpus": {
+                  "type": "integer"
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        }
+      }
     }
   },
   "anyOf": [
@@ -535,6 +671,12 @@
       "title": "trace",
       "required": [
         "trace"
+      ]
+    },
+    {
+      "title": "load",
+      "required": [
+        "load"
       ]
     }
   ]

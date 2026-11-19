@@ -25,7 +25,7 @@
     {
       "id": "L09-2",
       "check": "blocking-work",
-      "title": "bcrypt's synchronous compare on every login",
+      "title": "bcryptjs's synchronous compare at cost 12 on every login",
       "severity": "warning",
       "where": {
         "file": "src/routes/accounts.js",
@@ -33,8 +33,8 @@
         "column": 34,
         "symbol": "login"
       },
-      "fix": "auto",
-      "fixedInClean": "bcrypt.compare, awaited"
+      "fix": "guided",
+      "fixedInClean": "crypto.scrypt on the worker pool, checked with timingSafeEqual; bcryptjs is pure JavaScript, so its asynchronous compare would still hash on the request thread"
     },
     {
       "id": "L09-3",
@@ -63,6 +63,20 @@
       },
       "fix": "guided",
       "fixedInClean": "readFile from node:fs/promises, awaited"
+    },
+    {
+      "id": "L09-5",
+      "check": "blocking-work",
+      "title": "bcryptjs's asynchronous hash at cost 12 on every password change: pure JavaScript, on the request thread in 100 ms slices",
+      "severity": "warning",
+      "where": {
+        "file": "src/routes/accounts.js",
+        "line": 25,
+        "column": 28,
+        "symbol": "changePassword"
+      },
+      "fix": "guided",
+      "fixedInClean": "crypto.scrypt on the worker pool"
     }
   ],
   "decoys": [
@@ -86,11 +100,11 @@
     },
     {
       "id": "L09-d3",
-      "title": "bcrypt's asynchronous hash",
+      "title": "bcryptjs's asynchronous hash at cost 4 (16 rounds), for a one-time code, through a const",
       "where": {
-        "file": "src/routes/accounts.js",
-        "line": 25,
-        "column": 28
+        "file": "src/routes/codes.js",
+        "line": 16,
+        "column": 26
       }
     },
     {
@@ -136,6 +150,15 @@
         "file": "scripts/seed.js",
         "line": 5,
         "column": 63
+      }
+    },
+    {
+      "id": "L09-d9",
+      "title": "bcryptjs's compare of a hash stored under a name the project hashes at cost 4, though it hashes passwords at cost 12",
+      "where": {
+        "file": "src/routes/codes.js",
+        "line": 24,
+        "column": 83
       }
     }
   ]
