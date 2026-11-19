@@ -57,3 +57,10 @@ Strength: SHOULD · Evidence: platform · Check: static, load
 Text responses (JSON, HTML, CSS, JavaScript) are compressed when the client offers it, with `Vary: Accept-Encoding` set. Formats that are already compressed (images, audio, video) are not compressed again.
 
 *Why:* compression can give a "size reduction of up to 70%" for some documents, and is recommended for everything except already-compressed formats [S33].
+
+### DAT-09 · A page loads its data in a fixed number of calls
+Strength: SHOULD · Evidence: practice · Check: static, trace, load
+
+The calls a page view makes to its own service do not grow with the number of items it shows. A list page gets what it shows for every item in one call, or one call per kind of data (`GET /products/prices?ids=...`), never one call per item.
+
+*Why:* Microsoft names "implementing a single logical operation as a series of HTTP requests" as a cause of the Chatty I/O antipattern, which "can result in too many network round trips", and its fix is to "reduce the number of I/O requests by packaging the data into larger, fewer requests" [S39]. It is DAT-01's N+1 one layer up, between the page and the service.

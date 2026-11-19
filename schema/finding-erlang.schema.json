@@ -345,6 +345,14 @@
         "bcrypt"
       ],
       "description": "blocking-work: what the synchronous call blocks on."
+    },
+    "payload": {
+      "enum": [
+        "select-star",
+        "uncompressed",
+        "chatty"
+      ],
+      "description": "oversized-payload: what makes the response or the page view too big: every column selected, no compression, or one call per item."
     }
   },
   "anyOf": [

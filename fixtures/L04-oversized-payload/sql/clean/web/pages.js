@@ -19,3 +19,22 @@ export async function productPage(api, id) {
 export async function status(api) {
   return (await api.get('/health')).ok;
 }
+
+// The counts badge: one call per kind, from a fixed list of two.
+export async function counts(api) {
+  const out = {};
+  for (const kind of ['new', 'sale']) out[kind] = (await api.get(`/products/count?kind=${kind}`)).n;
+  return out;
+}
+
+// Every product's name, a page at a time: one call per page, not per product.
+export async function allNames(api) {
+  const names = [];
+  let after = 0;
+  while (after !== null) {
+    const page = await api.get(`/products?after=${after}`);
+    names.push(...page.map((p) => p.name));
+    after = page.length ? page.at(-1).id : null;
+  }
+  return names;
+}

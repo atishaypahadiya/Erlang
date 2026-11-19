@@ -70,6 +70,7 @@ The Google chapters are from the 2016 first edition of *Site Reliability Enginee
 | S36 | node-postgres. "pg.Pool." https://node-postgres.com/apis/pool | Checked (docs/pages/apis/pool.mdx) | Waiting in a FIFO queue when every client is checked out; what an unreleased client does. |
 | S37 | Node.js. "Don't Block the Event Loop (or the Worker Pool)." Node.js Learn. https://nodejs.org/en/learn/asynchronous-work/dont-block-the-event-loop | Checked | What blocking is, the synchronous APIs a server should not use (the list is "reasonably complete as of Node.js v9"), and the denial-of-service risk. |
 | S38 | bcrypt (node.bcrypt.js). README, "Why is async mode recommended over sync mode?" https://github.com/kelektiv/node.bcrypt.js | Checked | The sync API blocks the event loop; the async API uses a thread pool. bcryptjs, the pure-JavaScript port, splits its asynchronous work into chunks instead (its README, https://github.com/dcodeIO/bcrypt.js). |
+| S39 | Microsoft. "Chatty I/O antipattern." Azure Architecture Center. https://learn.microsoft.com/en-us/azure/architecture/antipatterns/chatty-io/ | Checked (accessed 19 November 2026) | A logical operation made as many small HTTP requests or queries; the fix is fewer, larger requests. |
 | S33 | MDN Web Docs. "Compression in HTTP." https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/Compression | Checked | Up to 70% size reduction; what not to compress; `Vary: Accept-Encoding`. |
 
 Further studies used by the failure model are listed in `research/failure-model.md`.

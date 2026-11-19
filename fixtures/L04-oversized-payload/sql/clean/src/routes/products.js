@@ -22,6 +22,16 @@ export default async function products(app) {
     return (await pool.query('select id, name, price_cents, description from products where id = $1', [request.params.id])).rows[0] ?? null;
   });
 
+  // GET /admin/products/:id: one whole row, for the admin's edit form.
+  app.get('/admin/products/:id', async function adminProduct(request) {
+    return (await pool.query('select * from products where id = $1', [request.params.id])).rows[0] ?? null;
+  });
+
+  // GET /products/count: how many products there are.
+  app.get('/products/count', async function productCount() {
+    return (await pool.query('select count(*)::int as n from products')).rows[0];
+  });
+
   // GET /health: a liveness check, a few bytes.
   app.get('/health', async function health() {
     return { ok: true };

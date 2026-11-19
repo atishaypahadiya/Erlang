@@ -39,6 +39,7 @@ import * as retryPolicy from '../checks/retry-policy.js';
 import * as missingIndex from '../checks/missing-index.js';
 import * as poolExhaustion from '../checks/pool-exhaustion.js';
 import * as blockingWork from '../checks/blocking-work.js';
+import * as oversizedPayload from '../checks/oversized-payload.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 export const SPECIALIST = 'erlang';
@@ -85,7 +86,7 @@ export function uncommitted(root = ROOT) {
   return r.status === 1 ? true : r.status === 0 ? false : null;
 }
 
-export const CHECKS = [noTimeout, perItem, unboundedQuery, poolSizing, retryPolicy, missingIndex, poolExhaustion, blockingWork];
+export const CHECKS = [noTimeout, perItem, unboundedQuery, poolSizing, retryPolicy, missingIndex, poolExhaustion, blockingWork, oversizedPayload];
 const namesOf = (c) => c.CHECKS ?? [c.CHECK];
 
 // The subject as a path relative to the working directory, so a report never

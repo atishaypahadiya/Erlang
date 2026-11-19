@@ -1,0 +1,111 @@
+{
+  "note": "The fixture pair for oversized-payload (L04 in fixtures/PLAN.md), sql form, scanned with oversized-payload alone. Written by hand: each planted defect is fixed in place in the clean twin, line for line, and the twins differ in nothing else. A finding catches a defect when its check matches and its locations name the defect's file, line, column and symbol (every place, when the defect lists several), with the defect's severity. Decoys are in both twins; reporting one is a false positive. The same twins are run by the trace form (trace/). The fixes are guided. The clean twin registers @fastify/compress on the lines the guided fix names (after the imports, and after the app is made), selects the columns of the list on the same line, and replaces the per-item loop with one call to a new GET /products/prices, so its routes file is longer than the planted one. Paths are relative to each twin. Nothing here is installed or run.",
+  "check": "oversized-payload",
+  "checks": [
+    "oversized-payload"
+  ],
+  "plan": "L04",
+  "form": "sql",
+  "planted": "fixtures/L04-oversized-payload/sql/planted",
+  "clean": "fixtures/L04-oversized-payload/sql/clean",
+  "defects": [
+    {
+      "id": "L04-1",
+      "check": "oversized-payload",
+      "title": "SELECT * on the list route: every column, the 50 KB descriptions included, for 20 rows",
+      "severity": "warning",
+      "where": {
+        "file": "src/routes/products.js",
+        "line": 6,
+        "column": 19,
+        "symbol": "listProducts"
+      },
+      "fix": "guided",
+      "fixedInClean": "the columns the list shows"
+    },
+    {
+      "id": "L04-2",
+      "check": "oversized-payload",
+      "title": "No compression: every response is sent at full size",
+      "severity": "warning",
+      "where": {
+        "file": "src/server.js",
+        "line": 4,
+        "column": 20,
+        "symbol": "app"
+      },
+      "fix": "guided",
+      "fixedInClean": "@fastify/compress registered"
+    },
+    {
+      "id": "L04-3",
+      "check": "oversized-payload",
+      "title": "The list page calls GET /products/:id/price once per product",
+      "severity": "warning",
+      "where": {
+        "file": "web/pages.js",
+        "line": 8,
+        "column": 69,
+        "symbol": "productList"
+      },
+      "fix": "guided",
+      "fixedInClean": "one call to GET /products/prices"
+    }
+  ],
+  "decoys": [
+    {
+      "id": "L04-d1",
+      "title": "SELECT * of one row by its primary key",
+      "where": {
+        "file": "src/routes/products.js",
+        "line": 21,
+        "column": 19
+      }
+    },
+    {
+      "id": "L04-d2",
+      "title": "A count",
+      "where": {
+        "file": "src/routes/products.js",
+        "line": 26,
+        "column": 19
+      }
+    },
+    {
+      "id": "L04-d3",
+      "title": "SELECT * in an export script no request runs",
+      "where": {
+        "file": "scripts/export.js",
+        "line": 4,
+        "column": 24
+      }
+    },
+    {
+      "id": "L04-d4",
+      "title": "One call per kind, from a fixed list of two",
+      "where": {
+        "file": "web/pages.js",
+        "line": 26,
+        "column": 58
+      }
+    },
+    {
+      "id": "L04-d5",
+      "title": "Pagination: one call per page in a while loop, not per item",
+      "where": {
+        "file": "web/pages.js",
+        "line": 35,
+        "column": 24
+      }
+    },
+    {
+      "id": "L04-d6",
+      "title": "A product's own page: one call",
+      "where": {
+        "file": "web/pages.js",
+        "line": 14,
+        "column": 19
+      }
+    }
+  ]
+}

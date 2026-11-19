@@ -421,6 +421,40 @@ console.log('\nblocking-work: synchronous calls on the request thread');
   expectAutoFixHolds('  the auto fix for zlib.brotliCompressSync awaits brotliCompress', app("import zlib from 'node:zlib';", '  const z = zlib.brotliCompressSync(req.body.b, {});'), BW);
 }
 
+console.log('\noversized-payload: SELECT *, compression and calls per item');
+{
+  const OP = ['oversized-payload'];
+  const fastify = (q, extra = '') => `import Fastify from 'fastify';\nimport compress from '@fastify/compress';\nimport pg from 'pg';\nconst pool = new pg.Pool();\nexport const app = Fastify();\napp.register(compress);\napp.get('/x', async function x(request) {\n  return (await pool.query(${q})).rows;\n});\n${extra}`;
+  expectFindings('SELECT * of a list: a warning, guided', { 'app.js': fastify("'select * from events order by id limit 50'") }, [['warning', 'app.js', 8, 'guided']], OP);
+  expectFindings('SELECT e.* with a join: a warning', { 'app.js': fastify("'select e.*, u.name from events e join users u on u.id = e.user_id'") }, [['warning', 'app.js', 8, 'guided']], OP);
+  expectFindings('SELECT * by primary key, LIMIT 1 and count(*): nothing', { 'app.js': fastify("'select * from events where id = $1', [1]") + "app.get('/y', async () => (await pool.query('select * from events order by id desc limit 1')).rows);\napp.get('/z', async () => (await pool.query('select count(*) from events')).rows);\n" }, [], OP);
+  expectFindings('SELECT * by a column the migration makes unique: nothing', { 'app.js': fastify("'select * from users where email = $1', ['a']"), 'db/001.sql': 'create table users (id bigint primary key, email text unique);\n' }, [], OP);
+  {
+    const dir = subject({ 'app.js': fastify("'select * from countries'"), 'erlang.config.json': '{ "smallTables": ["countries"] }\n' });
+    ok('SELECT * on a table under smallTables: nothing', scanOf(dir, OP).findings.length === 0);
+  }
+  const express = (head, mw = '') => `import express from 'express';\n${head}\nconst app = express();\n${mw}app.get('/x', (req, res) => res.json({ ok: true }));\napp.listen(3000);\n`;
+  expectFindings('An Express app with no compression: a warning at express()', { 'app.js': express('') }, [['warning', 'app.js', 3, 'guided']], OP);
+  expectFindings('An Express app with compression(): nothing', { 'app.js': express("import compression from 'compression';", 'app.use(compression());\n') }, [], OP);
+  expectFindings('No compression in the app, but nginx compresses (gzip on): nothing', { 'app.js': express(''), 'deploy/nginx.conf': 'server {\n  gzip on;\n  location / { proxy_pass http://127.0.0.1:3000; }\n}\n' }, [], OP);
+  expectFindings('A Caddyfile with encode: nothing', { 'app.js': express(''), 'Caddyfile': 'example.com {\n  encode gzip zstd\n  reverse_proxy 127.0.0.1:3000\n}\n' }, [], OP);
+  expectFindings('nginx with gzip commented out still counts as uncompressed', { 'app.js': express(''), 'nginx.conf': 'server {\n  # gzip on;\n}\n' }, [['warning', 'app.js', 3, 'guided']], OP);
+  const page = (body) => ({ 'web/page.js': `export async function list(api) {\n  const items = await api.get('/items');\n${body}\n}\n` });
+  expectFindings('Promise.all over items.map with the item in the URL: a warning', page('  return Promise.all(items.map((i) => api.get(`/items/${i.id}/stock`)));'), [['warning', 'web/page.js', 3, 'guided']], OP);
+  expectFindings('fetch in a for-of over a list: a warning', page('  for (const i of items) await fetch(`/items/${i.id}`);'), [['warning', 'web/page.js', 3, 'guided']], OP);
+  expectFindings('A URL that does not use the item: nothing', page('  for (const i of items) await api.get(\'/ping\');'), [], OP);
+  expectFindings('An absolute URL to another service: not this check', page('  for (const i of items) await fetch(`https://other.example/items/${i.id}`);'), [], OP);
+  expectFindings('A literal list of three: nothing', page("  for (const k of ['a', 'b', 'c']) await api.get(`/items/count?kind=${k}`);"), [], OP);
+  {
+    const r = scanOf(subject({ 'job.js': "import pg from 'pg';\nconst pool = new pg.Pool();\nexport const all = () => pool.query('select * from events');\n" }), OP);
+    ok('No handler: SELECT * is info, unresolved', r.findings.length === 1 && r.findings[0].severity === 'info' && r.findings[0].erlang.unresolved === true, summary(r));
+  }
+  {
+    const r = scanOf(subject({ 'web/page.js': "export async function list(api) {\n  const rows = [];\n  for (const i of await api.get('/items')) rows.push(await api.get(`/items/${i.id}`));\n  return rows;\n}\n" }), OP);
+    ok('The guided fix names the loop, the list it fills and where that list is used', JSON.stringify(r.findings[0]?.erlang.fix.locations.map((l) => l.line)) === '[2,3,4]', JSON.stringify(r.findings[0]?.erlang.fix.locations));
+  }
+}
+
 console.log('\nShared rules: the timing lock and expected rows');
 {
   const calm = { load1: 1, cpus: 8 };
