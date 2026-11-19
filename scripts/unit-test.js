@@ -455,6 +455,27 @@ console.log('\noversized-payload: SELECT *, compression and calls per item');
   }
 }
 
+console.log('\nmemory-growth: module-level collections that only grow');
+{
+  const MG = ['memory-growth'];
+  const app = (decl, body, extra = {}) => ({ 'app.js': `import express from 'express';\nconst app = express();\n${decl}\napp.post('/x', (req, res) => {\n${body}\n  res.end();\n});\napp.listen(3000);\n`, ...extra });
+  const mg = (name, decl, body, want, extra) => expectFindings(name, app(decl, body, extra), want, MG);
+  mg('A Set added to per request: a warning, auto', 'const seen = new Set();', '  seen.add(req.body.id);', [['warning', 'app.js', 5, 'auto']]);
+  mg('An array unshifted per request: a warning, auto', 'const log = [];', '  log.unshift(req.body);', [['warning', 'app.js', 5, 'auto']]);
+  mg('An object with a computed key per request: a warning, guided', 'const byId = {};', '  byId[req.body.id] = req.body;', [['warning', 'app.js', 5, 'guided']]);
+  mg('An object whose keys are deleted somewhere: nothing', 'const byId = {};\nexport const forget = (id) => { delete byId[id]; };', '  byId[req.body.id] = req.body;', []);
+  mg('An array emptied by length = 0 somewhere: nothing', 'const log = [];\nexport const reset = () => { log.length = 0; };', '  log.push(req.body);', []);
+  mg('A variable assigned again: nothing', 'let log = [];\nsetInterval(() => { log = []; }, 60_000);', '  log.push(req.body);', []);
+  mg('A literal key: nothing', 'const counts = new Map();', "  counts.set('hits', (counts.get('hits') ?? 0) + 1);", []);
+  mg('A collection exported and grown in another file: a warning there', "import { seen } from './store.js';", '  seen.add(req.body.id);', [['warning', 'app.js', 5, 'auto']], { 'store.js': 'export const seen = new Set();\n' });
+  expectAutoFixHolds('  the auto fix for a Set drops its oldest value', app('const seen = new Set();', '  seen.add(req.body.id);'), MG);
+  expectAutoFixHolds('  the auto fix for unshift pops', app('const log = [];', '  log.unshift(req.body);'), MG);
+  {
+    const r = scanOf(subject({ 'job.js': 'const seen = new Set();\nexport function mark(id) { seen.add(id); }\n' }), MG);
+    ok('No handler: nothing reported, and the run data says why', r.findings.length === 0 && r.erlang.checks['memory-growth'].skipped.noHandlers === 1 && r.erlang.checks['memory-growth'].notes.some((x) => x.includes('not judged')), summary(r));
+  }
+}
+
 console.log('\nShared rules: the timing lock and expected rows');
 {
   const calm = { load1: 1, cpus: 8 };

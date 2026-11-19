@@ -1,0 +1,152 @@
+{
+  "note": "The fixture pair for memory-growth (L05 in fixtures/PLAN.md), scanned with memory-growth alone. Written by hand: each planted defect is fixed in place in the clean twin, line for line, and the twins differ in nothing else. A finding catches a defect when its check matches and its locations name the defect's file, line, column and symbol (every place, when the defect lists several), with the defect's severity. Decoys are in both twins; reporting one is a false positive. The auto fixes add a bound right after the add, so the clean twin, which uses lru-cache for the response cache and a bounded list for the audit trail, need not match them line for line; the guided fix for the session object names every line that uses it, and the clean twin changes exactly those. Paths are relative to each twin. Nothing here is installed or run.",
+  "check": "memory-growth",
+  "checks": [
+    "memory-growth"
+  ],
+  "plan": "L05",
+  "planted": "fixtures/L05-memory-growth/planted",
+  "clean": "fixtures/L05-memory-growth/clean",
+  "defects": [
+    {
+      "id": "L05-1",
+      "check": "memory-growth",
+      "title": "A response cache in a Map keyed by the full URL, never emptied",
+      "severity": "warning",
+      "where": [
+        {
+          "file": "src/routes/search.js",
+          "line": 17,
+          "column": 3,
+          "symbol": "searchProducts"
+        },
+        {
+          "file": "src/routes/search.js",
+          "line": 8,
+          "column": 7,
+          "symbol": "cache"
+        }
+      ],
+      "fix": "auto",
+      "fixedInClean": "an LRU bounded by entries and age"
+    },
+    {
+      "id": "L05-2",
+      "check": "memory-growth",
+      "title": "Every order appended to a module-level list, never trimmed",
+      "severity": "warning",
+      "where": [
+        {
+          "file": "src/routes/orders.js",
+          "line": 16,
+          "column": 3,
+          "symbol": "createOrder"
+        },
+        {
+          "file": "src/routes/orders.js",
+          "line": 7,
+          "column": 7,
+          "symbol": "recent"
+        }
+      ],
+      "fix": "auto",
+      "fixedInClean": "trimmed to the last 100"
+    },
+    {
+      "id": "L05-3",
+      "check": "memory-growth",
+      "title": "Sessions in a plain object, one entry per sign-in, never removed",
+      "severity": "warning",
+      "where": [
+        {
+          "file": "src/routes/sessions.js",
+          "line": 16,
+          "column": 3,
+          "symbol": "login"
+        },
+        {
+          "file": "src/routes/sessions.js",
+          "line": 8,
+          "column": 7,
+          "symbol": "active"
+        }
+      ],
+      "fix": "guided",
+      "fixedInClean": "an LRU bounded by entries and age"
+    }
+  ],
+  "decoys": [
+    {
+      "id": "L05-d1",
+      "title": "An lru-cache bounded by entries and age",
+      "where": {
+        "file": "src/routes/search.js",
+        "line": 24,
+        "column": 28
+      }
+    },
+    {
+      "id": "L05-d2",
+      "title": "A Map filled when the module loads and only read",
+      "where": {
+        "file": "src/routes/orders.js",
+        "line": 9,
+        "column": 7
+      }
+    },
+    {
+      "id": "L05-d3",
+      "title": "A Map written under fixed names",
+      "where": {
+        "file": "src/routes/orders.js",
+        "line": 17,
+        "column": 3
+      }
+    },
+    {
+      "id": "L05-d4",
+      "title": "A Map made per request",
+      "where": {
+        "file": "src/routes/orders.js",
+        "line": 30,
+        "column": 5
+      }
+    },
+    {
+      "id": "L05-d5",
+      "title": "A Map whose entries a timer deletes after an hour",
+      "where": {
+        "file": "src/routes/rates.js",
+        "line": 23,
+        "column": 3
+      }
+    },
+    {
+      "id": "L05-d6",
+      "title": "A Set cleared once it reaches 1,000",
+      "where": {
+        "file": "src/routes/rates.js",
+        "line": 21,
+        "column": 3
+      }
+    },
+    {
+      "id": "L05-d7",
+      "title": "A WeakMap keyed by the request",
+      "where": {
+        "file": "src/routes/rates.js",
+        "line": 22,
+        "column": 3
+      }
+    },
+    {
+      "id": "L05-d8",
+      "title": "A list filled by a script no request runs",
+      "where": {
+        "file": "scripts/report.js",
+        "line": 5,
+        "column": 115
+      }
+    }
+  ]
+}

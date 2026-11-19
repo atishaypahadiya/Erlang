@@ -1,0 +1,10 @@
+{
+  "name": "l05-shop",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "express": "5.2.1",
+    "lru-cache": "11.5.3",
+    "pg": "8.23.1"
+  }
+}
