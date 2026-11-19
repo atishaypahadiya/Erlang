@@ -208,6 +208,23 @@ Each form's `load/load.json` lists its steps (method, path, rate, seconds, the l
 
 **ITTEN's timing lock** is read before each step and every 5 seconds during it. A lock that appears mid-step stops k6; the step is discarded and the run judged again later. At the wait's limit the run stops with exit 75, naming the lock.
 
+**Judges.** `shedding` (L12): past the knee, the share of requests served in time, against the twin's share below it. `compare` (every other row): each judged step names one quantity, and a twin reports when its median over the repeats is at least the step's `ratio` times the other twin's and at least its `floor`:
+
+| Metric | The quantity, per step | Rows |
+|---|---|---|
+| `statements` | statements per request (pg_stat_statements) | L01a, L01b, L10 |
+| `bytes` | bytes on the wire per response, k6 offering gzip and br | L02, L04 |
+| `median`, `p90`, `p99` | latency of the requests served | L02, L03 |
+| `heap-growth` | heap kept per request, after a full collection before and after | L05 |
+| `attempts` | calls the stub received from one failing host, per request | L06 |
+| `stub-open` | calls held open at a hanging host, at most | L07 |
+| `failed` | share of requests that failed | L08 |
+| `late-share` | share not answered within `okMs`; with a `background` (a second route at its own rate), the finding is about the background route | L09 |
+| `max` | the slowest response, after a restart (`restart`) | L11 |
+| `connections` | connections open at the database, at most | L13 |
+
+A step's paths must start with a single `/` and resolve to the twin's own origin; anything else is refused.
+
 **Judging.** Each twin against the other, never against an absolute number. Every load finding goes through the timing rule: the judged quantity in each repeat (at least 3), a relative spread of 10% or less, and the one-minute load average below half the CPU count before every step and after it, "after" read once the harness's own load has stopped and the average has fallen (up to 120 s; docs/decisions.md, Q6). Otherwise the finding is `info`, `timing unreliable`, and never fails; a planted defect judged that way is reported as `SKIP`, not as missed. A finding that agrees with a static finding (check, rule, and the symbol or endpoint) is that finding, with `load` in its `detection` and the measurements in `erlang.load`; its fingerprint stays the static finding's, and never holds a measured value.
 
 **Output.** `dist/load/<id>/<form>/raw.json` (every step of every repeat: counts of requests served in time, late, refused and failed, latency percentiles, the twin's probes, the load average before and after), the k6 scripts and summaries, and `<twin>/report.json`, a report/1.

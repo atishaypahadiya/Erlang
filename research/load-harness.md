@@ -13,7 +13,7 @@ From `fixtures/PLAN.md` (Ground rules, Stack, Decisions) and the owner's rules:
 - **ITTEN's timing lock** (`lib/itten-lock.js`): read before each step, and every 5 seconds during it. A lock that appears mid-step stops k6, discards the step and reports it interrupted; at the wait's limit the run stops with exit 75, naming the lock.
 - **The timing rule, for every load finding.** Each judged quantity is measured at least 3 times, with a relative spread of 10% or less, and the one-minute load average below half the CPU count before and after. Otherwise the finding is `info`, reason `timing unreliable`, with the environment recorded, and never fails.
 - **PostgreSQL**: the trace harness's image, pinned by digest, a password made for each run, the container removed on exit.
-- **Where.** The full suite runs in CI. On the owner's Mac only a smoke run: one form, steps of at most 10 seconds at at most 50 requests a second, and never while ITTEN holds its lock.
+- **Where.** The full suite runs in CI. On the owner's Mac one form at a time, within the workstation caps (200 requests a second, 20 s a step, 600 s a run), and never while ITTEN holds its lock.
 
 ## Shape
 
@@ -49,6 +49,17 @@ Counts where a row has one, times only where it does not, and always planted aga
 | L11 | First-request latency after a restart against steady state |
 | L12 | Past the knee: the twin keeps goodput flat and refuses the excess quickly; the planted service's goodput falls and its p99 grows (CAP-02) |
 | L13 | Connection errors once the pools of several processes fill |
+
+## What each row's form judges, as built
+
+Counts wherever a row has one, since a count holds on a busy machine and a time does not:
+
+- L01a, L01b and L10 count statements per request; L10's "throughput against the twin" became statements per request, which is what a cache saves and does not depend on the machine.
+- L06 counts calls per request to the failing host. A retry with no wait (RTY-03) changes no count, so under load it is a decoy; the trace form judges it by its gaps.
+- L07 counts calls held open at the hanging host; L08, the share of requests that fail acquiring a connection; L13 compose, connections at the database.
+- L05 measures heap kept per request after a warm-up step, with keys the warm-up did not use.
+- Times remain where a row has nothing to count: L02's revenue total and L03's lookups (median), L09 (the share of a cheap route's requests late while a heavy route runs as a second k6 scenario), L11 (the slowest response after a restart).
+- L04 judges bytes on the wire; its call per product on the list page is counted per page view by the trace form. L08's leaks (STB-08) and L13's sum of pools across processes (L13-c1) stay with the trace form and the static check.
 
 ## The load average after a step
 

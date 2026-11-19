@@ -1,0 +1,93 @@
+{
+  "note": "Load form (research/load-harness.md) for L11: each step restarts the twin, then sends one route at 5 requests a second; the judged quantity is the slowest response. Work deferred to the first request (a lazily built table, a template compiled on first use, a client opened on demand) makes the first response, and those queued behind it, slow; work done at startup does not. A twin reports at five times the other's slowest response and at least 80 ms. The price and order routes start the same in both twins: the decoys. Each step runs at a fixed arrival rate (k6), each twin judged against the other over 3 repeats, every finding under the timing rule. defects are what the planted twin must report and the clean twin must not; every other judged step is a decoy, in both twins.",
+  "fixture": "L11",
+  "form": "express",
+  "judge": "compare",
+  "check": "cold-start",
+  "rule": "STB-10",
+  "scale": 1,
+  "repeats": 3,
+  "steps": [
+    {
+      "id": "region",
+      "method": "GET",
+      "path": "/regions/P123",
+      "route": "/regions/:postcode",
+      "restart": true,
+      "rate": 5,
+      "seconds": 5,
+      "metric": "max",
+      "ratio": 5,
+      "floor": 80
+    },
+    {
+      "id": "countries",
+      "method": "GET",
+      "path": "/checkout/countries",
+      "route": "/checkout/countries",
+      "restart": true,
+      "rate": 5,
+      "seconds": 5,
+      "metric": "max",
+      "ratio": 5,
+      "floor": 80
+    },
+    {
+      "id": "invoicePdf",
+      "method": "GET",
+      "path": "/invoices/1.pdf",
+      "route": "/invoices/:id.pdf",
+      "restart": true,
+      "rate": 5,
+      "seconds": 5,
+      "metric": "max",
+      "ratio": 5,
+      "floor": 80
+    },
+    {
+      "id": "price",
+      "method": "GET",
+      "path": "/prices/1",
+      "route": "/prices/:id",
+      "restart": true,
+      "rate": 5,
+      "seconds": 5,
+      "metric": "max",
+      "ratio": 5,
+      "floor": 80
+    },
+    {
+      "id": "createOrder",
+      "method": "POST",
+      "path": "/orders",
+      "route": "/orders",
+      "restart": true,
+      "rate": 5,
+      "seconds": 5,
+      "body": {},
+      "metric": "max",
+      "ratio": 5,
+      "floor": 80
+    }
+  ],
+  "defects": [
+    {
+      "check": "cold-start",
+      "rule": "STB-10",
+      "step": "region",
+      "linked": true
+    },
+    {
+      "check": "cold-start",
+      "rule": "STB-10",
+      "step": "countries",
+      "linked": true
+    },
+    {
+      "check": "cold-start",
+      "rule": "STB-10",
+      "step": "invoicePdf",
+      "linked": true
+    }
+  ]
+}

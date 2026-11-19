@@ -1,0 +1,103 @@
+{
+  "note": "Load form (research/load-harness.md) for L01a's sql twins, on the trace form's schema and seed at 10x (100 orders, order 1 with 100 items): statements per request over each step, from pg_stat_statements. A twin reports when it sends at least five times the statements per request the other does, and at least 10. Each step runs at a fixed arrival rate (k6), each twin judged against the other over 3 repeats, every finding under the timing rule. defects are what the planted twin must report and the clean twin must not; every other judged step is a decoy, in both twins.",
+  "fixture": "L01a",
+  "form": "sql",
+  "judge": "compare",
+  "check": "n-plus-one",
+  "rule": "DAT-01",
+  "scale": 10,
+  "repeats": 3,
+  "steps": [
+    {
+      "id": "listOrders",
+      "method": "GET",
+      "path": "/orders",
+      "rate": 20,
+      "seconds": 10,
+      "measure": [
+        "statements"
+      ],
+      "metric": "statements",
+      "ratio": 5,
+      "floor": 10
+    },
+    {
+      "id": "orderItems",
+      "method": "GET",
+      "path": "/orders/1/items",
+      "rate": 20,
+      "seconds": 10,
+      "measure": [
+        "statements"
+      ],
+      "metric": "statements",
+      "ratio": 5,
+      "floor": 10
+    },
+    {
+      "id": "lookupOrders",
+      "method": "POST",
+      "path": "/orders/lookup",
+      "body": {
+        "ids": {
+          "$repeat": "$n",
+          "item": "$i"
+        }
+      },
+      "rate": 20,
+      "seconds": 10,
+      "measure": [
+        "statements"
+      ],
+      "metric": "statements",
+      "ratio": 5,
+      "floor": 10
+    },
+    {
+      "id": "orderCustomers",
+      "method": "GET",
+      "path": "/orders/customers",
+      "rate": 20,
+      "seconds": 10,
+      "measure": [
+        "statements"
+      ],
+      "metric": "statements",
+      "ratio": 5,
+      "floor": 10
+    },
+    {
+      "id": "getSettings",
+      "method": "GET",
+      "path": "/settings",
+      "rate": 20,
+      "seconds": 10,
+      "measure": [
+        "statements"
+      ],
+      "metric": "statements",
+      "ratio": 5,
+      "floor": 10
+    }
+  ],
+  "defects": [
+    {
+      "check": "n-plus-one",
+      "rule": "DAT-01",
+      "step": "listOrders",
+      "linked": true
+    },
+    {
+      "check": "n-plus-one",
+      "rule": "DAT-01",
+      "step": "orderItems",
+      "linked": true
+    },
+    {
+      "check": "n-plus-one",
+      "rule": "DAT-01",
+      "step": "lookupOrders",
+      "linked": true
+    }
+  ]
+}

@@ -48,7 +48,7 @@ const SHED_GAP = 0.25;
 // metric, the median over the repeats, is at least the step's ratio (RATIO
 // by default) times the other twin's, and at least the step's floor.
 const RATIO = 1.5;
-const JUDGE_OF = { 'stub-open': 'inflight', failed: 'pool-errors', connections: 'connection-errors', p99: 'latency', median: 'latency', max: 'first-request', 'late-share': 'throughput', 'heap-growth': 'memory' };
+const JUDGE_OF = { 'stub-open': 'inflight', failed: 'pool-errors', connections: 'connection-errors', p99: 'latency', p90: 'latency', median: 'latency', max: 'first-request', 'late-share': 'throughput', 'heap-growth': 'memory' };
 const METRICS = {
   statements: { what: 'statements per request', of: (s) => (s.counts.requests ? (s.statements?.calls ?? 0) / s.counts.requests : 0), fmt: (x) => x.toFixed(1) },
   attempts: { what: 'calls to the failing host per request', of: (s, step) => (offered(s) ? (s.upstream ?? []).filter((u) => u.host === step.host).reduce((a, u) => a + u.calls, 0) / offered(s) : 0), fmt: (x) => x.toFixed(1) },
@@ -56,6 +56,7 @@ const METRICS = {
   'stub-open': { what: 'calls held open at the hanging host, at most', of: (s) => Math.max(0, ...s.samples.map((x) => (Number.isFinite(x['stub-open']) ? x['stub-open'] : 0))), fmt: (x) => String(Math.round(x)) },
   connections: { what: 'connections open at the database, at most', of: (s) => Math.max(0, ...s.samples.map((x) => (Number.isFinite(x.connections) ? x.connections : 0))), fmt: (x) => String(Math.round(x)) },
   p99: { what: 'p99 latency of the requests served, in ms', of: (s) => s.served?.p99Ms ?? 0, fmt: (x) => String(Math.round(x)) },
+  p90: { what: 'p90 latency of the requests served, in ms', of: (s) => s.served?.p90Ms ?? 0, fmt: (x) => String(Math.round(x)) },
   median: { what: 'median latency of the requests served, in ms', of: (s) => s.served?.medMs ?? 0, fmt: (x) => x.toFixed(1) },
   max: { what: 'slowest response, in ms', of: (s) => s.served?.maxMs ?? 0, fmt: (x) => String(Math.round(x)) },
   // Bytes on the wire per request (k6's data_received, headers included,
@@ -134,9 +135,13 @@ function judgeTwin(raw, twin) {
       const samples = runs.map((r) => Number(r.me.toFixed(4)));
       const timing = timingJudge({ samples, before: env.before, after: env.after });
       const s0 = stepOf(raw.repeats[0], twin, step.id);
-      const t = { check: step.check ?? spec.check, rule: step.rule ?? spec.rule, method: s0.method, route: s0.route ?? step.route, symbol: step.symbol ?? null };
-      const load = { judge: JUDGE_OF[step.metric] ?? step.metric, step: step.id, path: s0.path, rate: step.rate, seconds: step.seconds, repeats: runs.length, samples, twin: { [step.metric]: mine }, other: { [step.metric]: theirs }, timing: { ...timing, why: Array.isArray(timing.why) ? (timing.why.join('; ') || null) : timing.why ?? null } };
-      const message = `At ${fmt(step.rate)} requests a second for ${step.seconds} s${step.host ? `, with ${step.host} failing` : ''}, ${t.method} ${t.route} showed ${m.fmt(mine)} ${m.what}, against ${m.fmt(theirs)} for the twin without the defect (${step.because ?? t.rule}). Measured with k6 at a fixed arrival rate, ${runs.length} repeats.${timing.reliable ? '' : ` Not judged: ${REASON} (${load.timing.why}).`}`;
+      // With a background (L09), the finding is about the background route,
+      // whose work slowed the measured one.
+      const bg = step.background ?? null;
+      const about = bg ? { method: (bg.method ?? 'GET').toUpperCase(), route: bg.route ?? bg.path } : { method: s0.method, route: s0.route ?? step.route };
+      const t = { check: step.check ?? spec.check, rule: step.rule ?? spec.rule, ...about, symbol: step.symbol ?? null };
+      const load = { judge: step.judge ?? JUDGE_OF[step.metric] ?? step.metric, step: step.id, path: s0.path, rate: step.rate, seconds: step.seconds, repeats: runs.length, samples, twin: { [step.metric]: mine }, other: { [step.metric]: theirs }, timing: { ...timing, why: Array.isArray(timing.why) ? (timing.why.join('; ') || null) : timing.why ?? null } };
+      const message = `At ${fmt(step.rate)} requests a second for ${step.seconds} s${step.host ? `, with ${step.host} failing` : ''}${bg ? ` to ${s0.method} ${s0.route ?? step.route}, while ${t.method} ${t.route} ran at ${fmt(bg.rate)} a second,` : ''}, ${bg ? 'it' : `${t.method} ${t.route}`} showed ${m.fmt(mine)} ${m.what}, against ${m.fmt(theirs)} for the twin without the defect (${step.because ?? t.rule}). Measured with k6 at a fixed arrival rate, ${runs.length} repeats.${timing.reliable ? '' : ` Not judged: ${REASON} (${load.timing.why}).`}`;
       out.push(emit(t, statics, message, load, timing.reliable ? (step.severity ?? 'warning') : 'info'));
     }
   } else throw new Error(`unknown load judge ${spec.judge}`);

@@ -1,0 +1,130 @@
+{
+  "note": "Load form (research/load-harness.md) for L10: statements per request over each step (pg_stat_statements), a count rather than a time, so it holds on a busy machine. The planted twin reads the dashboard totals on every request where the clean twin reads them once a minute, reads the tax rate once per order line, and reads the currency setting on every quote. A twin reports at one and a half times the other's statements per request and at least 0.5. The per-category and per-customer totals, the refunds, the rebuild, the credit and the export check read the same in both twins: the decoys. Each step runs at a fixed arrival rate (k6), each twin judged against the other over 3 repeats, every finding under the timing rule. defects are what the planted twin must report and the clean twin must not; every other judged step is a decoy, in both twins.",
+  "fixture": "L10",
+  "form": "express",
+  "judge": "compare",
+  "check": "no-cache",
+  "rule": "DAT-06",
+  "scale": 1,
+  "repeats": 3,
+  "steps": [
+    {
+      "id": "orderTotals",
+      "method": "GET",
+      "path": "/stats",
+      "route": "/stats",
+      "measure": [
+        "statements"
+      ],
+      "rate": 10,
+      "seconds": 10,
+      "metric": "statements",
+      "ratio": 1.5,
+      "floor": 0.5
+    },
+    {
+      "id": "orderLines",
+      "method": "GET",
+      "path": "/orders/1/lines?region=eu",
+      "route": "/orders/:id/lines",
+      "measure": [
+        "statements"
+      ],
+      "rate": 10,
+      "seconds": 10,
+      "metric": "statements",
+      "ratio": 1.5,
+      "floor": 0.5
+    },
+    {
+      "id": "quote",
+      "method": "GET",
+      "path": "/checkout/quote?ids=1,2,3",
+      "route": "/checkout/quote",
+      "measure": [
+        "statements"
+      ],
+      "rate": 10,
+      "seconds": 10,
+      "metric": "statements",
+      "ratio": 1.5,
+      "floor": 0.5
+    },
+    {
+      "id": "categoryCount",
+      "method": "GET",
+      "path": "/stats/categories/1",
+      "route": "/stats/categories/:id",
+      "measure": [
+        "statements"
+      ],
+      "rate": 10,
+      "seconds": 10,
+      "metric": "statements",
+      "ratio": 1.5,
+      "floor": 0.5
+    },
+    {
+      "id": "customerOrders",
+      "method": "GET",
+      "path": "/stats/customers/1",
+      "route": "/stats/customers/:id",
+      "measure": [
+        "statements"
+      ],
+      "rate": 10,
+      "seconds": 10,
+      "metric": "statements",
+      "ratio": 1.5,
+      "floor": 0.5
+    },
+    {
+      "id": "refundTotals",
+      "method": "GET",
+      "path": "/stats/refunds",
+      "route": "/stats/refunds",
+      "measure": [
+        "statements"
+      ],
+      "rate": 10,
+      "seconds": 10,
+      "metric": "statements",
+      "ratio": 1.5,
+      "floor": 0.5
+    },
+    {
+      "id": "exportReady",
+      "method": "GET",
+      "path": "/exports/1/ready",
+      "route": "/exports/:id/ready",
+      "measure": [
+        "statements"
+      ],
+      "rate": 10,
+      "seconds": 10,
+      "metric": "statements",
+      "ratio": 1.5,
+      "floor": 0.5
+    }
+  ],
+  "defects": [
+    {
+      "check": "no-cache",
+      "rule": "DAT-06",
+      "step": "orderTotals",
+      "linked": true
+    },
+    {
+      "check": "no-cache",
+      "rule": "DAT-06",
+      "step": "orderLines",
+      "linked": true
+    },
+    {
+      "check": "no-cache",
+      "rule": "DAT-06",
+      "step": "quote",
+      "linked": true
+    }
+  ]
+}

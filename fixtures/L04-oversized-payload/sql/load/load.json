@@ -1,0 +1,73 @@
+{
+  "note": "Load form (research/load-harness.md) for L04's sql twins: bytes on the wire per response, k6 offering gzip and br as a browser does. The planted list sends every column of each product, uncompressed (DAT-04, DAT-08); the planted product page is uncompressed (DAT-08). A twin reports at twice the other's bytes and at least 2 kB. The count and the health check are small in both twins: the decoys. The list page's call per product (DAT-01) is counted per page view by the trace form; under load it would only multiply the requests. Each step runs at a fixed arrival rate (k6), each twin judged against the other over 3 repeats, every finding under the timing rule. defects are what the planted twin must report and the clean twin must not; every other judged step is a decoy, in both twins.",
+  "fixture": "L04",
+  "form": "sql",
+  "judge": "compare",
+  "check": "oversized-payload",
+  "scale": 1,
+  "repeats": 3,
+  "steps": [
+    {
+      "id": "products",
+      "method": "GET",
+      "path": "/products",
+      "route": "/products",
+      "rule": "DAT-04",
+      "rate": 10,
+      "seconds": 10,
+      "metric": "bytes",
+      "ratio": 2,
+      "floor": 2000
+    },
+    {
+      "id": "product",
+      "method": "GET",
+      "path": "/products/1",
+      "route": "/products/:id",
+      "rule": "DAT-08",
+      "rate": 10,
+      "seconds": 10,
+      "metric": "bytes",
+      "ratio": 2,
+      "floor": 2000
+    },
+    {
+      "id": "productCount",
+      "method": "GET",
+      "path": "/products/count",
+      "route": "/products/count",
+      "rule": "DAT-04",
+      "rate": 10,
+      "seconds": 10,
+      "metric": "bytes",
+      "ratio": 2,
+      "floor": 2000
+    },
+    {
+      "id": "health",
+      "method": "GET",
+      "path": "/health",
+      "route": "/health",
+      "rule": "DAT-08",
+      "rate": 10,
+      "seconds": 10,
+      "metric": "bytes",
+      "ratio": 2,
+      "floor": 2000
+    }
+  ],
+  "defects": [
+    {
+      "check": "oversized-payload",
+      "rule": "DAT-04",
+      "step": "products",
+      "linked": false
+    },
+    {
+      "check": "oversized-payload",
+      "rule": "DAT-08",
+      "step": "product",
+      "linked": false
+    }
+  ]
+}

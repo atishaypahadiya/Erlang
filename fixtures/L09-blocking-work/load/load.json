@@ -1,0 +1,119 @@
+{
+  "note": "Load form (research/load-harness.md) for L09: a cheap request (an avatar, about 1 ms) at 20 a second while a second scenario sends one route at a time at its own rate. Work on the main thread holds up every other request; work off it does not. The judged quantity is the share of avatar requests not answered within 100 ms. A twin reports at three times the other's share and at least 30%. The one-time codes hash with bcryptjs at cost 4 in both twins: the decoy. Each step runs at a fixed arrival rate (k6), each twin judged against the other over 3 repeats, every finding under the timing rule. defects are what the planted twin must report and the clean twin must not; every other judged step is a decoy, in both twins.",
+  "fixture": "L09",
+  "form": "express",
+  "judge": "compare",
+  "check": "blocking-work",
+  "rule": "OVL-12",
+  "scale": 1,
+  "repeats": 3,
+  "steps": [
+    {
+      "id": "signup",
+      "method": "GET",
+      "path": "/avatars/1",
+      "route": "/avatars/:id",
+      "okMs": 100,
+      "rate": 20,
+      "seconds": 10,
+      "background": {
+        "method": "POST",
+        "path": "/signup",
+        "route": "/signup",
+        "body": {
+          "email": "u$i@example.test",
+          "password": "correct horse"
+        },
+        "rate": 8
+      },
+      "metric": "late-share",
+      "judge": "latency",
+      "ratio": 3,
+      "floor": 0.3
+    },
+    {
+      "id": "login",
+      "method": "GET",
+      "path": "/avatars/1",
+      "route": "/avatars/:id",
+      "okMs": 100,
+      "rate": 20,
+      "seconds": 10,
+      "background": {
+        "method": "POST",
+        "path": "/login",
+        "route": "/login",
+        "body": {
+          "email": "old@example.test",
+          "password": "correct horse"
+        },
+        "rate": 5
+      },
+      "metric": "late-share",
+      "judge": "latency",
+      "ratio": 3,
+      "floor": 0.3
+    },
+    {
+      "id": "export",
+      "method": "GET",
+      "path": "/avatars/1",
+      "route": "/avatars/:id",
+      "okMs": 100,
+      "rate": 20,
+      "seconds": 10,
+      "background": {
+        "method": "GET",
+        "path": "/export",
+        "route": "/export",
+        "rate": 6
+      },
+      "metric": "late-share",
+      "judge": "latency",
+      "ratio": 3,
+      "floor": 0.3
+    },
+    {
+      "id": "codes",
+      "method": "GET",
+      "path": "/avatars/1",
+      "route": "/avatars/:id",
+      "okMs": 100,
+      "rate": 20,
+      "seconds": 10,
+      "background": {
+        "method": "POST",
+        "path": "/codes",
+        "route": "/codes",
+        "body": {
+          "email": "old@example.test"
+        },
+        "rate": 20
+      },
+      "metric": "late-share",
+      "judge": "latency",
+      "ratio": 3,
+      "floor": 0.3
+    }
+  ],
+  "defects": [
+    {
+      "check": "blocking-work",
+      "rule": "OVL-12",
+      "step": "signup",
+      "linked": true
+    },
+    {
+      "check": "blocking-work",
+      "rule": "OVL-12",
+      "step": "login",
+      "linked": true
+    },
+    {
+      "check": "blocking-work",
+      "rule": "OVL-12",
+      "step": "export",
+      "linked": true
+    }
+  ]
+}

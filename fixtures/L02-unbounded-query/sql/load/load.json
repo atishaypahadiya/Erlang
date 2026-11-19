@@ -1,0 +1,119 @@
+{
+  "note": "Load form (research/load-harness.md) for L02's sql twins at 10x data (100,000 events, 10,000 customers and products, 50,000 paid orders): bytes on the wire per response for the listings, and the median latency of the revenue total, which the planted twin sums in the handler after fetching every paid order (its response is one number, so its bytes do not differ). A listing reports at five times the other twin's bytes and at least 100 kB; the total at three times its median latency and at least 10 ms. The order lookups, the settings and the order count are bounded in both twins: the decoys. Each step runs at a fixed arrival rate (k6), each twin judged against the other over 3 repeats, every finding under the timing rule. defects are what the planted twin must report and the clean twin must not; every other judged step is a decoy, in both twins.",
+  "fixture": "L02",
+  "form": "sql",
+  "judge": "compare",
+  "check": "unbounded-query",
+  "rule": "STB-04",
+  "scale": 10,
+  "repeats": 3,
+  "steps": [
+    {
+      "id": "listEvents",
+      "method": "GET",
+      "path": "/events",
+      "route": "/events",
+      "rate": 2,
+      "seconds": 10,
+      "timeoutMs": 10000,
+      "metric": "bytes",
+      "ratio": 5,
+      "floor": 100000
+    },
+    {
+      "id": "listCustomers",
+      "method": "GET",
+      "path": "/customers?limit=1000000",
+      "route": "/customers",
+      "rate": 2,
+      "seconds": 10,
+      "timeoutMs": 10000,
+      "metric": "bytes",
+      "ratio": 5,
+      "floor": 100000
+    },
+    {
+      "id": "products",
+      "method": "GET",
+      "path": "/products",
+      "route": "/products",
+      "rate": 2,
+      "seconds": 10,
+      "timeoutMs": 10000,
+      "metric": "bytes",
+      "ratio": 5,
+      "floor": 100000
+    },
+    {
+      "id": "revenue",
+      "method": "GET",
+      "path": "/stats/revenue",
+      "route": "/stats/revenue",
+      "rate": 5,
+      "seconds": 10,
+      "timeoutMs": 10000,
+      "metric": "median",
+      "ratio": 3,
+      "floor": 10
+    },
+    {
+      "id": "oneOrder",
+      "method": "GET",
+      "path": "/orders/1",
+      "route": "/orders/:id",
+      "rate": 5,
+      "seconds": 10,
+      "metric": "bytes",
+      "ratio": 5,
+      "floor": 100000
+    },
+    {
+      "id": "settings",
+      "method": "GET",
+      "path": "/settings",
+      "route": "/settings",
+      "rate": 5,
+      "seconds": 10,
+      "metric": "bytes",
+      "ratio": 5,
+      "floor": 100000
+    },
+    {
+      "id": "orderCount",
+      "method": "GET",
+      "path": "/stats/orders",
+      "route": "/stats/orders",
+      "rate": 5,
+      "seconds": 10,
+      "metric": "median",
+      "ratio": 3,
+      "floor": 10
+    }
+  ],
+  "defects": [
+    {
+      "check": "unbounded-query",
+      "rule": "STB-04",
+      "step": "listEvents",
+      "linked": true
+    },
+    {
+      "check": "unbounded-query",
+      "rule": "STB-04",
+      "step": "listCustomers",
+      "linked": true
+    },
+    {
+      "check": "unbounded-query",
+      "rule": "STB-04",
+      "step": "products",
+      "linked": true
+    },
+    {
+      "check": "unbounded-query",
+      "rule": "STB-04",
+      "step": "revenue",
+      "linked": true
+    }
+  ]
+}

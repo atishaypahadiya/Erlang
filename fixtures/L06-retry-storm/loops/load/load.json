@@ -1,0 +1,105 @@
+{
+  "note": "Load form (research/load-harness.md) for L06's loops twins: one host failing per step, the calls the stub receives from that host's caller counted per user request. A twin reports when it makes at least one and a half times the other's calls per request, and at least 2. The fraud host's caller retries 503 until the request is abandoned (RTY-01), and the tax host's retries a 404 (RTY-06); the accounts host's caller waits no time between its retries (RTY-03), which changes no count, so under load it is a decoy: the twins make the same calls. The fraud step runs last and the next repeat starts a fresh twin, since its abandoned requests keep retrying. Each step runs at a fixed arrival rate (k6), each twin judged against the other over 3 repeats, every finding under the timing rule. defects are what the planted twin must report and the clean twin must not; every other judged step is a decoy, in both twins.",
+  "fixture": "L06",
+  "form": "loops",
+  "judge": "compare",
+  "check": "retry-policy",
+  "scale": 1,
+  "repeats": 3,
+  "steps": [
+    {
+      "id": "accounts",
+      "method": "GET",
+      "path": "/home/1",
+      "route": "/home/:id",
+      "upstream": {
+        "hosts": {
+          "accounts.test": {
+            "status": 503
+          }
+        }
+      },
+      "rate": 10,
+      "seconds": 10,
+      "timeoutMs": 15000,
+      "metric": "attempts",
+      "host": "accounts.test",
+      "rule": "RTY-03",
+      "symbol": "profile",
+      "ratio": 1.5,
+      "floor": 2
+    },
+    {
+      "id": "tax",
+      "method": "POST",
+      "path": "/orders",
+      "route": "/orders",
+      "body": {
+        "zip": "1000",
+        "skus": [
+          "a",
+          "b"
+        ]
+      },
+      "upstream": {
+        "hosts": {
+          "tax.test": {
+            "status": 404
+          }
+        }
+      },
+      "rate": 10,
+      "seconds": 10,
+      "timeoutMs": 15000,
+      "metric": "attempts",
+      "host": "tax.test",
+      "rule": "RTY-06",
+      "symbol": "tax",
+      "ratio": 1.5,
+      "floor": 2
+    },
+    {
+      "id": "fraud",
+      "method": "POST",
+      "path": "/orders",
+      "route": "/orders",
+      "body": {
+        "zip": "1000",
+        "skus": [
+          "a",
+          "b"
+        ]
+      },
+      "upstream": {
+        "hosts": {
+          "fraud.test": {
+            "status": 503
+          }
+        }
+      },
+      "rate": 10,
+      "seconds": 15,
+      "timeoutMs": 8000,
+      "metric": "attempts",
+      "host": "fraud.test",
+      "rule": "RTY-01",
+      "symbol": "fraudScore",
+      "ratio": 1.5,
+      "floor": 2
+    }
+  ],
+  "defects": [
+    {
+      "check": "retry-policy",
+      "rule": "RTY-06",
+      "step": "tax",
+      "linked": true
+    },
+    {
+      "check": "retry-policy",
+      "rule": "RTY-01",
+      "step": "fraud",
+      "linked": true
+    }
+  ]
+}

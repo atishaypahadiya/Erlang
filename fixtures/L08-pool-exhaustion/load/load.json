@@ -1,0 +1,80 @@
+{
+  "note": "Load form (research/load-harness.md) for L08: the twins' pool holds 5 connections and waits 2 s for one (src/db.js), and the payment and warehouse stubs answer in 500 ms. At 20 requests a second a handler that holds its connection across that call needs 10 at once, so requests fail acquiring one; a handler that takes its connection after the call holds it for milliseconds. A twin reports when at least 10% of its requests fail, and at least one and a half times the other's share. The share that failed is judged on the two routes that call out (STB-09); reading an order, which calls nothing, is the decoy. L08's leaks (STB-08, a connection never returned on an error path) are confirmed by the trace; a load step after one would only measure the leak's aftermath. Each step runs at a fixed arrival rate (k6), each twin judged against the other over 3 repeats, every finding under the timing rule. defects are what the planted twin must report and the clean twin must not; every other judged step is a decoy, in both twins.",
+  "fixture": "L08",
+  "form": "fastify",
+  "judge": "compare",
+  "check": "pool-exhaustion",
+  "rule": "STB-09",
+  "scale": 1,
+  "repeats": 3,
+  "steps": [
+    {
+      "id": "getOrder",
+      "method": "GET",
+      "path": "/orders/1",
+      "route": "/orders/:id",
+      "rate": 20,
+      "seconds": 10,
+      "timeoutMs": 5000,
+      "metric": "failed",
+      "ratio": 1.5,
+      "floor": 0.1
+    },
+    {
+      "id": "payOrder",
+      "method": "POST",
+      "path": "/orders/1/pay",
+      "route": "/orders/:id/pay",
+      "body": {
+        "amount": 100
+      },
+      "upstream": {
+        "status": 200,
+        "body": {
+          "id": "ch_1"
+        },
+        "delayMs": 500
+      },
+      "rate": 20,
+      "seconds": 10,
+      "timeoutMs": 5000,
+      "metric": "failed",
+      "ratio": 1.5,
+      "floor": 0.1
+    },
+    {
+      "id": "shipOrder",
+      "method": "POST",
+      "path": "/orders/2/ship",
+      "route": "/orders/:id/ship",
+      "upstream": {
+        "status": 200,
+        "body": {
+          "id": "res_1"
+        },
+        "delayMs": 500
+      },
+      "rate": 20,
+      "seconds": 10,
+      "timeoutMs": 5000,
+      "metric": "failed",
+      "ratio": 1.5,
+      "floor": 0.1,
+      "restart": true
+    }
+  ],
+  "defects": [
+    {
+      "check": "pool-exhaustion",
+      "rule": "STB-09",
+      "step": "payOrder",
+      "linked": true
+    },
+    {
+      "check": "pool-exhaustion",
+      "rule": "STB-09",
+      "step": "shipOrder",
+      "linked": true
+    }
+  ]
+}

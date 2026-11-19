@@ -1,0 +1,111 @@
+{
+  "note": "Load form (research/load-harness.md) for L05: heap kept per request, after a full collection before and after each step. Each judged route first gets a warm-up step (pools, compiled code and the first cache entries grow both twins' heaps by several kB a request), then the measured step, with keys the warm-up did not use (k6 numbers each step's requests from 1). A twin reports at three times the other's bytes kept per request and at least 50. The bounded suggestion cache and the order lines are the decoys. Each step runs at a fixed arrival rate (k6), each twin judged against the other over 3 repeats, every finding under the timing rule. defects are what the planted twin must report and the clean twin must not; every other judged step is a decoy, in both twins.",
+  "fixture": "L05",
+  "form": "express",
+  "judge": "compare",
+  "check": "memory-growth",
+  "rule": "STB-05",
+  "scale": 1,
+  "repeats": 3,
+  "steps": [
+    {
+      "id": "searchWarm",
+      "method": "GET",
+      "path": "/search?q=a&page=$i",
+      "rate": 100,
+      "seconds": 10
+    },
+    {
+      "id": "searchProducts",
+      "method": "GET",
+      "path": "/search?q=b&page=$i",
+      "route": "/search",
+      "measure": [
+        "memory"
+      ],
+      "rate": 100,
+      "seconds": 15,
+      "metric": "heap-growth",
+      "ratio": 3,
+      "floor": 50
+    },
+    {
+      "id": "suggestWarm",
+      "method": "GET",
+      "path": "/suggest?q=w$i",
+      "rate": 100,
+      "seconds": 5
+    },
+    {
+      "id": "suggest",
+      "method": "GET",
+      "path": "/suggest?q=p$i",
+      "route": "/suggest",
+      "measure": [
+        "memory"
+      ],
+      "rate": 100,
+      "seconds": 15,
+      "metric": "heap-growth",
+      "ratio": 3,
+      "floor": 50
+    },
+    {
+      "id": "ordersWarm",
+      "method": "POST",
+      "path": "/orders",
+      "body": {
+        "total": "$i",
+        "currency": "EUR"
+      },
+      "rate": 100,
+      "seconds": 5
+    },
+    {
+      "id": "createOrder",
+      "method": "POST",
+      "path": "/orders",
+      "route": "/orders",
+      "body": {
+        "total": "$i",
+        "currency": "EUR"
+      },
+      "measure": [
+        "memory"
+      ],
+      "rate": 150,
+      "seconds": 20,
+      "metric": "heap-growth",
+      "ratio": 3,
+      "floor": 50
+    },
+    {
+      "id": "orderLines",
+      "method": "GET",
+      "path": "/orders/1/lines?k=$i",
+      "route": "/orders/:id/lines",
+      "measure": [
+        "memory"
+      ],
+      "rate": 50,
+      "seconds": 10,
+      "metric": "heap-growth",
+      "ratio": 3,
+      "floor": 50
+    }
+  ],
+  "defects": [
+    {
+      "check": "memory-growth",
+      "rule": "STB-05",
+      "step": "searchProducts",
+      "linked": true
+    },
+    {
+      "check": "memory-growth",
+      "rule": "STB-05",
+      "step": "createOrder",
+      "linked": true
+    }
+  ]
+}

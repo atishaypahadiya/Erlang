@@ -1,0 +1,109 @@
+{
+  "note": "Load form (research/load-harness.md) for L03's sql twins at 10x data: the median latency of each lookup, at 10 requests a second. A lookup on a column with no index scans its table, and the scan grows with the data; with the index it reads a few pages. A twin reports at three times the other's median and at least 5 ms. The lookups by primary key, by email (unique in both twins), by user's orders (indexed in both) and on the small countries table are the decoys. Each step runs at a fixed arrival rate (k6), each twin judged against the other over 3 repeats, every finding under the timing rule. defects are what the planted twin must report and the clean twin must not; every other judged step is a decoy, in both twins.",
+  "fixture": "L03",
+  "form": "sql",
+  "judge": "compare",
+  "check": "missing-index",
+  "rule": "DAT-03",
+  "scale": 10,
+  "repeats": 3,
+  "steps": [
+    {
+      "id": "userEvents",
+      "method": "GET",
+      "path": "/users/7/events",
+      "route": "/users/:id/events",
+      "rate": 10,
+      "seconds": 10,
+      "metric": "median",
+      "ratio": 3,
+      "floor": 5
+    },
+    {
+      "id": "orderItems",
+      "method": "GET",
+      "path": "/orders/7/items",
+      "route": "/orders/:id/items",
+      "rate": 10,
+      "seconds": 10,
+      "metric": "median",
+      "ratio": 3,
+      "floor": 5
+    },
+    {
+      "id": "recentOrders",
+      "method": "GET",
+      "path": "/orders/recent?since=2026-10-01T00:00:00Z",
+      "route": "/orders/recent",
+      "rate": 10,
+      "seconds": 10,
+      "metric": "median",
+      "ratio": 3,
+      "floor": 5
+    },
+    {
+      "id": "oneUser",
+      "method": "GET",
+      "path": "/users/7",
+      "route": "/users/:id",
+      "rate": 10,
+      "seconds": 10,
+      "metric": "median",
+      "ratio": 3,
+      "floor": 5
+    },
+    {
+      "id": "userByEmail",
+      "method": "GET",
+      "path": "/users/by-email?email=u7@example.test",
+      "route": "/users/by-email",
+      "rate": 10,
+      "seconds": 10,
+      "metric": "median",
+      "ratio": 3,
+      "floor": 5
+    },
+    {
+      "id": "userOrders",
+      "method": "GET",
+      "path": "/users/7/orders",
+      "route": "/users/:id/orders",
+      "rate": 10,
+      "seconds": 10,
+      "metric": "median",
+      "ratio": 3,
+      "floor": 5
+    },
+    {
+      "id": "countryByName",
+      "method": "GET",
+      "path": "/countries/Country%207",
+      "route": "/countries/:name",
+      "rate": 10,
+      "seconds": 10,
+      "metric": "median",
+      "ratio": 3,
+      "floor": 5
+    }
+  ],
+  "defects": [
+    {
+      "check": "missing-index",
+      "rule": "DAT-03",
+      "step": "userEvents",
+      "linked": true
+    },
+    {
+      "check": "missing-index",
+      "rule": "DAT-03",
+      "step": "orderItems",
+      "linked": true
+    },
+    {
+      "check": "missing-index",
+      "rule": "DAT-03",
+      "step": "recentOrders",
+      "linked": true
+    }
+  ]
+}

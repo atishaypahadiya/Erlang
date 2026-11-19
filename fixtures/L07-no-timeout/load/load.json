@@ -1,0 +1,59 @@
+{
+  "note": "Load form (research/load-harness.md) for L07, through the trace form's driver (trace/overlay/trace-driver.js, one route per library function), with the host each function calls never answering. The stub counts the calls held open, each second: a call with no deadline stays open for as long as the host hangs, so they pile up with every request; one with a deadline (3 s for the quotes, in the clean twin) is cut off, and at 10 requests a second at most about 30 are open. A twin reports when it holds at least three times the other's open calls, and at least 60. k6 gives up on each request after 4 s, so requests in flight stay bounded on the client side; the calls the twin left open are what is counted. getQuoteHistory has a deadline in both twins: the decoy. Each step runs at a fixed arrival rate (k6), each twin judged against the other over 3 repeats, every finding under the timing rule. defects are what the planted twin must report and the clean twin must not; every other judged step is a decoy, in both twins.",
+  "fixture": "L07",
+  "form": "library",
+  "judge": "compare",
+  "check": "no-timeout",
+  "rule": "TMO-01",
+  "scale": 1,
+  "repeats": 3,
+  "steps": [
+    {
+      "id": "getQuoteHistory",
+      "method": "GET",
+      "path": "/call/getQuoteHistory",
+      "route": "/call/getQuoteHistory",
+      "symbol": "getQuoteHistory",
+      "upstream": {
+        "hang": true
+      },
+      "rate": 10,
+      "seconds": 15,
+      "timeoutMs": 4000,
+      "probes": [
+        "stub-open"
+      ],
+      "metric": "stub-open",
+      "ratio": 3,
+      "floor": 60
+    },
+    {
+      "id": "getQuote",
+      "method": "GET",
+      "path": "/call/getQuote",
+      "route": "/call/getQuote",
+      "symbol": "getQuote",
+      "upstream": {
+        "hang": true
+      },
+      "rate": 10,
+      "seconds": 15,
+      "timeoutMs": 4000,
+      "probes": [
+        "stub-open"
+      ],
+      "metric": "stub-open",
+      "ratio": 3,
+      "floor": 60,
+      "restart": true
+    }
+  ],
+  "defects": [
+    {
+      "check": "no-timeout",
+      "rule": "TMO-01",
+      "step": "getQuote",
+      "linked": true
+    }
+  ]
+}
