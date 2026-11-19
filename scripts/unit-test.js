@@ -7,7 +7,7 @@
 //
 // Usage: node scripts/unit-test.js           exit 0 when every case holds
 
-import { writeFileSync, mkdirSync, rmSync, readFileSync, cpSync, existsSync, symlinkSync } from 'node:fs';
+import { writeFileSync, mkdirSync, rmSync, readFileSync, cpSync, existsSync, symlinkSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { scan } from '../bin/erlang.js';
@@ -15,6 +15,7 @@ import { apply, syntaxErrors, fileOf } from '../lib/fix.js';
 import { describe, Plain } from '../lib/isolate.js';
 import * as TJ from '../lib/trace-judge.js';
 import * as TIMING from '../lib/timing.js';
+import * as LOCK from '../lib/itten-lock.js';
 import { applyExpected } from './fixture-test.js';
 import { score } from '../core/fixture-score.js';
 
@@ -139,6 +140,45 @@ expectFindings('fetch(u,) with a trailing comma: guided, not edited', { 'a.js': 
   ok('apply refuses a guided fix', /only auto fixes/.test(threw));
   try { threw = ''; apply(OUT, [{ kind: 'auto', edits: [{ file: 'dist/a.js', line: 1, column: 1, length: 0, replace: 'x' }] }]); } catch (e) { threw = e.message; }
   ok('apply refuses an edit to build output', /build output/.test(threw));
+}
+
+console.log('\nITTEN\'s timing lock (honoured, never written)');
+{
+  const dir = join(OUT, 'itten-locks');
+  rmSync(dir, { recursive: true, force: true });
+  const env = { ITTEN_LOCK_DIR: dir, XDG_STATE_HOME: '/nowhere', HOME: '/nowhere' };
+  ok('lockDir: $ITTEN_LOCK_DIR first, then $XDG_STATE_HOME/itten/locks, then $HOME/.local/state/itten/locks', LOCK.lockDir(env) === dir && LOCK.lockDir({ XDG_STATE_HOME: '/x', HOME: '/h' }) === '/x/itten/locks' && LOCK.lockDir({ HOME: '/h' }) === '/h/.local/state/itten/locks');
+  ok('a missing directory means no locks', LOCK.locks({ env }).length === 0);
+  mkdirSync(dir, { recursive: true });
+  const now = Date.parse('2026-11-19T12:00:00Z');
+  const lock = (o) => JSON.stringify({ format: LOCK.FORMAT, pid: 4242, phase: 'benchmark', taken: '2026-11-19T11:59:00Z', expires: '2026-11-19T12:10:00Z', project: 'shop', ...o });
+  const files = {
+    'timing-1.json': lock({}),
+    'timing-2.json': lock({ pid: 999999 }),
+    'timing-3.json': lock({ expires: '2026-11-19T12:00:00Z' }),
+    'timing-4.json': '{ not json',
+    'timing-5.json': lock({ format: 'itten-timing-lock/2' }),
+    'timing-x.json': lock({}),
+    'other.json': lock({}),
+  };
+  for (const [f, t] of Object.entries(files)) writeFileSync(join(dir, f), t);
+  const before = Object.fromEntries(Object.keys(files).map((f) => [f, readFileSync(join(dir, f), 'utf8')]));
+  const isAlive = (pid) => pid === 4242;
+  const seen = Object.fromEntries(LOCK.locks({ env, now, isAlive }).map((l) => [l.file.split('/').pop(), l.state]));
+  ok('only timing-<digits>.json are locks', Object.keys(seen).sort().join() === 'timing-1.json,timing-2.json,timing-3.json,timing-4.json,timing-5.json', JSON.stringify(seen));
+  ok('active: parses, the format matches, the pid is alive, now before expires', seen['timing-1.json'] === 'active');
+  ok('stale: the pid is dead', seen['timing-2.json'] === 'stale');
+  ok('stale: now at expires', seen['timing-3.json'] === 'stale');
+  ok('a file that cannot be parsed counts as active', seen['timing-4.json'] === 'active');
+  ok('another format is not made active by the rule (docs/decisions.md, Q5)', seen['timing-5.json'] === 'other');
+  ok('describe names the file, phase, project, pid and expiry', /timing-1\.json: ITTEN benchmark run of shop, pid 4242, until 2026-11-19T12:10:00Z/.test(LOCK.describe(LOCK.active({ env, now, isAlive })[0])));
+  const t0 = Date.now();
+  const held = await LOCK.waitForNoLock({ env, now, isAlive, limitMs: 1500 });
+  ok('waitForNoLock rereads until its limit, then returns the active lock', !!held && Date.now() - t0 >= 1400, `${Date.now() - t0} ms`);
+  ok('nothing in the lock directory is written or deleted', Object.entries(before).every(([f, t]) => existsSync(join(dir, f)) && readFileSync(join(dir, f), 'utf8') === t) && readdirSync(dir).length === Object.keys(files).length);
+  for (const f of ['timing-1.json', 'timing-4.json']) rmSync(join(dir, f));
+  ok('with only stale, other and non-lock files left, nothing is active', (await LOCK.waitForNoLock({ env, now, isAlive, limitMs: 0 })) === null);
+  rmSync(dir, { recursive: true, force: true });
 }
 
 console.log('\nThe edit unit (shared with ITTEN and KERCKHOFFS)');

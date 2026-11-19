@@ -168,7 +168,7 @@ Trace findings are finding/1:
 | 1 | A form was not as expected, or its run failed |
 | 2 | Cannot run: Docker is not running, PostgreSQL did not start, or the port is bound beyond 127.0.0.1 |
 | 64 | Bad usage |
-| 75 | ITTEN's inspector is running, so a timing run may be under way (`EX_TEMPFAIL`). Checked at start and before each twin. |
+| 75 | ITTEN's timing lock stayed active past the wait (`EX_TEMPFAIL`): read at start and immediately before each twin, waited on, rereading about once a second, for `ERLANG_LOCK_WAIT_S` seconds (600 by default), and named in the message (`research/itten-lock.md`). |
 
 **Network**
 - PostgreSQL publishes its port on 127.0.0.1 only. Each twin listens on 127.0.0.1 only, whatever host and port it asks for. Requests go only to the twin, one at a time, at most 5 a second, three per request per scale (two for requests that wait out a timeout).

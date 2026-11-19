@@ -9,13 +9,14 @@
 #        with none, every fixtures/<id>/<form>/trace/trace.json.
 # Outputs: dist/trace/<id>/<form>/<twin>/{raw.json,report.json,twin.log}.
 # Exit codes: 0 every form as expected; 1 a form was not; 2 cannot run
-# (Docker, or Postgres did not start); 64 bad usage; 75 ITTEN's inspector is
-# running.
+# (Docker, or Postgres did not start); 64 bad usage; 75 ITTEN's timing lock
+# stayed active past the wait (ERLANG_LOCK_WAIT_S, 600 s by default).
 #
 # Safety, as decided (research/trace-harness.md, Decisions):
 # - Everything here runs at nice 15; the container is held to one CPU.
-# - Refuses while ITTEN's inspector runs: a timing run may be under way.
-#   Temporary, until ITTEN writes its lock file (0.5).
+# - Honours ITTEN's timing lock (lib/itten-lock.js): while one is active it
+#   waits, rereading about once a second, and stops with 75 at the limit. The
+#   lock is reread before each twin starts.
 # - PostgreSQL publishes its port on 127.0.0.1 only, never 0.0.0.0, with
 #   passwords made for this run and kept in a mode-700 directory under
 #   dist/trace/run/; the container and that directory are removed on exit.
@@ -45,10 +46,7 @@ for a in "$@"; do
   fi
 done
 
-if pgrep -f 'inspector/inspect\.js' >/dev/null 2>&1; then
-  echo "trace: ITTEN's inspector is running, so a timing run may be under way; refusing to start" >&2
-  exit 75
-fi
+node scripts/itten-lock.js trace || exit $?
 if ! docker info >/dev/null 2>&1; then
   echo "trace: Docker is not running" >&2
   exit 2

@@ -80,7 +80,7 @@ How it runs:
 - **The harness is a bash script** (`#!/usr/bin/env bash`, `set -euo pipefail`), with every output in `dist/trace/`.
 - **Host processes run at `nice -n 15`:** the fixture service, the request driver and `psql`. On macOS, `nice` does not reach inside Docker Desktop's VM, so the container is bounded by `--cpus 1` instead. Seeding at 10× is the heaviest step: a few seconds of inserts inside the container.
 - **Requests are serial:** at most 5 per second, a few dozen per fixture, no concurrency, nothing aimed at anything but the fixture on `127.0.0.1`.
-- **ITTEN timing runs:** the harness generates no load, but the project rule keeps heavy work off this Mac while ITTEN timing runs. ITTEN has no lock file for its timed phases yet. The harness refuses to start while ITTEN's inspector process is running (decision 1). This is temporary: it changes to ITTEN's lock file once ITTEN 0.5 writes one.
+- **ITTEN timing runs:** the harness honours ITTEN's timing lock (`research/itten-lock.md`, `lib/itten-lock.js`): at its start and immediately before each twin, it waits while a lock is active, rereading about once a second, and stops with exit 75 naming the lock at the limit.
 - **Fixture installs:** the fixtures are never installed today. The harness installs each form from a committed `package-lock.json` into `dist/trace/install/<form>/`, as `research/probes/prisma7-batching/run.sh` does, with `--ignore-scripts` and an explicit `prisma generate`. Making the lockfiles needs the npm registry once. After that, installs are pinned.
 
 ## Beyond counting statements
@@ -103,7 +103,7 @@ Added for L06, L07 and L08 (19 November 2026). Requests stay serial; nothing her
 
 Taken on review, 17 November 2026.
 
-1. **ITTEN timing runs.** The harness refuses to start while ITTEN's inspector process is running. Temporary, until ITTEN writes its lock file (0.5); then the harness reads the lock file instead.
+1. **ITTEN timing runs.** The harness honours ITTEN's timing lock (decided 19 November 2026), which replaced the earlier refusal while ITTEN's inspector process ran.
 2. **Connection.** A port on `127.0.0.1` only, a random password per run, the container removed after the run. Image `postgres:17.11@sha256:ff87138949ad9a46f32ff23bd6852b52ce024a13dffe9b4087be98292cdd3b4f`, KERCKHOFFS's pin. Never `0.0.0.0`.
 3. **Where it runs.** Locally, at `nice -n 15`, with the container at `--cpus 1`.
 4. **Counting.** `pg_stat_statements` is reset before each request, and requests are strictly sequential.

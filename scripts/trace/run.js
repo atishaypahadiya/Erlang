@@ -42,6 +42,7 @@ import { gunzipSync, brotliDecompressSync, inflateSync } from 'node:zlib';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { expand, routeOf, track, unreadBytes, unreadFields } from '../../lib/trace-judge.js';
 import { environment } from '../../lib/timing.js';
+import { waitForNoLock, describe as describeLock, EXIT_LOCKED } from '../../lib/itten-lock.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const [formDir, outDir, modules] = process.argv.slice(2).map((p) => p && resolve(p));
@@ -56,11 +57,6 @@ const MIN_GAP_MS = 200; // at most 5 requests a second
 const spec = JSON.parse(readFileSync(join(formDir, 'trace', 'trace.json'), 'utf8'));
 const sha256 = (p) => createHash('sha256').update(readFileSync(p)).digest('hex');
 
-// ITTEN's timing runs (decision 1): refuse while its inspector is running.
-// Temporary, until ITTEN writes its lock file.
-function ittenRunning() {
-  return spawnSync('pgrep', ['-f', 'inspector/inspect\\.js'], { stdio: 'ignore' }).status === 0;
-}
 
 // psql inside the container, over its local socket; SQL goes on stdin, never
 // on a command line.
@@ -372,9 +368,11 @@ async function serve(work, scale, log) {
 }
 
 for (const twin of ['planted', 'clean']) {
-  if (ittenRunning()) {
-    console.error('trace: ITTEN\'s inspector is running; refusing to start the next twin (research/trace-harness.md, decision 1)');
-    process.exit(75);
+  // ITTEN's timing lock, reread immediately before each twin starts.
+  const held = await waitForNoLock({ limitMs: 1000 * Number(process.env.ERLANG_LOCK_WAIT_S ?? 600), onWait: (l) => console.error(`trace: waiting for ITTEN's timing lock: ${describeLock(l)}`) });
+  if (held) {
+    console.error(`trace: ITTEN's timing lock is still active; not starting the ${twin} twin. ${describeLock(held)}`);
+    process.exit(EXIT_LOCKED);
   }
   const out = join(outDir, twin);
   const work = join(out, 'work');

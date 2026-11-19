@@ -45,7 +45,7 @@ It writes a report/1 to `dist/reports/<dir name>/report.json`, or to `<file>`. E
 
 `npm test` runs every test, including a scan of this repository, which must come back clean.
 
-`npm run trace` (`scripts/trace.sh`) runs the trace harness on the fixtures: each twin is served against PostgreSQL in Docker with seeded data at 1x and 10x, and the statements, rows, calls and bytes of each request are counted and judged, with every outbound call going to a stub on 127.0.0.1 that counts it, fails it or never answers it, and the twin's pool counted (`research/trace-harness.md`). It needs Docker, sends requests one at a time to the fixture on 127.0.0.1, runs at nice 15, and refuses while ITTEN's inspector runs. It is not part of `npm test`.
+`npm run trace` (`scripts/trace.sh`) runs the trace harness on the fixtures: each twin is served against PostgreSQL in Docker with seeded data at 1x and 10x, and the statements, rows, calls and bytes of each request are counted and judged, with every outbound call going to a stub on 127.0.0.1 that counts it, fails it or never answers it, and the twin's pool counted (`research/trace-harness.md`). It needs Docker, sends requests one at a time to the fixture on 127.0.0.1, runs at nice 15, and waits while ITTEN's timing lock is active (`research/itten-lock.md`). It is not part of `npm test`.
 
 - `reference/`: the rules ERLANG checks against, with their sources.
 - `research/`: the failure model, prior art, the name, and other design notes. `research/first-check.md` explains the order of the checks. `research/probes/` holds runtime probes, such as the Prisma batching probe; it is excluded from the self-scan, since it runs per-item queries on purpose.
