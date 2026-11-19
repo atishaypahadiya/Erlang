@@ -1,0 +1,128 @@
+{
+  "note": "The fixture pair for no-cache (L10 in fixtures/PLAN.md), scanned with no-cache alone. Written by hand: each planted defect is fixed in place in the clean twin, line for line, and the twins differ in nothing else. A finding catches a defect when its check matches and its locations name the defect's file, line, column and symbol (every place, when the defect lists several), with the defect's severity. Decoys are in both twins; reporting one is a false positive. The fixes are guided, and the clean twin changes exactly the lines they name: the line above GET /stats holds the value kept between requests and the handler body consults it; the read of the tax rate moves above the loop by swapping two lines; the second read of the currency uses the first. The uncached aggregate is reported as info, since whether to cache it is a design choice; the trace and load forms measure it. Paths are relative to each twin. Nothing here is installed or run.",
+  "check": "no-cache",
+  "checks": [
+    "no-cache"
+  ],
+  "plan": "L10",
+  "planted": "fixtures/L10-no-cache/planted",
+  "clean": "fixtures/L10-no-cache/clean",
+  "defects": [
+    {
+      "id": "L10-1",
+      "check": "no-cache",
+      "title": "GET /stats runs a whole-table aggregate on every request, for inputs that change once a minute",
+      "severity": "info",
+      "where": {
+        "file": "src/routes/stats.js",
+        "line": 12,
+        "column": 26,
+        "symbol": "orderTotals"
+      },
+      "fix": "guided",
+      "fixedInClean": "cached for 60 s, with Cache-Control and ETag"
+    },
+    {
+      "id": "L10-2",
+      "check": "no-cache",
+      "title": "The tax rate is read once per order line, with the same region each time",
+      "severity": "warning",
+      "where": {
+        "file": "src/routes/orders.js",
+        "line": 11,
+        "column": 25,
+        "symbol": "orderLines"
+      },
+      "fix": "guided",
+      "fixedInClean": "read once, above the loop"
+    },
+    {
+      "id": "L10-3",
+      "check": "no-cache",
+      "title": "The currency setting is read twice in one request",
+      "severity": "warning",
+      "where": {
+        "file": "src/routes/orders.js",
+        "line": 22,
+        "column": 25,
+        "symbol": "quote"
+      },
+      "fix": "guided",
+      "fixedInClean": "the first read reused"
+    }
+  ],
+  "decoys": [
+    {
+      "id": "L10-d1",
+      "title": "An aggregate behind an lru-cache",
+      "where": {
+        "file": "src/routes/stats.js",
+        "line": 18,
+        "column": 76
+      }
+    },
+    {
+      "id": "L10-d2",
+      "title": "An aggregate over one customer's rows",
+      "where": {
+        "file": "src/routes/stats.js",
+        "line": 24,
+        "column": 19
+      }
+    },
+    {
+      "id": "L10-d3",
+      "title": "An aggregate whose response carries Cache-Control",
+      "where": {
+        "file": "src/routes/stats.js",
+        "line": 30,
+        "column": 19
+      }
+    },
+    {
+      "id": "L10-d4",
+      "title": "An aggregate behind a POST that recounts on purpose",
+      "where": {
+        "file": "src/routes/stats.js",
+        "line": 36,
+        "column": 19
+      }
+    },
+    {
+      "id": "L10-d5",
+      "title": "A read per item that uses the item (one by id: n-plus-one, not this check)",
+      "where": {
+        "file": "src/routes/orders.js",
+        "line": 29,
+        "column": 89
+      }
+    },
+    {
+      "id": "L10-d6",
+      "title": "The same read before and after a write",
+      "where": {
+        "file": "src/routes/orders.js",
+        "line": 37,
+        "column": 24
+      }
+    },
+    {
+      "id": "L10-d7",
+      "title": "The same read in a polling loop, on purpose",
+      "where": {
+        "file": "src/routes/orders.js",
+        "line": 44,
+        "column": 40
+      }
+    },
+    {
+      "id": "L10-d8",
+      "title": "An aggregate in a script no request runs",
+      "where": {
+        "file": "scripts/nightly.js",
+        "line": 4,
+        "column": 20
+      }
+    }
+  ]
+}

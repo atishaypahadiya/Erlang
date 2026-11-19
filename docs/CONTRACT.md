@@ -55,7 +55,7 @@ Each finding is also printed to standard output, one line per finding. A last li
 - `erlang`: the run data. `scope` holds the config, the excluded paths and notes. `checks` holds, per check, the counts of files, handlers and queries read, and of what was skipped and why.
 
 **finding/1** (`core/schema/finding.schema.json`, ITTEN's at v0.3.5):
-- `check`: one of `no-timeout`, `n-plus-one`, `per-row-writes`, `unbounded-query`, `pool-sizing`, `retry-policy`, `missing-index`, `pool-exhaustion`, `blocking-work`, `oversized-payload`, `memory-growth`.
+- `check`: one of `no-timeout`, `n-plus-one`, `per-row-writes`, `unbounded-query`, `pool-sizing`, `retry-policy`, `missing-index`, `pool-exhaustion`, `blocking-work`, `oversized-payload`, `memory-growth`, `no-cache`.
 - `severity`: `error`, `warning` or `info`. A MUST rule gives `error` and a SHOULD rule gives `warning`. Errors and warnings fail a run; info never does. `info` with `erlang.unresolved` means ERLANG could not decide, for example when no request handler was found or the database's limit is unknown.
 - `fingerprint`: built from the check, the file and enclosing function (or table and column), and the kind of defect, with no line number, so it survives edits that move lines. Several of the same kind in one function are told apart by their order (`|2`, `|3`). Renaming the file or function changes it.
 - `message`: what is wrong, why it matters and what it rests on.

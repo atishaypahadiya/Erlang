@@ -476,6 +476,24 @@ console.log('\nmemory-growth: module-level collections that only grow');
   }
 }
 
+console.log('\nno-cache: reads whose answer is already known');
+{
+  const NC = ['no-cache'];
+  const app = (body, extra = '') => ({ 'app.js': `import express from 'express';\nimport pg from 'pg';\nconst pool = new pg.Pool();\nconst app = express();\n${extra}app.get('/x', async (req, res) => {\n${body}\n  res.end();\n});\napp.listen(3000);\n` });
+  const nc = (name, body, want, extra) => expectFindings(name, app(body, extra), want, NC);
+  nc('A loop-invariant read in a map callback: a warning, guided', "  await Promise.all(req.body.ids.map(async (id) => (await pool.query('select rate from fx where pair = $1', [req.query.pair])).rows));", [['warning', 'app.js', 6, 'guided']]);
+  nc('A read using a variable the loop assigns: nothing', "  let page = 0;\n  for (const id of req.body.ids) { page += 1; await pool.query('select * from t where p = $1 limit 1', [page]); }", []);
+  nc('A read in a counter loop: not judged', "  for (let i = 0; i < 3; i++) await pool.query('select 1');", []);
+  nc('The same read in two different blocks: nothing', "  if (req.query.a) await pool.query('select value from settings where name = $1', ['a']);\n  else await pool.query('select value from settings where name = $1', ['a']);", []);
+  nc('A Prisma read inside a loop, the same each pass: a warning', "  for (const id of req.body.ids) await prisma.setting.findUnique({ where: { name: 'currency' } });", [['warning', 'app.js', 8, 'guided']], "import { PrismaClient } from '@prisma/client';\nconst prisma = new PrismaClient();\n");
+  nc('An aggregate behind a module-level let: nothing', "  if (!memo) memo = (await pool.query('select count(*) from orders')).rows[0];\n  res.json(memo);", [], 'let memo = null;\n');
+  nc('An aggregate on a GET with nothing in front: info, unresolved', "  res.json((await pool.query('select sum(total) from orders')).rows[0]);", [['info', 'app.js', 6, 'guided']]);
+  {
+    const r = scanOf(subject({ 'job.js': "import pg from 'pg';\nconst pool = new pg.Pool();\nexport async function f(ids) { for (const id of ids) await pool.query('select 1'); }\n" }), NC);
+    ok('No handler: the loop-invariant read is info, unresolved', r.findings.length === 1 && r.findings[0].severity === 'info' && r.findings[0].erlang.unresolved === true, summary(r));
+  }
+}
+
 console.log('\nShared rules: the timing lock and expected rows');
 {
   const calm = { load1: 1, cpus: 8 };
