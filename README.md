@@ -4,7 +4,7 @@ Named after A. K. Erlang; not the Erlang programming language.
 
 ERLANG checks how a web service behaves under load and when its dependencies fail: missing timeouts, retry storms, unbounded queries, per-item queries, exhausted pools. It is the load-and-resilience specialist in a set with ITTEN (design) and KERCKHOFFS (security), and writes the same finding format. It tests the owner's own services only.
 
-Status: fourteen static checks are built, each suggesting a fix for every finding:
+Status: fifteen static checks are built, each suggesting a fix for every finding:
 
 - `no-timeout` (TMO-01): outbound calls that nothing bounds in time, from fetch, axios, got, `node:http`/`node:https` and `pg`.
 - `n-plus-one` (DAT-01): a query run once per item of a list, in code a request handler reaches, through Prisma or `pg`.
@@ -22,7 +22,7 @@ Status: fourteen static checks are built, each suggesting a fix for every findin
 - `cold-start` (STB-10): a value every request depends on (a table built from a file or the database, a large module, a connection) built by the first request that needs it, `if (!x) x = await build()` or `x ??= …`, instead of at startup.
 - `no-load-shedding` (OVL-02, OVL-03): an Express, Fastify or `node:http` server with nothing that caps the requests in flight: no limiter answering 503 or 429 applied to it, no `@fastify/under-pressure`, no `maxConnections`, and no nginx or HAProxy file in the repository that limits connections.
 
-Request handlers are found in Express, Fastify, `node:http` and Next.js code. Prisma's batching is taken from what was observed for 7.10.1 (`research/prisma-batching.md`). The checks read source and run nothing. The trace harness (below) runs the fixtures against a database to confirm them by counts; generated load comes later.
+Request handlers are found in Express, Fastify, `node:http` and Next.js code. Prisma's batching is taken from what was observed for 7.10.1 (`research/prisma-batching.md`). The checks read source and run nothing. The trace harness (below) runs the fixtures against a database to confirm them by counts, and the load harness drives them under load.
 
 ```
 npm install
@@ -37,6 +37,8 @@ It writes a report/1 to `dist/reports/<dir name>/report.json`, or to `<file>`. E
 - 3: partial, with no failing findings.
 - 64: bad usage.
 
+The trace and load harnesses use the same codes, and one more: 75, temporarily blocked: ITTEN's timing lock stayed active past the wait, nothing was judged, retry later.
+
 `erlang.config.json` at `<dir>` can exclude paths that are not part of the app, and name entry points ERLANG cannot find itself, tables that stay small, the database's `max_connections` when no file in the repository states it, and a warm-up route for the cold-start trace (a cheap `GET` or `HEAD`, ideally one that reads once through the database driver; without one the harness requests a path that does not exist, which warms the framework only, and says so):
 
 ```json
@@ -47,11 +49,11 @@ It writes a report/1 to `dist/reports/<dir name>/report.json`, or to `<file>`. E
 
 `npm run trace` (`scripts/trace.sh`) runs the trace harness on the fixtures: each twin is served against PostgreSQL in Docker with seeded data at 1x and 10x, and the statements, rows, calls and bytes of each request are counted and judged, with every outbound call going to a stub on 127.0.0.1 that counts it, fails it or never answers it, and the twin's pool counted (`research/trace-harness.md`). It needs Docker, sends requests one at a time to the fixture on 127.0.0.1, runs at nice 15, and waits while ITTEN's timing lock is active (`research/itten-lock.md`). It is not part of `npm test`.
 
-`npm run load` (`scripts/load.sh`) runs the load harness on one fixture form: its twins served on 127.0.0.1 against PostgreSQL and driven by k6, which you install yourself, at a fixed arrival rate within capped rates and durations, each twin judged against the other, every finding under the timing rule (`research/load-harness.md`). It loads only the twins it started on loopback, waits while ITTEN's timing lock is active, and runs the full suite only in CI.
+`npm run load` (`scripts/load.sh`) runs the load harness on one fixture form: its twins served on 127.0.0.1 against PostgreSQL and driven by k6, which you install yourself, at a fixed arrival rate within capped rates and durations, each twin judged against the other (`research/load-harness.md`): counts and shares as measured, the heap slope per pair, and timed verdicts (latencies, the event loop's longest stretch, the shedding gap) under the relative timing rule, five pairs that all clear, none, or a mix, which is reported as unreliable and never fails (`docs/CONTRACT.md`). It loads only the twins it started on loopback, waits while ITTEN's timing lock is active, and runs the full suite only in CI.
 
 - `reference/`: the rules ERLANG checks against, with their sources.
 - `research/`: the failure model, prior art, the name, and other design notes. `research/first-check.md` explains the order of the checks. `research/probes/` holds runtime probes, such as the Prisma batching probe; it is excluded from the self-scan, since it runs per-item queries on purpose.
-- `fixtures/`: the test bench (`fixtures/PLAN.md`). `L07-no-timeout/`, `L01a-n-plus-one/`, `L01b-per-row-writes/`, `L02-unbounded-query/`, `L03-missing-index/`, `L06-retry-storm/`, `L08-pool-exhaustion/`, `L09-blocking-work/`, `L05-memory-growth/`, `L10-no-cache/`, `L11-cold-start/`, `L12-no-load-shedding/` and `L13-pool-sizing/` are built as static pairs, and so is the `sql/` form of `L04-oversized-payload/`; the `sql/` forms of L01a, L01b and L02, `L04-oversized-payload/`, the `loops/` form of `L06-retry-storm/`, `L07-no-timeout/`, `L08-pool-exhaustion/`, `L09-blocking-work/` and the `compose/` form of `L13-pool-sizing/` have trace forms.
+- `fixtures/`: the test bench (`fixtures/PLAN.md`). `L07-no-timeout/`, `L01a-n-plus-one/`, `L01b-per-row-writes/`, `L02-unbounded-query/`, `L03-missing-index/`, `L06-retry-storm/`, `L08-pool-exhaustion/`, `L09-blocking-work/`, `L05-memory-growth/`, `L10-no-cache/`, `L11-cold-start/`, `L12-no-load-shedding/` and `L13-pool-sizing/` are built as static pairs, and so is the `sql/` form of `L04-oversized-payload/`; every row has a trace form (L01a to L03 in both their `sql/` and `prisma/` forms) except L12, whose queue only load can show, and every row has a load form (`fixtures/PLAN.md`).
 - `core/`: a pinned, temporary copy of the shared finding/1 and report/1 code (`core.pin.json`).
 
 ## Part of a set
