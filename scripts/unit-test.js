@@ -9,7 +9,7 @@
 
 import { writeFileSync, mkdirSync, rmSync, readFileSync, cpSync, existsSync, symlinkSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { scan } from '../lib/erlang.js';
 import { apply, syntaxErrors, fileOf } from '../lib/fix.js';
@@ -380,6 +380,39 @@ console.log('\nAbsolute waits: the delay the code declares, not a clock');
   ok('  a jittered wait, a draw of 1.13 ms included, is read as drawn; a 0 ms timer is not a wait', JSON.stringify(jitter) === '[1.13,731.2]', JSON.stringify(jitter));
   ok('  a gap with no timer that fired in it is null (not judged: info)', JSON.stringify(declaredWaits(at, deadlines)) === '[null,null]');
   ok('  no timers recorded at all is null', declaredWaits(at, undefined) === null);
+}
+
+{
+  const { waitVerdict } = TIMING;
+  const run = (attempts, timers) => ({ attempts, timers });
+  const deadline = (a) => ({ ms: 2000, at: a + 0.2 });
+  const fixed = waitVerdict([run([0, 1001, 2002], [deadline(0), { ms: 1000, at: 0.5 }, deadline(1001), { ms: 1000, at: 1001.5 }]), run([0, 1003], [{ ms: 1000, at: 1 }])], 20);
+  ok('waits: three declared 1,000 ms waits across runs are fixed', fixed.kind === 'fixed' && fixed.waits.join() === '1000,1000,1000', JSON.stringify(fixed));
+  const spaced = waitVerdict([run([0, 1001, 2002], [deadline(0), { ms: 1000, at: 0.5 }, deadline(1001)])], 20);
+  ok('  attempts 1 s apart with no timer seen in one gap: unobserved (info), not clean', spaced.kind === 'unobserved' && spaced.unseen.length === 1 && Math.round(spaced.unseen[0].gap) === 1001, JSON.stringify(spaced));
+  const jit = waitVerdict([run([0, 120, 600], [{ ms: 118.2, at: 0.5 }, { ms: 477.9, at: 121 }])], 20);
+  ok('  jittered waits are varied (nothing reported)', jit.kind === 'varied');
+  let threw = false; try { waitVerdict([run([0, 1000], undefined)], 20); } catch { threw = true; }
+  ok('  a run with no timers recorded is a harness fault (throws), not a verdict', threw);
+}
+{
+  // The harness's timer recording (scripts/trace/timers.js), in a fresh
+  // process: each way of waiting is recorded with the delay asked for.
+  const code = `
+    const T = await import(${JSON.stringify(pathToFileURL(join(ROOT, 'scripts', 'trace', 'timers.js')).href)});
+    T.install(); T.start();
+    const tp = await import('node:timers/promises');
+    const { setTimeout: cb } = await import('node:timers');
+    await tp.setTimeout(31);
+    await tp.scheduler.wait(32);
+    await new Promise((ok) => cb(ok, 33));
+    await new Promise((ok) => setTimeout(ok, 34));
+    console.log(JSON.stringify(T.take().map((t) => [t.ms, t.via])));`;
+  const r = spawnSync(process.execPath, ['--input-type=module', '-e', code], { encoding: 'utf8' });
+  const got = r.status === 0 ? JSON.parse(r.stdout) : null;
+  const has = (ms, via) => got?.some(([m, v]) => m === ms && v === via);
+  ok('timers: node:timers/promises setTimeout and scheduler.wait, node:timers setTimeout and the global setTimeout are each recorded with their declared delay',
+    has(31, 'timers/promises setTimeout') && has(32, 'scheduler.wait') && has(33, 'setTimeout') && has(34, 'setTimeout'), r.stdout.trim() || r.stderr.trim());
 }
 
 console.log('\nHeadroom: the clean twin under 0.2 busy at every step');

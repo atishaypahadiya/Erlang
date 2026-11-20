@@ -10,8 +10,9 @@
 //     the twin's src/db.js exports), "memory" (after a full collection, when
 //     node runs with --expose-gc, with the responses answered so far), "loop-reset" and "loop" (the event loop's
 //     delay since the last reset), "timers-reset" and "timers" (every timer
-//     the twin declared since the reset: setTimeout, global or from
-//     node:timers/promises, with its delay as the code asked for it and when,
+//     the twin declared since the reset, scripts/trace/timers.js: the global
+//     setTimeout, node:timers', and node:timers/promises' setTimeout and
+//     scheduler.wait, with its delay as the code asked for it and when,
 //     on the system's monotonic clock, as the harness's stub times its hits),
 //     and "elu-reset" and "elu" (the main thread's busy time since the reset,
 //     performance.eventLoopUtilization).
@@ -28,7 +29,7 @@ import https from 'node:https';
 import net from 'node:net';
 import { syncBuiltinESMExports } from 'node:module';
 import { monitorEventLoopDelay, performance } from 'node:perf_hooks';
-import timersPromises from 'node:timers/promises';
+import * as TIMERS from './timers.js';
 import { writeFileSync, renameSync, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -78,25 +79,9 @@ https.request = (...args) => toStub(args);
 http.get = (...args) => { const r = toStub(args); r.end(); return r; };
 https.get = (...args) => { const r = toStub(args); r.end(); return r; };
 
-// ---- Declared timers: the delay a wait asked for, not how long it took
-// (L06: a fixed wait is judged on the value the code declares, with no clock;
-// docs/CONTRACT.md, absolute waits). Recorded only between "timers-reset" and
-// "timers".
-const nowMs = () => Number(process.hrtime.bigint() / 1000n) / 1000;
-let declared = null;
-const plainTimeoutP = timersPromises.setTimeout;
-timersPromises.setTimeout = function setTimeout(delay, ...rest) {
-  declared?.push({ ms: Number(delay ?? 1), at: nowMs() });
-  return plainTimeoutP.call(this, delay, ...rest);
-};
-const plainTimeout = globalThis.setTimeout;
-const wrappedTimeout = function setTimeout(fn, delay, ...rest) {
-  declared?.push({ ms: Number(delay ?? 0), at: nowMs() });
-  return plainTimeout.call(this, fn, delay, ...rest);
-};
-for (const k of Reflect.ownKeys(plainTimeout)) if (!['length', 'name', 'prototype'].includes(k)) Object.defineProperty(wrappedTimeout, k, Object.getOwnPropertyDescriptor(plainTimeout, k));
-globalThis.setTimeout = wrappedTimeout;
-syncBuiltinESMExports();
+// ---- Declared timers (scripts/trace/timers.js), recorded only between
+// "timers-reset" and "timers".
+TIMERS.install();
 const plainFetch = globalThis.fetch;
 globalThis.fetch = (input, init = {}) => {
   const req = input instanceof Request ? input : null;
@@ -134,8 +119,8 @@ process.on('message', async (m) => {
     // The delay of a stretch is recorded when the monitor's timer next runs:
     // wait for a timer and an immediate, so the stretch just ended is in.
     else if (m.probe === 'loop') { loopEnable(); await new Promise((ok) => setTimeout(ok, 5)); await new Promise((ok) => setImmediate(ok)); reply({ maxMs: loop.max / 1e6, meanMs: loop.mean / 1e6, count: loop.count }); }
-    else if (m.probe === 'timers-reset') { declared = []; reply({}); }
-    else if (m.probe === 'timers') { const list = declared ?? []; declared = null; reply({ timers: list }); }
+    else if (m.probe === 'timers-reset') { TIMERS.start(); reply({}); }
+    else if (m.probe === 'timers') { reply({ timers: TIMERS.take() }); }
     else if (m.probe === 'elu-reset') { eluFrom = performance.eventLoopUtilization(); reply({}); }
     else if (m.probe === 'elu') { const u = performance.eventLoopUtilization(eluFrom ?? undefined); reply({ activeMs: u.active, idleMs: u.idle, utilization: u.utilization, answered }); }
     else reply({ error: `unknown probe ${m.probe}` });

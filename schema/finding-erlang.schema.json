@@ -378,6 +378,11 @@
           "items": { "type": "number", "minimum": 0 },
           "description": "judge attempts: the delay the twin declared before each retry (ms), as its code asked for it (a timer), in every run; a declared value, not a measured time."
         },
+        "gaps": {
+          "type": "array",
+          "items": { "type": "number", "minimum": 0 },
+          "description": "judge attempts, info 'wait not observed': the measured gaps between attempts (ms) in which no declared timer was seen."
+        },
         "r2": {
           "type": [
             "number",

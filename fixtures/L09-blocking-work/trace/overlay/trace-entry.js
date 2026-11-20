@@ -8,7 +8,7 @@
 //     bcrypt hash at cost 12, which the planted twin checks, and a scrypt
 //     hash, which the clean twin checks;
 //   - 200,000 orders, about 30 MB of JSON, for GET /export, saved in one
-//     batch (the store makes their JSON and ETag once, when they change).
+//     batch (the store makes their JSON bytes and ETag once, when they change).
 import crypto from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import { store } from './src/store.js';

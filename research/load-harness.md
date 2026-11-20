@@ -84,4 +84,6 @@ A verdict that compares the twins under load assumes the clean twin has room to 
 
 `scripts/trace.sh --headroom` serves each load form's clean twin against a fresh database and, for every step, sends the step's request (and its background's) one at a time: 3 to warm up, then 10 measured with the twin's event-loop utilisation (`performance.eventLoopUtilization`, the `elu-reset` and `elu` probes). Main-thread time per request is the busy time over the 10. The busy share at the step's rate is the step's rate times that time, plus the background's rate times its time. `scripts/headroom/judge.js` fails a form whose clean twin is over 0.2 at any step; CI runs it on every form.
 
+With the JSON made once but kept as a string, the clean export still took 19.2 ms of main thread a request (0.119 at 6 a second): `zlib.gzip` encodes a string to bytes on the main thread before handing it to the thread pool, 14.6 of those ms on 20 MB. Both twins now keep the bytes: 5.0 ms an export, 0.034, so a runner twice as slow stays under the bar.
+
 The event-loop monitor the loop probes use samples every 1 ms and wakes the main thread about 1,000 times a second, so it is enabled only when a probe first asks for it; with it always on, a request that waits 3 s on a hanging host counted about 50 ms of the monitor's own time (L07's first measurement, 0.53).

@@ -23,7 +23,7 @@ import { finding, fingerprint } from '../../core/finding.js';
 import { report } from '../../core/report.js';
 import { validate } from '../../core/schema.js';
 import { scan, VERSION } from '../../lib/erlang.js';
-import { ruleC, environment, REASON, declaredWaits } from '../../lib/timing.js';
+import { ruleC, environment, REASON, waitVerdict } from '../../lib/timing.js';
 
 const median_ = (xs) => { const s = [...xs].sort((a, b) => a - b); const m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
 import { growth, rowsGrowth, repeated, linkStatic, normalizeSql, routePattern, fmt, COMPRESS_MIN, UNREAD, ROWS, SLOPE, slopeOf, MIN_POINTS } from '../../lib/trace-judge.js';
@@ -318,22 +318,19 @@ function judgeTwin(twin) {
       }
       // The same wait each time, judged on the delays the twin declared, not
       // on a clock (absolute waits, docs/CONTRACT.md; the owner, 20 November
-      // 2026), each timer as the twin set it (setTimeout, global or
-      // from node:timers/promises, recorded in the twin). Every wait of every
+      // 2026), each timer as the twin set it (scripts/trace/timers.js). A gap
+      // of NO_WAIT_MS or more with no timer seen in it is info, "wait not
+      // observed", never a clean result (the owner). Every wait of every
       // run, warm-up included, declared alike, three or more: no jitter.
       // A gap's wait is the longest timer set after one attempt that fired
       // by the next (a request deadline outlasts the gap; a jittered wait
       // can be any length, a draw of 1 ms included).
-      const declaredOf = (q) => declaredWaits(hitsOf(q).map((h) => h.at), q.timers);
-      const waits = [x.warm, ...runs].filter(Boolean).map(declaredOf);
-      if (waits.some((w) => w === null)) throw new Error(`${twin}: ${r.id} has no declared timers recorded: run scripts/trace.sh again`);
-      const every = waits.flat();
-      if (every.length >= 3 && Math.min(...gaps.flat()) >= NO_WAIT_MS) {
-        if (every.some((w) => w === null)) emit({ check: 'retry-policy', rule: 'RTY-03', strength: 'MUST', severity: 'info', unresolved: true, method: r.method, route, symbol, trace: base,
-          message: `${r.method} ${route} waited before retrying ${host}, but not on a timer the harness can read (setTimeout, global or from node:timers/promises), so whether the wait is fixed is not judged.` });
-        else if (new Set(every).size === 1) emit({ check: 'retry-policy', rule: 'RTY-03', strength: 'MUST', severity: 'error', method: r.method, route, symbol, trace: { ...base, waits: every },
-          message: `${r.method} ${route} waited the same time before each retry of ${host}: ${fmt(every[0])} ms, as its code declares it, in all ${every.length} waits: no jitter, so clients that failed together retry together (RTY-03).` });
-      }
+      let v;
+      try { v = waitVerdict([x.warm, ...runs].filter(Boolean).map((q) => ({ attempts: hitsOf(q).map((h) => h.at), timers: q.timers })), NO_WAIT_MS); } catch (e) { throw new Error(`${twin}: ${r.id}: ${e.message}: run scripts/trace.sh again`); }
+      if (v.kind === 'unobserved') emit({ check: 'retry-policy', rule: 'RTY-03', strength: 'MUST', severity: 'info', unresolved: true, method: r.method, route, symbol, trace: { ...base, gaps: v.unseen.map((g) => Number(g.gap.toFixed(1))) },
+        message: `Wait not observed: ${r.method} ${route} spaced ${v.unseen.length} of its retries of ${host} ${NO_WAIT_MS} ms or more apart (${v.unseen.map((g) => fmt(Math.round(g.gap))).join(', ')} ms) with no timer the harness records in the gap (setTimeout, global or from node:timers, or node:timers/promises' setTimeout or scheduler.wait), so whether the wait is fixed is not judged.` });
+      else if (v.kind === 'fixed') emit({ check: 'retry-policy', rule: 'RTY-03', strength: 'MUST', severity: 'error', method: r.method, route, symbol, trace: { ...base, waits: v.waits },
+        message: `${r.method} ${route} waited the same time before each retry of ${host}: ${fmt(v.waits[0])} ms, as its code declares it, in all ${v.waits.length} waits: no jitter, so clients that failed together retry together (RTY-03).` });
     }
   }
 
