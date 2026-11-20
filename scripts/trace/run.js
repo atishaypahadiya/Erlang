@@ -500,9 +500,13 @@ async function sendWarmup(app, warmup) {
 // output, marked unjudged. It takes the first start's costs that are the
 // machine's, not the twin's (a cold disk cache, a fresh database server),
 // out of the first judged repeat. The number of judged repeats is unchanged.
-const TIMED_FORM = LOAD
-  ? (spec.steps ?? []).some((s) => s.metric !== undefined && !COUNT_METRICS.has(s.metric))
-  : TIMED_TRACE_JUDGES.has(spec.judge);
+// Function declarations, not consts: load mode (loadMain) runs above this
+// point in the module, and a const read there is not yet initialised.
+function timedForm() {
+  return LOAD
+    ? (spec.steps ?? []).some((s) => s.metric !== undefined && !COUNT_METRICS.has(s.metric))
+    : TIMED_TRACE_JUDGES.has(spec.judge);
+}
 async function primingStart(work, scale, log, twinDir, routes) {
   freshDatabase(scale, twinDir);
   const app = await serve(work, scale, log);
@@ -526,10 +530,12 @@ async function primingStart(work, scale, log, twinDir, routes) {
 }
 // One request per judged route, as the priming start sends it: a load
 // step's own request and its background's, "$i" a number no step uses.
-const primingRoutesOf = (n) => LOAD
+function primingRoutesOf(n) {
+  return LOAD
   ? (spec.steps ?? []).filter((s) => s.metric !== undefined).flatMap((s) => [s, ...(s.background ? [{ ...s.background, id: `${s.id} background`, upstream: s.upstream }] : [])])
     .map((q) => ({ ...q, path: String(q.path).replaceAll('%24i', '999999').replaceAll('$i', '999999'), body: q.body === undefined ? undefined : JSON.parse(JSON.stringify(q.body).replaceAll('$i', '999999')) }))
   : (spec.judge === 'starts' ? spec.starts ?? [] : spec.requests ?? []).map((q) => ({ ...q, path: expand(q.path, n), body: q.body === undefined ? undefined : expand(q.body, n) }));
+}
 
 for (const twin of ['planted', 'clean']) {
   // ITTEN's timing lock, reread immediately before each twin starts.
@@ -551,7 +557,7 @@ for (const twin of ['planted', 'clean']) {
   symlinkSync(modules, join(work, 'node_modules'), 'dir');
   const log = join(out, 'twin.log');
   const raw = { image: process.env.ERLANG_TRACE_IMAGE ?? null, started: new Date().toISOString(), environment: { before: environment() }, fixture: spec.fixture, form: spec.form, twin, seed: { schema: Object.fromEntries(schemaFiles(join(twinsRoot, twin)).map((f) => [f.slice(twinsRoot.length + 1), sha256(f)])), seed: sha256(setup('seed.sql')) }, scales: {} };
-  if (TIMED_FORM) raw.priming = await primingStart(work, spec.scales.at(-1), log, join(twinsRoot, twin), primingRoutesOf(spec.n * spec.scales.at(-1)));
+  if (timedForm()) raw.priming = await primingStart(work, spec.scales.at(-1), log, join(twinsRoot, twin), primingRoutesOf(spec.n * spec.scales.at(-1)));
   for (const scale of spec.scales) {
     const n = spec.n * scale;
     const tables = freshDatabase(scale, join(twinsRoot, twin));
@@ -669,7 +675,7 @@ async function loadMain() {
     symlinkSync(modules, join(work, 'node_modules'), 'dir');
     works[twin] = { out, work, log: join(out, 'twin.log') };
   }
-  if (TIMED_FORM) {
+  if (timedForm()) {
     raw.priming = { unjudged: true };
     for (const twin of ['planted', 'clean']) raw.priming[twin] = await primingStart(works[twin].work, scale, works[twin].log, join(twinsRoot, twin), primingRoutesOf(spec.n ?? 1));
   }

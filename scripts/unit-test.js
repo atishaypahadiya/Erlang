@@ -448,6 +448,25 @@ console.log('\nMeasured and declared values; the release gate\'s comparison');
   rmSync(dir, { recursive: true, force: true });
 }
 
+console.log('\nLoad and headroom modes start (no module-order error)');
+{
+  // run.js dispatches load and headroom mode part way through the module, so
+  // anything those modes read must be initialised by then (CI run
+  // 44745932286: every load job stopped at "Cannot access 'TIMED_FORM'
+  // before initialization"). With a stand-in k6 and no database server,
+  // each mode must get as far as its first database call.
+  const dir = join(OUT, 'mode-start');
+  rmSync(dir, { recursive: true, force: true });
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'k6'), '#!/bin/sh\necho "k6 v0.0.0 (stand-in)"\n', { mode: 0o755 });
+  writeFileSync(join(dir, 'pw'), 'x\n');
+  for (const mode of ['--load', '--headroom']) {
+    const r = spawnSync(process.execPath, [join(ROOT, 'scripts', 'trace', 'run.js'), mode, 'fixtures/L09-blocking-work', join(dir, 'out'), join(dir, 'node_modules')], { encoding: 'utf8', cwd: ROOT, env: { ...process.env, ERLANG_K6: join(dir, 'k6'), ERLANG_TRACE_CONTAINER: 'erlang-no-such-container', ERLANG_TRACE_PORT: '1', ERLANG_TRACE_APP_PASSWORD_FILE: join(dir, 'pw') } });
+    const text = r.stdout + r.stderr;
+    ok(`${mode} mode reaches its first database call, with no error from module order`, !/before initialization|is not defined/.test(text) && /psql/.test(text), text.slice(-600));
+  }
+}
+
 console.log('\nHeadroom: the clean twin under 0.2 busy at every step');
 {
   const out = join(OUT, 'headroom');
