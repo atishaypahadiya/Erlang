@@ -90,6 +90,9 @@ cleanup() {
   rm -rf "$RUN"
 }
 trap cleanup EXIT
+# A command that fails outside the steps below, which handle their own exit
+# codes, is an internal failure: exit 70 (lib/crash.js), not its own code.
+trap 'echo "trace: internal failure at line $LINENO (exit 70)" >&2; exit 70' ERR
 
 secret() { od -An -tx1 -N24 /dev/urandom | tr -d ' \n'; }
 printf 'POSTGRES_PASSWORD=%s\n' "$(secret)" > "$RUN/pg.env"
@@ -175,13 +178,17 @@ for form in "${forms[@]}"; do
     printf '%s\n' "$stamp" > "$install/.stamp"
   fi
 
-  set +e
+  # "|| rc=$?" rather than set +e: the ERR trap fires under set +e too.
+  rc=0
   ERLANG_TRACE_CONTAINER="$NAME" ERLANG_TRACE_PORT="$PORT" ERLANG_TRACE_IMAGE="$IMAGE" \
     ERLANG_TRACE_APP_PASSWORD_FILE="$RUN/app-password" \
-    node scripts/trace/run.js ${LOADFLAG:+"$LOADFLAG"} "fixtures/$form" "dist/$MODE/$form" "$install/node_modules"
-  rc=$?
-  set -e
+    node scripts/trace/run.js ${LOADFLAG:+"$LOADFLAG"} "fixtures/$form" "dist/$MODE/$form" "$install/node_modules" || rc=$?
   if [ "$rc" = "75" ]; then exit 75; fi
+  if [ "$rc" = "70" ]; then
+    echo "trace: $form: internal failure in the run (exit 70)" >&2
+    internal=1
+    continue
+  fi
   if [ "$rc" != "0" ]; then
     echo "trace: $form: the run failed (exit $rc)" >&2
     failed=1
@@ -189,12 +196,11 @@ for form in "${forms[@]}"; do
   fi
   # The judge's 3: nothing failed, but a planted defect was only "timing
   # unreliable", so the form is not confirmed (load forms).
-  set +e
-  node "scripts/$MODE/judge.js" "fixtures/$form" "dist/$MODE/$form"
-  jrc=$?
-  set -e
-  if [ "$jrc" = "3" ]; then unreliable=1; elif [ "$jrc" != "0" ]; then failed=1; fi
+  jrc=0
+  node "scripts/$MODE/judge.js" "fixtures/$form" "dist/$MODE/$form" || jrc=$?
+  if [ "$jrc" = "3" ]; then unreliable=1; elif [ "$jrc" = "70" ]; then internal=1; elif [ "$jrc" != "0" ]; then failed=1; fi
 done
+if [ "${internal:-0}" = "1" ]; then exit 70; fi
 if [ "$failed" = "1" ]; then exit 1; fi
 if [ "${unreliable:-0}" = "1" ]; then exit 3; fi
 exit 0

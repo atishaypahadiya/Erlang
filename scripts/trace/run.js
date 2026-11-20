@@ -47,6 +47,9 @@ const median = (xs) => { const s = [...xs].sort((a, b) => a - b); const m = s.le
 import { waitForNoLock, active, describe as describeLock, EXIT_LOCKED } from '../../lib/itten-lock.js';
 import { CAPS, profile, checkRun, checkStep, Refused } from '../../lib/load-guard.js';
 import { scenario } from '../../lib/k6-scenario.js';
+import { exitOnCrash } from '../../lib/crash.js';
+
+exitOnCrash('trace');
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 // --load: the load harness (scripts/load.sh, research/load-harness.md), which

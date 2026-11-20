@@ -21,7 +21,8 @@
 // with no failing findings, 1 failing findings (whether or not the report is
 // also partial), 2 refused, 3 partial with no failing findings (a file could
 // not be read, so the silence vouches for nothing; the report's reason names
-// each file and why), 64 bad usage (EX_USAGE in sysexits.h). An error or a
+// each file and why), 64 bad usage (EX_USAGE in sysexits.h), 70 an internal
+// failure (EX_SOFTWARE: a crash, lib/crash.js). An error or a
 // warning fails a run; info never does, and the summary counts it apart.
 
 import { readFileSync, statSync, realpathSync, existsSync } from 'node:fs';
@@ -44,6 +45,7 @@ import * as memoryGrowth from '../checks/memory-growth.js';
 import * as noCache from '../checks/no-cache.js';
 import * as coldStart from '../checks/cold-start.js';
 import * as noLoadShedding from '../checks/no-load-shedding.js';
+import { exitOnCrash } from '../lib/crash.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 export const SPECIALIST = 'erlang';
@@ -150,6 +152,7 @@ export function summaryOf(r) {
 }
 
 if (process.argv[1] && realpathSync(resolve(process.argv[1])) === fileURLToPath(import.meta.url)) {
+  exitOnCrash('erlang');
   const args = process.argv.slice(2);
   if (args.length === 1 && (args[0] === '--version' || args[0] === '-v')) {
     const sha = commit();

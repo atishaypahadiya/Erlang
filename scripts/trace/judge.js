@@ -27,6 +27,9 @@ import { judge as timingJudge, ruleC, environment, REASON } from '../../lib/timi
 
 const median_ = (xs) => { const s = [...xs].sort((a, b) => a - b); const m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
 import { growth, rowsGrowth, repeated, linkStatic, normalizeSql, routePattern, fmt, COMPRESS_MIN, UNREAD, ROWS, SLOPE, slopeOf, MIN_POINTS } from '../../lib/trace-judge.js';
+import { exitOnCrash } from '../../lib/crash.js';
+
+exitOnCrash('trace judge');
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const extensionSchema = JSON.parse(readFileSync(join(ROOT, 'schema', 'finding-erlang.schema.json'), 'utf8'));

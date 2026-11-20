@@ -6,6 +6,9 @@
 // Usage: node scripts/itten-lock.js <what is about to start>
 
 import { waitForNoLock, describe, EXIT_LOCKED } from '../lib/itten-lock.js';
+import { exitOnCrash } from '../lib/crash.js';
+
+exitOnCrash('itten-lock');
 
 const what = process.argv[2] ?? 'load';
 const limitMs = 1000 * Number(process.env.ERLANG_LOCK_WAIT_S ?? 600);

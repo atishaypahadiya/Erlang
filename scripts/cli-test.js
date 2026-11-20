@@ -8,7 +8,7 @@
 //   erlang --version
 // Exit codes: 0 complete with no failing findings, 1 failing findings (error
 // or warning; info never fails), 2 refused, 3 partial with no failing
-// findings, 64 bad usage.
+// findings, 64 bad usage, 70 an internal failure.
 //
 // Usage: node scripts/cli-test.js            exit 0 when every case holds
 
@@ -132,6 +132,12 @@ writeFileSync(join(refusedConfig, 'erlang.config.json'), '{ "exclude": ["../outs
 for (const [label, args] of [['no arguments', []], ['--out with no file', [clean, '--out']], ['--out alone', ['--out', join(OUT, 'x.json')]], ['an unknown flag', [clean, '--fast']]]) {
   const r = cli(...args);
   ok(`bad usage (${label}): exit 64 and the usage line, nothing written`, r.status === 64 && /^usage: /.test(r.stderr) && !existsSync(join(OUT, 'x.json')), `exit ${r.status}`);
+}
+{
+  // An internal failure: the report cannot be written, since --out passes
+  // through a file. A crash exits 70, not 1 (failing findings).
+  const r = cli(clean, '--out', join(ROOT, 'package.json', 'x', 'report.json'));
+  ok('an internal failure (the report cannot be written): exit 70, and stderr says internal failure', r.status === 70 && /^erlang: internal failure \(exit 70\): /.test(r.stderr), `exit ${r.status}, ${r.stderr.trim().split('\n')[0]}`);
 }
 
 console.log(failed ? `\n${failed} CLI case(s) failed` : '\nevery documented invocation behaves');

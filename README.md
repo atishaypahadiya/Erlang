@@ -36,6 +36,7 @@ It writes a report/1 to `dist/reports/<dir name>/report.json`, or to `<file>`. E
 - 2: refused.
 - 3: partial, with no failing findings.
 - 64: bad usage.
+- 70: internal failure, a crash (not a refusal and not bad input); stderr says what failed.
 
 The trace and load harnesses use the same codes, and one more: 75, temporarily blocked: ITTEN's timing lock stayed active past the wait, nothing was judged, retry later.
 

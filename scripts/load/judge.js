@@ -31,6 +31,9 @@ import { scan, VERSION } from '../../bin/erlang.js';
 import { slopeOf, MIN_POINTS } from '../../lib/trace-judge.js';
 import { ruleC, REASON } from '../../lib/timing.js';
 import { linkStatic, fmt } from '../../lib/trace-judge.js';
+import { exitOnCrash } from '../../lib/crash.js';
+
+exitOnCrash('load judge');
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const extensionSchema = JSON.parse(readFileSync(join(ROOT, 'schema', 'finding-erlang.schema.json'), 'utf8'));

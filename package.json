@@ -1,6 +1,6 @@
 {
   "name": "@atishaypahadiya/erlang",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "private": true,
   "description": "Load and resilience checks for the owner's own services. Named after A. K. Erlang; not the Erlang programming language.",
   "type": "module",

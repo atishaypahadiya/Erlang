@@ -91,6 +91,7 @@ ERLANG never applies a fix. Applying one is the caller's step. Every auto fix in
 | 2 | Refused: `<dir>` is not a readable directory, or its config cannot be read |
 | 3 | Partial with no failing findings: a file could not be read, so the silence vouches for nothing |
 | 64 | Bad usage (`EX_USAGE`) |
+| 70 | Internal failure (`EX_SOFTWARE`): a crash, not a refusal and not bad input. Stderr says `internal failure` and gives the error; no report is promised. Before 0.1.0 a crash exited 1, Node's default, which read as failing findings. An error inside one check is not a crash: that check stops and the report is partial (3). |
 | 75 | Temporarily blocked, nothing judged, retry later (`EX_TEMPFAIL`). `erlang scan` measures no time and never returns it; the trace and load harnesses do, when ITTEN's timing lock keeps them from measuring (below). |
 
 These codes, and the rule that error and warning fail a run while info never does, are shared with ITTEN and KERCKHOFFS.
@@ -116,6 +117,20 @@ No finding of `erlang` rests on a timing. Where ERLANG judges a timing (the trac
 ## Continuous integration
 
 `.github/workflows/ci.yml` runs `npm ci` and `npm test` on every push to `main` and every pull request, except those that change only Markdown (`paths-ignore: ['**/*.md']`), and on every pushed `v*` tag. The rule is shared with ITTEN and KERCKHOFFS.
+
+## Release gate
+
+A commit is tagged `v*` only when the release gate holds for it (`scripts/release-gate.sh`, run before tagging and again by CI on the tag, job `release-gate`):
+
+1. Its last five completed CI runs are all green, with no red run among them. The tag's own run is left out; `workflow_dispatch` reruns the workflow on the same commit.
+2. The trace reports those runs uploaded (artifact `trace-reports`) are identical across them, and identical to a local trace run on a second machine, apart from what a machine measures rather than counts (`scripts/compare-reports.js`):
+   - `started`;
+   - timings, load averages and heap readings (`timing`, `environment`, `ms`, `times`, `heapBytesPerRequest`, `cooledAfterS`);
+   - in a finding judged on a measurement (trace judge `timing` or `memory`), its `slope`, `r2` and `message`, which quote the measured numbers.
+
+   Everything else must match: the set of findings, their severities, fingerprints, locations, counts and fixes. A timed verdict that is a finding in one run and info in another is a difference.
+
+If the gate does not hold, nothing is tagged; the differing form is reported with each run's measured values.
 
 ## Determinism
 
@@ -171,10 +186,11 @@ Trace findings are finding/1:
 | Code | Meaning |
 |---|---|
 | 0 | Every form as expected: each planted twin reports exactly its defects, linked where `trace.json` says, and each clean twin reports no error or warning |
-| 1 | A form was not as expected, or its run failed |
+| 1 | A form was not as expected, or its run was refused (a step over its caps) |
 | 3 | Nothing failed, but in a timed form (trace: L09, L11; every load form) a planted defect was reported only as `timing unreliable`, so the form is not confirmed (`UNRELIABLE`, never `PASS`) |
 | 2 | Cannot run: Docker is not running, PostgreSQL did not start, or the port is bound beyond 127.0.0.1 |
 | 64 | Bad usage |
+| 70 | Internal failure (`EX_SOFTWARE`): the harness, a judge, or a step outside them crashed (a fixture that answers wrongly, a container that does not start, a `raw.json` that cannot be read). Takes precedence over 1 and 3, since the run is incomplete. |
 | 75 | Temporarily blocked, nothing judged, retry later (`EX_TEMPFAIL`): ITTEN's timing lock stayed active past the wait, read at start and immediately before each twin, waited on, rereading about once a second, for `ERLANG_LOCK_WAIT_S` seconds (600 by default), and named in the message (`research/itten-lock.md`). |
 
 **Network**

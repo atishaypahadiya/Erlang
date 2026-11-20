@@ -342,6 +342,19 @@ console.log('\nThe load judge (heap slope), on recorded runs');
   rmSync(form, { recursive: true, force: true });
 }
 
+console.log('\nAn internal failure exits 70');
+{
+  const out = join(OUT, 'crash');
+  rmSync(out, { recursive: true, force: true });
+  for (const t of ['planted', 'clean']) { mkdirSync(join(out, t), { recursive: true }); writeFileSync(join(out, t, 'raw.json'), '{'); }
+  writeFileSync(join(out, 'raw.json'), '{');
+  for (const [label, judge, form] of [['trace judge', 'trace', 'L05-memory-growth'], ['load judge', 'load', 'L05-memory-growth']]) {
+    const r = spawnSync(process.execPath, [join(ROOT, 'scripts', judge, 'judge.js'), join(ROOT, 'fixtures', form), out], { encoding: 'utf8' });
+    ok(`${label}: a raw.json that cannot be parsed is a crash: exit 70, not 1`, r.status === 70 && new RegExp(`^${label}: internal failure \\(exit 70\\)`, 'm').test(r.stderr), `exit ${r.status}: ${r.stderr.trim().split('\n')[0]}`);
+  }
+  rmSync(out, { recursive: true, force: true });
+}
+
 console.log('\nThe trace judge (memory), with no twin to compare against');
 {
   // L05's trace form: each soak's heap after a full collection at each count;
