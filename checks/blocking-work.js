@@ -64,7 +64,7 @@ const WHY = {
 };
 const GUIDED_NOTE = {
   crypto: 'Use the callback form, which runs on the worker pool (crypto.pbkdf2, crypto.scrypt, ...), promisified and awaited, or move the work to a worker thread (OVL-12).',
-  zlib: 'Use the callback or stream form, which runs on the worker pool (zlib.gzip, zlib.createGzip), and await it (OVL-12).',
+  zlib: 'Take the compression off the main thread, one of two ways: the callback or stream form, which runs on the worker pool (zlib.gzip, zlib.createGzip), awaited; or a worker thread (node:worker_threads) that compresses and returns one buffer, which also keeps the output\'s chunks, and the garbage collections they cause, off the main thread for a large input (OVL-12).',
   fs: 'Use node:fs/promises and await it, or read the file once at startup if it does not change (OVL-12). existsSync has no promise form: use fs.promises.access, or open the file and handle ENOENT.',
   child_process: 'Use execFile or spawn, promisified or with their events, so the request thread is free while the child runs (OVL-12).',
   bcrypt: 'Use bcrypt.hash and bcrypt.compare, which return promises, and await them (OVL-12).',
@@ -233,7 +233,7 @@ export function run(root, { handlers: brief = [] } = {}) {
       return {
         kind: 'auto',
         edits: [{ file: relOf(sf.fileName), line: p.line + 1, column: p.character + 1, length: call.end - call.getStart(), replace: text }],
-        note: `The call is replaced by its asynchronous form, awaited, so the work runs off the request thread (OVL-12).${b.kind === 'crypto' || b.kind === 'zlib' ? ' The worker pool has 4 threads by default (UV_THREADPOOL_SIZE): heavy use queues there instead, so measure it under load.' : ''}`,
+        note: `The call is replaced by its asynchronous form, awaited, so the work runs off the request thread (OVL-12).${b.kind === 'crypto' || b.kind === 'zlib' ? ' The worker pool has 4 threads by default (UV_THREADPOOL_SIZE): heavy use queues there instead, so measure it under load.' : ''}${b.kind === 'zlib' ? ' The other way to take compression off the main thread is a worker thread (node:worker_threads) that compresses and returns one buffer: the asynchronous form still hands its output back to the main thread in chunks, which for a large input costs the main thread allocations and garbage collections that a worker keeps off it.' : ''}`,
       };
     }
     const locations = [lineOnly(call)];

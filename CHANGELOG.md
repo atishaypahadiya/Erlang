@@ -53,6 +53,7 @@ Request handlers are found in Express, Fastify, `node:http` and Next.js.
   - Timed verdicts (latencies, the event loop's longest stretch, late shares, the shedding gap) are judged under the relative timing rule.
 - **Headroom:** `scripts/trace.sh --headroom` measures each load form's clean twin, one request at a time: at every step's rate, its main thread must be busy at most 0.2 of the time, or a verdict that compares the twins under load would turn on the machine's speed. CI checks every form.
 - **Postgres** is pinned by digest, with a random password per run, and the container is removed afterwards.
+- **Local smoke:** `npm test` ends with `scripts/load-smoke.sh`: one load form for a few seconds per twin, priming start included and nothing judged. It is skipped, with a message, when k6 or Docker is absent or ITTEN's timing lock is active, and it notes when the local k6 differs from CI's (v2.3.0).
 
 ### Timing rules
 

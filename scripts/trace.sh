@@ -65,6 +65,13 @@ for a in "$@"; do
     exit 64
   fi
 done
+# The local load smoke (scripts/load-smoke.sh): load mode for a few seconds,
+# its output in dist/load-smoke/, never judged.
+OUT="$MODE"
+if [ "${ERLANG_LOAD_SMOKE:-}" = "1" ]; then
+  if [ "$MODE" != "load" ]; then echo "$MODE: ERLANG_LOAD_SMOKE is for --load only" >&2; exit 64; fi
+  OUT=load-smoke
+fi
 # Load on a workstation: one form per run (lib/load-guard.js); the full
 # suite runs in CI.
 if [ "$MODE" = "load" ] && [ "${CI:-}" != "true" ] && [ "$#" -ne 1 ]; then
@@ -195,7 +202,7 @@ for form in "${forms[@]}"; do
   rc=0
   ERLANG_TRACE_CONTAINER="$NAME" ERLANG_TRACE_PORT="$PORT" ERLANG_TRACE_IMAGE="$IMAGE" \
     ERLANG_TRACE_APP_PASSWORD_FILE="$RUN/app-password" \
-    node scripts/trace/run.js ${LOADFLAG:+"$LOADFLAG"} "fixtures/$form" "dist/$MODE/$form" "$install/node_modules" || rc=$?
+    node scripts/trace/run.js ${LOADFLAG:+"$LOADFLAG"} "fixtures/$form" "dist/$OUT/$form" "$install/node_modules" || rc=$?
   if [ "$rc" = "75" ]; then exit 75; fi
   if [ "$rc" = "70" ]; then
     echo "trace: $form: internal failure in the run (exit 70)" >&2
@@ -209,6 +216,8 @@ for form in "${forms[@]}"; do
   fi
   # The judge's 3: nothing failed, but a planted defect was only "timing
   # unreliable", so the form is not confirmed (load forms).
+  # The smoke is never judged: scripts/load-smoke.sh checks its raw output.
+  if [ "$OUT" = "load-smoke" ]; then continue; fi
   jrc=0
   node "scripts/$MODE/judge.js" "fixtures/$form" "dist/$MODE/$form" || jrc=$?
   if [ "$jrc" = "3" ]; then unreliable=1; elif [ "$jrc" = "70" ]; then internal=1; elif [ "$jrc" != "0" ]; then failed=1; fi

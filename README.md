@@ -46,7 +46,7 @@ The trace and load harnesses use the same codes, and one more: 75, temporarily b
 { "exclude": ["fixtures/"], "handlers": [{ "file": "src/worker.js", "function": "handle" }], "smallTables": ["settings"], "database": { "maxConnections": 200 }, "warmup": { "path": "/health" } }
 ```
 
-`npm test` runs every test, including a scan of this repository, which must come back clean.
+`npm test` runs every test, including a scan of this repository, which must come back clean. Its last, optional stage is a local load smoke (`scripts/load-smoke.sh`): one load form, L11's by default, for a few seconds per twin, with nothing judged, so load mode runs before a push. It is skipped, with a message, when k6 or Docker is absent or ITTEN's timing lock is active, and it notes when the local k6 differs from CI's.
 
 `npm run trace` (`scripts/trace.sh`) runs the trace harness on the fixtures: each twin is served against PostgreSQL in Docker with seeded data at 1x and 10x, and the statements, rows, calls and bytes of each request are counted and judged, with every outbound call going to a stub on 127.0.0.1 that counts it, fails it or never answers it, and the twin's pool counted (`research/trace-harness.md`). It needs Docker, sends requests one at a time to the fixture on 127.0.0.1, runs at nice 15, and waits while ITTEN's timing lock is active (`research/itten-lock.md`). It is not part of `npm test`.
 

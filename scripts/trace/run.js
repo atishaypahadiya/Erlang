@@ -82,6 +82,18 @@ const setup = (name) => (LOAD && existsSync(join(formDir, 'load', name)) ? join(
 const spec = LOAD
   ? { ...(existsSync(join(formDir, 'trace', 'trace.json')) ? readJson(join(formDir, 'trace', 'trace.json')) : {}), requests: [], pages: [], soaks: [], starts: null, ...readJson(join(formDir, 'load', 'load.json')) }
   : readJson(join(formDir, 'trace', 'trace.json'));
+// The local load smoke (scripts/load-smoke.sh, ERLANG_LOAD_SMOKE=1): load
+// mode's whole path (priming start, k6, its summary, raw output) for a few
+// seconds, never judged. One pair, the form's first judged step only, at most
+// SMOKE_SECONDS, and no cool-down between steps.
+const SMOKE = LOAD && !HEADROOM && process.env.ERLANG_LOAD_SMOKE === '1';
+const SMOKE_SECONDS = 2;
+if (SMOKE) {
+  const first = (spec.steps ?? []).find((s) => s.metric !== undefined);
+  if (!first) throw new Error('load smoke: the form has no judged step');
+  spec.steps = [{ ...first, seconds: Math.min(Number(first.seconds), SMOKE_SECONDS) }];
+  spec.repeats = 1;
+}
 const sha256 = (p) => createHash('sha256').update(readFileSync(p)).digest('hex');
 // Where the twins are: the form's own folder, or, when trace.json names
 // "twins" (a folder relative to the form, inside fixtures/), another form's
@@ -655,7 +667,7 @@ async function loadMain() {
   // a form), the twins in alternating order.
   // Pair k runs the twins in turn, planted first when k is even, clean first
   // when odd, so drift over the run falls on both alike.
-  const pairs = Math.max(Number(process.env.ERLANG_LOAD_PAIRS) || 0, spec.repeats || 3);
+  const pairs = SMOKE ? 1 : Math.max(Number(process.env.ERLANG_LOAD_PAIRS) || 0, spec.repeats || 3);
   spec.repeats = pairs;
   try { checkRun(spec, caps); } catch (e) { if (e instanceof Refused) { console.error(`load: refused: ${e.message}`); process.exit(2); } throw e; }
   const k6 = process.env.ERLANG_K6 || 'k6';
@@ -663,7 +675,7 @@ async function loadMain() {
   if (v.status !== 0) { console.error('load: k6 is not on the path. Install it from https://grafana.com/docs/k6/latest/set-up/install-k6/ (ERLANG runs it as a separate program and does not install it), or set ERLANG_K6 to its path.'); process.exit(2); }
   const lockWait = 1000 * Number(process.env.ERLANG_LOCK_WAIT_S ?? 600);
   const scale = spec.scale ?? 1;
-  const raw = { profile: mode, caps, k6: v.stdout.trim().split('\n')[0], image: process.env.ERLANG_TRACE_IMAGE ?? null, started: new Date().toISOString(), fixture: spec.fixture, form: spec.form, scale, repeats: [] };
+  const raw = { ...(SMOKE ? { smoke: true, unjudged: true } : {}), profile: mode, caps, k6: v.stdout.trim().split('\n')[0], image: process.env.ERLANG_TRACE_IMAGE ?? null, started: new Date().toISOString(), fixture: spec.fixture, form: spec.form, scale, repeats: [] };
   const works = {};
   for (const twin of ['planted', 'clean']) {
     const out = join(outDir, twin);
@@ -698,7 +710,7 @@ async function loadMain() {
           stubFor(step.upstream ?? {});
           const before = environment();
           const result = await runK6(k6, app, step, join(out, `r${k + 1}-${step.id}`), caps);
-          const after = await cooled();
+          const after = SMOKE ? { ...environment(), cooledAfterS: null, smoke: true } : await cooled();
           console.log(`load: ${spec.fixture} ${twin} repeat ${k + 1} ${step.id}: ${result.interrupted ? 'interrupted by ITTEN\'s lock' : `${result.counts.requests} requests, ${result.counts.ok} ok, ${result.counts.refused} refused, ${result.counts.failed} failed`}`);
           steps.push({ id: step.id, method: step.method ?? 'GET', path: step.path, route: step.route ?? routeOf(app.routes, step.method ?? 'GET', step.path), rate: step.rate, seconds: step.seconds, ...result, environment: { before, after } });
           if (result.interrupted) break;

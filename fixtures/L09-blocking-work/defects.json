@@ -48,7 +48,8 @@
         "symbol": "exportOrders"
       },
       "fix": "auto",
-      "fixedInClean": "zlib.gzip, awaited"
+      "fixedInClean": "a worker thread (node:worker_threads) that compresses and returns one buffer; zlib.gzip, awaited, also takes it off the main thread but hands its output back in chunks",
+      "fixedIn": ["src/workers/export.js"]
     },
     {
       "id": "L09-4",
