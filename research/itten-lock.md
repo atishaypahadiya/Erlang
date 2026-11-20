@@ -61,7 +61,7 @@ As decided by the owner, and implemented in `lib/itten-lock.js` (unit cases in `
 - **Location.** `timing-<pid>.json` in the first of `$ITTEN_LOCK_DIR`, `$XDG_STATE_HOME/itten/locks` and `$HOME/.local/state/itten/locks` that is set. Only names matching `timing-<digits>.json` are locks. A missing directory means no locks.
 - **Active:** the file parses, `format` is `itten-timing-lock/1`, the pid is alive (`kill(pid, 0)` succeeds or fails with `EPERM`) and now is before `expires`. A file that cannot be read or parsed counts as active too.
 - **Stale:** the pid is dead, or now is at or past `expires`. ERLANG ignores it and leaves it in place.
-- A file that parses, in another `format`, with a live pid and a future expiry is neither: the rule does not make it active, so ERLANG does not wait for it (docs/decisions.md, Q5).
+- A file that parses, in another `format`, counts as active, as one that cannot be parsed does, unless its pid is dead or its expiry past (the owner, 19 November 2026; docs/decisions.md, Q5): a newer ITTEN is not timed under load while ERLANG learns its format.
 - **Behaviour.** ERLANG generates no load while any lock is active. It waits, rereading about once a second, up to a limit (`ERLANG_LOCK_WAIT_S`, 600 s by default), then stops with exit 75, naming the lock: its file, phase, project, pid and expiry. It rereads immediately before starting load. The trace harness, which is not load, follows the same rule, at its start and before each twin, in place of its earlier check for ITTEN's inspector process.
 
 The load harness also checks during each load step, as proposed: if a lock appears mid-step, ERLANG stops sending, waits for the requests in flight up to their timeout, discards the step's results and reports the step as interrupted.
@@ -83,7 +83,7 @@ ERLANG never writes, renews or removes a lock file.
 | Dead pid, `expires` in the future | Stale; load allowed. |
 | Live pid, `expires` in the past | Stale; load allowed. |
 | Unparsable or unreadable file | Active; the stop names the file. |
-| Another `format`, live pid, future expiry | Neither active nor stale: not waited for (Q5). |
+| Another `format`, live pid, future expiry | Active: waited for (Q5). |
 | Only a `.tmp` file | Ignored; load allowed. |
 | Lock appears 10 s into a load step | Sending stops within 5 s; the step is reported interrupted, its results discarded. |
 | Two ITTEN processes each hold a lock; one ends | The other's lock still refuses load. |

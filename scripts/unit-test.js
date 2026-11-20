@@ -175,7 +175,7 @@ console.log('\nITTEN\'s timing lock (honoured, never written)');
   ok('stale: the pid is dead', seen['timing-2.json'] === 'stale');
   ok('stale: now at expires', seen['timing-3.json'] === 'stale');
   ok('a file that cannot be parsed counts as active', seen['timing-4.json'] === 'active');
-  ok('another format is not made active by the rule (docs/decisions.md, Q5)', seen['timing-5.json'] === 'other');
+  ok('a lock in another format, live pid, future expiry, counts as active (docs/decisions.md, Q5)', seen['timing-5.json'] === 'active');
   ok('describe names the file, phase, project, pid and expiry', /timing-1\.json: ITTEN benchmark run of shop, pid 4242, until 2026-11-19T12:10:00Z/.test(LOCK.describe(LOCK.active({ env, now, isAlive })[0])));
   const t0 = Date.now();
   const lines = [];
@@ -186,8 +186,8 @@ console.log('\nITTEN\'s timing lock (honoured, never written)');
   ok('a wait is logged with the lock\'s phase, taken and expires, then how long it lasted and the total; one JSON line per wait', /^lock-wait: unit: waiting on ITTEN's lock: phase \S+, taken \S+, expires \S+/.test(lines[0] ?? '') && /waited \d+\.\d s .*limit reached; total waited by this process \d+\.\d s/.test(lines.at(-1) ?? '') && rec?.outcome === 'limit reached' && rec.ms >= 1000 && rec.segments.length >= 1 && 'phase' in rec.segments[0] && 'expires' in rec.segments[0], lines.join(' | '));
   ok('waitForNoLock rereads until its limit, then returns the active lock', !!held && Date.now() - t0 >= 1400, `${Date.now() - t0} ms`);
   ok('nothing in the lock directory is written or deleted', Object.entries(before).every(([f, t]) => existsSync(join(dir, f)) && readFileSync(join(dir, f), 'utf8') === t) && readdirSync(dir).length === Object.keys(files).length);
-  for (const f of ['timing-1.json', 'timing-4.json']) rmSync(join(dir, f));
-  ok('with only stale, other and non-lock files left, nothing is active', (await LOCK.waitForNoLock({ env, now, isAlive, limitMs: 0, log: () => {} })) === null);
+  for (const f of ['timing-1.json', 'timing-4.json', 'timing-5.json']) rmSync(join(dir, f));
+  ok('with only stale and non-lock files left, nothing is active', (await LOCK.waitForNoLock({ env, now, isAlive, limitMs: 0, log: () => {} })) === null);
   rmSync(dir, { recursive: true, force: true });
 }
 
