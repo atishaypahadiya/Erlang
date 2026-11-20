@@ -136,7 +136,17 @@ If the gate does not hold, nothing is tagged; the differing form is reported wit
 
 ## Fixture database settings
 
-A trace form may set its fixture database's settings in trace.json `database`, applied with `alter database` when the database is made, so that every session of either twin has them and no app code sets them. Only `synchronous_commit` (`on`, `off` or `local`) is allowed. L11 runs with `synchronous_commit = off`: a commit returns before its WAL reaches disk, so a write's time no longer swings with the flush (the owner, 20 November 2026). Nothing the trace judges depends on durability.
+A trace form may set its fixture database's settings in trace.json `database`, applied with `alter database` when the database is made, so that every session of either twin has them and no app code sets them. Only `synchronous_commit` (`on`, `off` or `local`) is allowed. Both of L11's forms run with `synchronous_commit = off`: a commit returns before its WAL reaches disk, so a write's time no longer swings with the flush (the owner, 20 November 2026). Nothing the trace judges depends on durability.
+
+## Trace diagnostics
+
+Every trace run records, for explaining a timing after the fact (the owner, 20 November 2026; none of it is judged):
+
+- the database server's log, with every checkpoint and every autovacuum and its time (`log_checkpoints`, `log_autovacuum_min_duration = 0`), in `dist/trace/postgres.log`;
+- every garbage collection in the twin, with its wall-clock time, kind and duration, in the twin's `twin.log`;
+- for each start (judge `starts`): the rows and WAL the database had taken since the seed and the checkpoints since it, and, for each route's first request, its wall-clock time and the collections that ran during it, in `raw.json`.
+
+Two measured runs of one request are compared on everything but the fields the run lists as measured (`RUN_MEASURED` in `lib/trace-judge.js`: its time, bytes, the load average, the loop and the pool before it), through the same path mechanism as finding/1's `measured`.
 
 ## Warm-ups and collections on a real project
 

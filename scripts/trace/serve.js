@@ -28,7 +28,8 @@ import http from 'node:http';
 import https from 'node:https';
 import net from 'node:net';
 import { syncBuiltinESMExports } from 'node:module';
-import { monitorEventLoopDelay, performance } from 'node:perf_hooks';
+import { monitorEventLoopDelay, performance, PerformanceObserver, constants as PERF } from 'node:perf_hooks';
+import { writeSync } from 'node:fs';
 import * as TIMERS from './timers.js';
 import { writeFileSync, renameSync, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -101,6 +102,21 @@ let loopOn = false;
 const loopEnable = () => { if (!loopOn) { loop.enable(); loopOn = true; } };
 let dbModule = null;
 let eluFrom = null;
+// Garbage collection, logged (diagnostics, the owner, 20 November 2026):
+// every collection is written to the twin's log with its wall-clock time,
+// kind and duration, and kept until the harness asks for them (probe "gcs").
+const GC_KINDS = { [PERF.NODE_PERFORMANCE_GC_MAJOR]: 'major', [PERF.NODE_PERFORMANCE_GC_MINOR]: 'minor', [PERF.NODE_PERFORMANCE_GC_INCREMENTAL]: 'incremental', [PERF.NODE_PERFORMANCE_GC_WEAKCB]: 'weakcb' };
+let gcs = [];
+const gcNote = (list) => {
+  for (const e of list) {
+    const g = { at: performance.timeOrigin + e.startTime, ms: Number(e.duration.toFixed(3)), kind: GC_KINDS[e.detail?.kind] ?? String(e.detail?.kind) };
+    gcs.push(g);
+    writeSync(2, `gc ${new Date(g.at).toISOString()} ${g.kind} ${g.ms} ms\n`);
+  }
+};
+const gcObserver = new PerformanceObserver((l) => gcNote(l.getEntries()));
+gcObserver.observe({ entryTypes: ['gc'] });
+
 process.on('message', async (m) => {
   const reply = (body) => process.send?.({ id: m.id, ...body });
   try {
@@ -108,6 +124,11 @@ process.on('message', async (m) => {
       dbModule ??= existsSync(join(root, 'src', 'db.js')) ? await import(pathToFileURL(join(root, 'src', 'db.js')).href) : {};
       const p = dbModule.pool;
       reply(p ? { total: p.totalCount, idle: p.idleCount, waiting: p.waitingCount } : { error: 'no pool exported from src/db.js' });
+    } else if (m.probe === 'gcs') {
+      // The collections since the last ask, then forgotten.
+      gcNote(gcObserver.takeRecords?.() ?? []);
+      reply({ gcs });
+      gcs = [];
     } else if (m.probe === 'gc') {
       if (global.gc) { global.gc(); global.gc(); }
       reply({ collected: !!global.gc });

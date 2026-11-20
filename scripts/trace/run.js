@@ -40,7 +40,7 @@ import { createHash } from 'node:crypto';
 import { request as httpRequest, createServer } from 'node:http';
 import { gunzipSync, brotliDecompressSync, inflateSync } from 'node:zlib';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { expand, routeOf, track, unreadBytes, unreadFields } from '../../lib/trace-judge.js';
+import { expand, routeOf, track, unreadBytes, unreadFields, RUN_MEASURED, runShape } from '../../lib/trace-judge.js';
 import { environment } from '../../lib/timing.js';
 import { warmupFor, FALLBACK_BODY } from '../../lib/scope.js';
 import { randomBytes } from 'node:crypto';
@@ -138,6 +138,20 @@ function prismaSql(schema, out) {
 // the trace judges depends on durability.
 const DATABASE_SETTINGS = { synchronous_commit: /^(on|off|local)$/ };
 
+// What the database had taken before a start (diagnostics, the owner, 20
+// November 2026), each since the seed: rows written (pg_stat_user_tables),
+// WAL written, and checkpoints (pg_stat_checkpointer). Read as the
+// superuser, in a session of its own, after the previous process is gone.
+let seedMark = null;
+function dbMark() {
+  const [rows, lsn, checkpoints] = psql('postgres', DB, 'select coalesce(sum(n_tup_ins + n_tup_upd + n_tup_del), 0), pg_current_wal_lsn(), (select num_timed + num_requested from pg_stat_checkpointer) from pg_stat_user_tables;\n').split('|');
+  return { rows: Number(rows), lsn, checkpoints: Number(checkpoints) };
+}
+function sinceSeed() {
+  const m = dbMark();
+  return { rowsWritten: m.rows - seedMark.rows, walBytes: Number(psql('postgres', DB, `select pg_wal_lsn_diff('${m.lsn}', '${seedMark.lsn}');\n`)), checkpoints: m.checkpoints - seedMark.checkpoints };
+}
+
 function freshDatabase(scale, twinDir) {
   psql('postgres', 'postgres', `drop database if exists ${DB} with (force);\ncreate database ${DB} owner ${ROLE};\n`);
   // The form's database settings (trace.json "database"), set on the
@@ -158,6 +172,7 @@ function freshDatabase(scale, twinDir) {
   }
   psql(ROLE, DB, readFileSync(setup('seed.sql'), 'utf8'), { scale });
   psql(ROLE, DB, 'analyze;\n');
+  seedMark = dbMark();
   const counts = psql(ROLE, DB, "select format('select %L, count(*) from %I', table_name, table_name) from information_schema.tables where table_schema = 'public' and table_type = 'BASE TABLE' order by 1\n\\gexec\n");
   return Object.fromEntries(counts.split('\n').filter(Boolean).map((l) => { const [t, c] = l.split('|'); return [t, Number(c)]; }));
 }
@@ -362,13 +377,12 @@ async function measureRequest(app, r, n) {
       statements: stats,
       load1: Number(loadavg()[0].toFixed(2)),
       ...extra,
+      measured: RUN_MEASURED,
     });
   }
   const w = count >= 3 ? runs[0] : null;
   const [a, b] = runs.slice(-2);
-  const kept = (x) => x.poolAfter && (x.poolAfter.total - x.poolAfter.idle) - (x.poolBefore.total - x.poolBefore.idle);
-  const shape = (x) => JSON.stringify({ ...x, bytes: 0, ms: 0, load1: undefined, upstream: x.upstream?.length, loop: undefined, poolBefore: undefined, poolAfter: kept(x), connections: x.connections?.opened, plans: x.plans && scans(x.plans), logged: x.logged?.length, statements: x.logged ? Object.fromEntries(Object.entries(x.statements).map(([q, v]) => [q, v.calls])) : x.statements });
-  const stable = shape(a) === shape(b);
+  const stable = runShape(a, scans) === runShape(b, scans);
   const keep = (x) => ({ timedOut: x.timedOut, ...(x.upstream ? { upstream: x.upstream } : {}), ...(x.timers ? { timers: x.timers } : {}), ...(x.poolAfter ? { poolBefore: x.poolBefore, poolAfter: x.poolAfter } : {}), ms: x.ms, ...(x.loop ? { loop: x.loop } : {}), ...(x.connections ? { connections: x.connections } : {}), ...(x.logged ? { logged: x.logged, cacheHeaders: x.cacheHeaders, statements: x.statements } : {}), ...(x.plans ? { plans: x.plans } : {}) });
   return { id: r.id, method: r.method, path, route: r.route ?? routeOf(app.routes, r.method, path), ...b, stable, ...(stable ? {} : { other: a }), ...(r.upstream || r.probes || spec.params || spec.plans ? { ...(w ? { warm: keep(w) } : {}), first: keep(a), last: keep(b) } : {}), samples: runs.map((x) => ({ ms: x.ms, load1: x.load1, ...(x.loop ? { loopMaxMs: x.loop.maxMs } : {}), ...(x.upstream ? { attempts: x.upstream.length } : {}) })) };
 }
@@ -519,6 +533,7 @@ for (const twin of ['planted', 'clean']) {
       const warmups = [];
       const byRoute = new Map(spec.starts.map((r) => [r.id, []]));
       for (let k = 0; k < count; k++) {
+        const db = sinceSeed();
         const fresh = await serve(work, scale, log);
         try {
           await paced();
@@ -541,9 +556,19 @@ for (const twin of ['planted', 'clean']) {
           const seen = [];
           for (const [position, r] of order.entries()) {
             const runs = [];
-            for (let j = 0; j < (r.after ?? 5) + 1; j++) { await paced(); const { res, extra } = await once(fresh, r, expand(r.path, n), r.body === undefined ? undefined : expand(r.body, n)); if (!res || res.status >= 400) throw new Error(`start ${r.id}: ${r.method} answered ${res?.status ?? 'nothing'}`); runs.push({ ms: extra.ms }); }
+            let at = null, gcs = null;
+            for (let j = 0; j < (r.after ?? 5) + 1; j++) {
+              await paced();
+              // Around the first request: its wall-clock time, and the
+              // collections that ran during it.
+              if (j === 0) { await fresh.probe('gcs'); at = new Date().toISOString(); }
+              const { res, extra } = await once(fresh, r, expand(r.path, n), r.body === undefined ? undefined : expand(r.body, n));
+              if (j === 0) gcs = (await fresh.probe('gcs')).gcs.map((g) => ({ at: new Date(g.at).toISOString(), kind: g.kind, ms: g.ms }));
+              if (!res || res.status >= 400) throw new Error(`start ${r.id}: ${r.method} answered ${res?.status ?? 'nothing'}`);
+              runs.push({ ms: extra.ms });
+            }
             const later = runs.slice(1).map((x) => x.ms);
-            seen.push({ id: r.id, sample: { start: k, position, warmupMs: w.extra.ms, firstMs: runs[0].ms, laterMs: later, extraMs: runs[0].ms - median(later), load1: Number(loadavg()[0].toFixed(2)) } });
+            seen.push({ id: r.id, sample: { start: k, position, warmupMs: w.extra.ms, firstMs: runs[0].ms, laterMs: later, extraMs: runs[0].ms - median(later), load1: Number(loadavg()[0].toFixed(2)), at, gcs, db } });
           }
           // The baseline: the cheapest route's extra in this process; with
           // the 404 fallback, the 404 request's own time (the owner, 19

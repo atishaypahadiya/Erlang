@@ -98,7 +98,7 @@ A trace or load finding carries the values its message quotes: `erlang.values.me
   | L11 trace, warm-up form | decoy above the baseline | 4 to 7 ms | 20 |
   | L11 trace, fallback form | clean twin's largest extra | 12 ms | 25 |
 
-- **Routes that commit on L11:** a route whose first request writes to the database can read "timing unreliable" in the cold-start trace, because each commit waits on the disk's flush and that wait varies by several milliseconds. The remedy for a trace database is `synchronous_commit = off`, set on the database (trace.json `database`), not in app code; L11's fixture runs with it.
+- **Routes that commit on L11:** a route whose first request writes to the database can read "timing unreliable" in the cold-start trace, because each commit waits on the disk's flush and that wait varies by several milliseconds. The remedy for a trace database is `synchronous_commit = off`, set on the database (trace.json `database`), not in app code; both of L11's forms run with it.
 - **The 404 fallback** (a GET and a POST with a small JSON body to a random path that cannot match a route) warms the framework and its body parser, not the database driver. A route whose first request pays for the driver can look cold until a `warmup` route is configured.
 - **Stacks:**
   - Node only; no Python set yet.

@@ -828,6 +828,17 @@ console.log('\nmissing-index: schemas, predicates and fixes');
 
 console.log('\nTrace judgements (lib/trace-judge.js)');
 {
+  // Two measured runs of one request match on everything but the fields a
+  // run lists as measured (lib/trace-judge.js runShape, through the
+  // finding/1 mechanism); a count that differs is never ignored.
+  const run = (o = {}) => ({ status: 200, timedOut: false, bytes: 2048, ms: 4.1, load1: 3.2, loop: { maxMs: 1.2 }, statements: { 'select * from orders where id = $1': { calls: 3, rows: 3 } }, items: 3, ...o, measured: TJ.RUN_MEASURED });
+  const same = (a, b) => TJ.runShape(a) === TJ.runShape(b);
+  ok('runs that differ only in measured values (time, bytes, load average, the loop) match', same(run(), run({ ms: 9.7, bytes: 2051, load1: 5.6, loop: { maxMs: 3.4 } })));
+  ok('runs whose statement count differs do not match', !same(run(), run({ statements: { 'select * from orders where id = $1': { calls: 4, rows: 4 } } })));
+  ok('runs whose item count differs do not match, whatever their measured values', !same(run(), run({ items: 4, ms: 4.1, load1: 3.2 })));
+  ok('a field a run does not list as measured is compared', !same(run({ measured: undefined }), { ...run({ load1: 9.9 }), measured: undefined }) && !same({ ...run(), measured: [] }, { ...run({ load1: 9.9 }), measured: [] }));
+}
+{
   const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
   ok('expand: $n and $i as whole values become numbers, inside strings they are substituted', eq(TJ.expand({ ids: { $repeat: '$n', item: '$i' }, rows: { $repeat: 2, item: { sku: 'sku-$i', n: '$n' } }, path: '/x?limit=$n' }, 3), { ids: [1, 2, 3], rows: [{ sku: 'sku-1', n: 3 }, { sku: 'sku-2', n: 3 }], path: '/x?limit=3' }));
   {

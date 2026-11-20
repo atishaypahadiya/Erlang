@@ -10,6 +10,7 @@
 #        trace.json. --load runs the load harness instead (scripts/load.sh,
 #        research/load-harness.md) on each form's load/load.json, with k6.
 # Outputs: dist/trace/<id>/<form>/<twin>/{raw.json,report.json,twin.log};
+#          dist/trace/postgres.log, the database server's log;
 #          with --load, dist/load/<id>/<form>/{raw.json,<twin>/report.json}.
 # Exit codes: 0 every form as expected; 1 a form was not; 2 cannot run
 # (Docker, or Postgres did not start); 64 bad usage; 75 ITTEN's timing lock
@@ -93,6 +94,9 @@ umask 077
 mkdir -p "$RUN"
 chmod 700 "$RUN"
 cleanup() {
+  # The server's log (checkpoints and autovacuum, each with its time) is kept
+  # beside the reports: dist/trace/postgres.log.
+  docker logs "$NAME" > "$ROOT/dist/trace/postgres.log" 2>&1 || true
   docker rm -f "$NAME" >/dev/null 2>&1 || true
   rm -rf "$RUN"
 }
@@ -110,7 +114,9 @@ docker run -d --rm --name "$NAME" --cpus 1 --memory 1g \
   "$IMAGE" \
   -c shared_preload_libraries=pg_stat_statements \
   -c pg_stat_statements.track=top \
-  -c pg_stat_statements.track_utility=off >/dev/null
+  -c pg_stat_statements.track_utility=off \
+  -c log_checkpoints=on \
+  -c log_autovacuum_min_duration=0 >/dev/null
 
 ready=0
 for _ in $(seq 1 90); do

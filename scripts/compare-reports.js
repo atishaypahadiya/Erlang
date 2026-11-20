@@ -22,6 +22,7 @@
 import { readFileSync, readdirSync, existsSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { exitOnCrash } from '../lib/crash.js';
+import { dropPath } from '../lib/values.js';
 
 exitOnCrash('compare-reports');
 
@@ -47,27 +48,13 @@ function reportsOf(dir) {
   return out;
 }
 
-// Removes a finding/1 path ("a.b[].c") from x, in place.
-function drop(x, path) {
-  const [head, ...rest] = path.split('.');
-  if (x == null || typeof x !== 'object') return;
-  const list = head.endsWith('[]');
-  const key = list ? head.slice(0, -2) : head;
-  if (!rest.length) {
-    if (!list) delete x[key];
-    else if (Array.isArray(x[key])) x[key] = x[key].map(() => '(measured)');
-    return;
-  }
-  if (list) { if (Array.isArray(x[key])) for (const item of x[key]) drop(item, rest.join('.')); } else drop(x[key], rest.join('.'));
-}
-
 function normalize(report) {
   const r = structuredClone(report);
   for (const k of REPORT_MEASURED) delete r[k];
   if (r.erlang) for (const k of REPORT_MEASURED) delete r.erlang[k];
   r.findings = (r.findings ?? []).map((f) => {
     for (const p of f.measured ?? []) {
-      if (p !== 'message') drop(f, p);
+      if (p !== 'message') dropPath(f, p);
       else if (typeof f.erlang?.template === 'string') delete f.message;
       else f.message = String(f.message).replace(/\d[\d,.]*/g, '#');
     }
