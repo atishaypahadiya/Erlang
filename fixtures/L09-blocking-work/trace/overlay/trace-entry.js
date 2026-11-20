@@ -7,7 +7,7 @@
 //   - one account with both hashes of its password, for POST /login: a
 //     bcrypt hash at cost 12, which the planted twin checks, and a scrypt
 //     hash, which the clean twin checks;
-//   - 200,000 orders, about 30 MB of JSON, for GET /export, saved in one
+//   - 1,000,000 orders, about 100 MB of JSON, for GET /export, saved in one
 //     batch (the store makes their JSON bytes and ETag once, when they change).
 import crypto from 'node:crypto';
 import bcrypt from 'bcryptjs';
@@ -17,7 +17,7 @@ const scryptSalt = crypto.randomBytes(16).toString('hex');
 const scryptHash = crypto.scryptSync('correct horse', Buffer.from(scryptSalt, 'hex'), 64).toString('hex');
 await store.saveUser({ email: 'old@example.test', legacyHash: bcrypt.hashSync('correct horse', 12), scryptSalt, scryptHash });
 const orders = [];
-for (let i = 1; i <= 200_000; i++) {
+for (let i = 1; i <= 1_000_000; i++) {
   orders.push({ id: i, customer: `c${i % 997}`, total: 1000 + (i % 5000), status: ['new', 'paid', 'shipped'][i % 3], items: [{ sku: `sku-${i % 211}`, quantity: 1 + (i % 4) }] });
 }
 await store.saveOrders(orders);

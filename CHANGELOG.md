@@ -59,6 +59,9 @@ Request handlers are found in Express, Fastify, `node:http` and Next.js.
 - **Count-based verdicts** never depend on the machine's load.
 - **The relative timing rule (c):** for a verdict comparing two conditions measured together. Five repeats; a finding when every repeat clears the threshold, none when no repeat does, and unreliable (info, never failing) for a mix. Pairs alternate twin order. Spread and load average are recorded but gate nothing.
 - **Absolute waits** (L06's fixed wait between retries): judged on the delay the code declares, recorded from the twin's timers (the global `setTimeout`, `node:timers`, and `node:timers/promises`' `setTimeout` and `scheduler.wait`), not on a clock; no load average or spread gates it. Retries spaced apart with no timer seen are info, "wait not observed", never clean.
+- **Priming start:** before the judged repeats of a timed form, trace or load, each twin is started once with the warm-up and one request per judged route; nothing from it is judged, and its figures are kept in the raw output, marked unjudged.
+- **Planted margin:** the fixture suite fails when a planted defect clears its bar by less than 2x (for a share bounded by 1, half way to 1 when twice is past it).
+- **Headroom** fails only on judged steps; warm-up steps are printed.
 - **Decoy margin:** in a timed form, every decoy stays at most half way to its bar on at least one of the bar's conditions; the judges print it on `DECOY` lines and fail the form when it is not.
 - **ITTEN's timing lock:** the harnesses generate no load while it is active. They wait and log every wait (phase, taken, expires, duration). A lock in an unknown format counts as active.
 

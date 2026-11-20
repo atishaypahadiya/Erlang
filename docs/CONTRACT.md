@@ -138,6 +138,22 @@ If the gate does not hold, nothing is tagged; the differing form is reported wit
 
 A trace form may set its fixture database's settings in trace.json `database`, applied with `alter database` when the database is made, so that every session of either twin has them and no app code sets them. Only `synchronous_commit` (`on`, `off` or `local`) is allowed. Both of L11's forms run with `synchronous_commit = off`: a commit returns before its WAL reaches disk, so a write's time no longer swings with the flush (the owner, 20 November 2026). Nothing the trace judges depends on durability.
 
+## Priming start on a real project
+
+Before the judged repeats of a timed form, the trace and load harnesses start each twin, or the app, once more (the owner, 20 November 2026). That start gets a fresh database, the same warm-up as a measured start (the form's own route, the app's `warmup`, or the fallback's GET and JSON POST to a random path, then a full collection), and one request to each judged route: in a trace, each route the judge reads; under load, each judged step's request and its background's, with `$i` replaced by a number no step uses. Then it is stopped, and nothing from it is judged. Its figures are saved in the raw output under `priming`, marked `"unjudged": true`. The number of judged repeats is unchanged.
+
+It takes out of the first judged repeat the costs that belong to the machine, not to the code: a cold disk cache, a database server's first sessions, the first process to load the code. In seven CI runs before it, the twin that went first had its highest first-request time in pair 1 in six (L11's price step: 629.5, 350.7, 42.6, 39.0, 28.9 and 89.7 ms against 6.8 to 48.2 in pairs 2 to 5).
+
+A form is timed when a verdict reads a time: under load, a step whose metric is not a count (`COUNT_METRICS` in `lib/timing.js`); in a trace, the judges `loop` and `starts` (`TIMED_TRACE_JUDGES`).
+
+## Margins in the fixture suite
+
+Two checks on ERLANG's own fixtures, never on a real project's findings (the owner, 20 November 2026; `fixtures/PLAN.md`):
+
+- **Decoy margin:** in a timed form, every decoy's sample keeps some condition of its bar at most half way.
+- **Planted margin:** every planted defect's sample clears every condition of its bar by 2x: twice the time or count, twice the ratio times the other twin's value. For a share bounded by 1 (a late share, the loop's share of a request), twice the bar when that is at most 1, else half way from the bar to 1 (L09's trace: a share of 0.85 for the 0.7 bar). Expected misses are printed and skipped.
+- **Headroom:** only judged steps can fail it; unjudged steps (warm-ups) are printed with their figures.
+
 ## Trace diagnostics
 
 Every trace run records, for explaining a timing after the fact (the owner, 20 November 2026; none of it is judged):

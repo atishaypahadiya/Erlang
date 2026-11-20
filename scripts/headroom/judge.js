@@ -20,12 +20,16 @@ const file = join(outDir, 'headroom.json');
 if (!existsSync(file)) { console.log(`FAIL  ${formDir}: no headroom.json: run scripts/trace.sh --headroom`); process.exit(1); }
 const h = JSON.parse(readFileSync(file, 'utf8'));
 const fmt = (x) => x.toFixed(2);
+// Only judged steps can fail it (the owner, 20 November 2026); an unjudged
+// step (a warm-up, no metric) is printed with its figures and marked so. A
+// row with no "judged" field is judged.
+const judged = (r) => r.judged !== false;
 let over = 0;
 for (const r of h.rows) {
-  const ok = r.busy <= HEADROOM_MAX;
+  const ok = !judged(r) || r.busy <= HEADROOM_MAX;
   if (!ok) over++;
-  console.log(`HEADROOM  ${h.fixture} ${h.form} clean ${r.step}: ${r.rate}/s x ${fmt(r.ms)} ms (${r.method} ${r.path})${r.background ? ` + ${r.background.rate}/s x ${fmt(r.background.ms)} ms (${r.background.method} ${r.background.path})` : ''} = busy ${r.busy.toFixed(3)}${ok ? '' : `, over ${HEADROOM_MAX}`}`);
+  console.log(`HEADROOM  ${h.fixture} ${h.form} clean ${r.step}: ${r.rate}/s x ${fmt(r.ms)} ms (${r.method} ${r.path})${r.background ? ` + ${r.background.rate}/s x ${fmt(r.background.ms)} ms (${r.background.method} ${r.background.path})` : ''} = busy ${r.busy.toFixed(3)}${!judged(r) ? ' (unjudged step: printed, not failed)' : ok ? '' : `, over ${HEADROOM_MAX}`}`);
 }
-const max = Math.max(...h.rows.map((r) => r.busy));
-console.log(`${over ? 'FAIL' : 'PASS'}  ${h.fixture} ${h.form} headroom: the clean twin's main thread is busy at most ${max.toFixed(3)} of the time at any step's rate (bar ${HEADROOM_MAX})${over ? `; ${over} step(s) over` : ''}`);
+const max = Math.max(0, ...h.rows.filter(judged).map((r) => r.busy));
+console.log(`${over ? 'FAIL' : 'PASS'}  ${h.fixture} ${h.form} headroom: the clean twin's main thread is busy at most ${max.toFixed(3)} of the time at any judged step's rate (bar ${HEADROOM_MAX})${over ? `; ${over} step(s) over` : ''}`);
 process.exit(over ? 1 : 0);

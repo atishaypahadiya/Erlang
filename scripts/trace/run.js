@@ -41,7 +41,7 @@ import { request as httpRequest, createServer } from 'node:http';
 import { gunzipSync, brotliDecompressSync, inflateSync } from 'node:zlib';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { expand, routeOf, track, unreadBytes, unreadFields, RUN_MEASURED, runShape } from '../../lib/trace-judge.js';
-import { environment } from '../../lib/timing.js';
+import { environment, COUNT_METRICS, TIMED_TRACE_JUDGES } from '../../lib/timing.js';
 import { warmupFor, FALLBACK_BODY } from '../../lib/scope.js';
 import { randomBytes } from 'node:crypto';
 import { loadavg } from 'node:os';
@@ -474,6 +474,63 @@ if (LOAD) {
   process.exit(0);
 }
 
+// The warm-up a start gets before anything is measured: the form's own
+// route, the app's, or the fallback (a GET, then a POST with a small JSON
+// body, to a path with a random suffix; the GET's time is the baseline),
+// then a full collection, so garbage left by the start is not collected
+// inside a measured request.
+async function sendWarmup(app, warmup) {
+  const fallbackPath = warmup.source === 'fallback' ? `${warmup.path}${randomBytes(8).toString('hex')}` : null;
+  const w = await once(app, warmup, fallbackPath ?? warmup.path, warmup.body);
+  const status = w.res?.status ?? null;
+  if (fallbackPath) {
+    const p = await once(app, { ...warmup, method: 'POST' }, fallbackPath, FALLBACK_BODY);
+    const ps = p.res?.status ?? null;
+    if (ps === null || ps >= 500) throw new Error(`warm-up POST ${warmup.path}<random> (fallback) answered ${ps ?? 'nothing'}`);
+  }
+  await app.probe('gc');
+  if (warmup.source === 'fallback' ? status === null || status >= 500 : status === null || status >= 400) throw new Error(`warm-up ${warmup.method} ${warmup.path} (${warmup.source}) answered ${status ?? 'nothing'}`);
+  return { w, status };
+}
+
+// The priming start (the owner, 20 November 2026): before the judged
+// repeats of a timed form, trace or load, each twin is started once against
+// a fresh database, sent the warm-up and one request per judged route, and
+// stopped. Nothing from it is judged; its numbers are kept in the raw
+// output, marked unjudged. It takes the first start's costs that are the
+// machine's, not the twin's (a cold disk cache, a fresh database server),
+// out of the first judged repeat. The number of judged repeats is unchanged.
+const TIMED_FORM = LOAD
+  ? (spec.steps ?? []).some((s) => s.metric !== undefined && !COUNT_METRICS.has(s.metric))
+  : TIMED_TRACE_JUDGES.has(spec.judge);
+async function primingStart(work, scale, log, twinDir, routes) {
+  freshDatabase(scale, twinDir);
+  const app = await serve(work, scale, log);
+  const out = { unjudged: true, started: new Date().toISOString(), scale, warmup: null, requests: [] };
+  try {
+    const warmup = warmupOf(twinDir);
+    await paced();
+    const { w, status } = await sendWarmup(app, warmup);
+    out.warmup = { source: warmup.source, method: warmup.method, path: warmup.path, status, ms: w.extra.ms };
+    for (const q of routes) {
+      await paced();
+      stubFor(q.upstream ?? {});
+      const t = performance.now();
+      let status = null;
+      try { status = (await send(app.port, (q.method ?? 'GET').toUpperCase(), q.path, q.body, Math.min(q.timeoutMs ?? 10_000, 10_000)))?.status ?? null; } catch (e) { if (e.code !== 'ERLANG_TIMEOUT') throw e; }
+      out.requests.push({ id: q.id, method: (q.method ?? 'GET').toUpperCase(), path: q.path, status, ms: Number((performance.now() - t).toFixed(3)) });
+    }
+  } finally { await app.stop(); stubFor(); }
+  console.log(`trace: ${spec.fixture} ${spec.form}: priming start, ${out.requests.length} request(s) after the warm-up, not judged`);
+  return out;
+}
+// One request per judged route, as the priming start sends it: a load
+// step's own request and its background's, "$i" a number no step uses.
+const primingRoutesOf = (n) => LOAD
+  ? (spec.steps ?? []).filter((s) => s.metric !== undefined).flatMap((s) => [s, ...(s.background ? [{ ...s.background, id: `${s.id} background`, upstream: s.upstream }] : [])])
+    .map((q) => ({ ...q, path: String(q.path).replaceAll('%24i', '999999').replaceAll('$i', '999999'), body: q.body === undefined ? undefined : JSON.parse(JSON.stringify(q.body).replaceAll('$i', '999999')) }))
+  : (spec.judge === 'starts' ? spec.starts ?? [] : spec.requests ?? []).map((q) => ({ ...q, path: expand(q.path, n), body: q.body === undefined ? undefined : expand(q.body, n) }));
+
 for (const twin of ['planted', 'clean']) {
   // ITTEN's timing lock, reread immediately before each twin starts.
   const held = await waitForNoLock({ label: `trace ${spec.fixture} ${spec.form} ${twin}`, limitMs: 1000 * Number(process.env.ERLANG_LOCK_WAIT_S ?? 600), onWait: (l) => console.error(`trace: waiting for ITTEN's timing lock: ${describeLock(l)}`) });
@@ -494,6 +551,7 @@ for (const twin of ['planted', 'clean']) {
   symlinkSync(modules, join(work, 'node_modules'), 'dir');
   const log = join(out, 'twin.log');
   const raw = { image: process.env.ERLANG_TRACE_IMAGE ?? null, started: new Date().toISOString(), environment: { before: environment() }, fixture: spec.fixture, form: spec.form, twin, seed: { schema: Object.fromEntries(schemaFiles(join(twinsRoot, twin)).map((f) => [f.slice(twinsRoot.length + 1), sha256(f)])), seed: sha256(setup('seed.sql')) }, scales: {} };
+  if (TIMED_FORM) raw.priming = await primingStart(work, spec.scales.at(-1), log, join(twinsRoot, twin), primingRoutesOf(spec.n * spec.scales.at(-1)));
   for (const scale of spec.scales) {
     const n = spec.n * scale;
     const tables = freshDatabase(scale, join(twinsRoot, twin));
@@ -537,20 +595,7 @@ for (const twin of ['planted', 'clean']) {
         const fresh = await serve(work, scale, log);
         try {
           await paced();
-          // The fallback: a GET, then a POST with a small JSON body, to a
-          // path with a random suffix; the GET's time is the baseline.
-          const fallbackPath = warmup.source === 'fallback' ? `${warmup.path}${randomBytes(8).toString('hex')}` : null;
-          const w = await once(fresh, warmup, fallbackPath ?? warmup.path, warmup.body);
-          const status = w.res?.status ?? null;
-          if (fallbackPath) {
-            const p = await once(fresh, { ...warmup, method: 'POST' }, fallbackPath, FALLBACK_BODY);
-            const ps = p.res?.status ?? null;
-            if (ps === null || ps >= 500) throw new Error(`warm-up POST ${warmup.path}<random> (fallback) answered ${ps ?? 'nothing'}`);
-          }
-          // A full collection after every warm-up, so garbage left by the
-          // start is not collected inside a measured first request.
-          await fresh.probe('gc');
-          if (warmup.source === 'fallback' ? status === null || status >= 500 : status === null || status >= 400) throw new Error(`warm-up ${warmup.method} ${warmup.path} (${warmup.source}) answered ${status ?? 'nothing'}`);
+          const { w, status } = await sendWarmup(fresh, warmup);
           warmups.push({ status, ms: w.extra.ms });
           const order = spec.starts.map((_, j) => spec.starts[(j + k) % spec.starts.length]);
           const seen = [];
@@ -623,6 +668,10 @@ async function loadMain() {
     if (existsSync(setup('overlay'))) cpSync(setup('overlay'), work, { recursive: true });
     symlinkSync(modules, join(work, 'node_modules'), 'dir');
     works[twin] = { out, work, log: join(out, 'twin.log') };
+  }
+  if (TIMED_FORM) {
+    raw.priming = { unjudged: true };
+    for (const twin of ['planted', 'clean']) raw.priming[twin] = await primingStart(works[twin].work, scale, works[twin].log, join(twinsRoot, twin), primingRoutesOf(spec.n ?? 1));
   }
   for (let k = 0; k < pairs; k++) {
     const rep = { order: k % 2 ? ['clean', 'planted'] : ['planted', 'clean'] };
@@ -704,7 +753,8 @@ async function headroomMain() {
       const ms = await cost(step, step.upstream);
       const bg = step.background ? { method: step.background.method ?? 'GET', path: step.background.path, rate: step.background.rate, ms: await cost(step.background, step.upstream) } : null;
       const busy = (step.rate * ms + (bg ? bg.rate * bg.ms : 0)) / 1000;
-      rows.push({ step: step.id, method: step.method ?? 'GET', path: step.path, rate: step.rate, ms: Number(ms.toFixed(3)), background: bg && { ...bg, ms: Number(bg.ms.toFixed(3)) }, busy: Number(busy.toFixed(4)) });
+      // A step with no metric is not judged (a warm-up): its row is printed, never failed.
+      rows.push({ step: step.id, judged: step.metric !== undefined, method: step.method ?? 'GET', path: step.path, rate: step.rate, ms: Number(ms.toFixed(3)), background: bg && { ...bg, ms: Number(bg.ms.toFixed(3)) }, busy: Number(busy.toFixed(4)) });
       console.log(`headroom: ${spec.fixture} ${spec.form} clean ${step.id}: busy ${busy.toFixed(3)}`);
     }
   } finally { await app.stop(); stubFor(); }

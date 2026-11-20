@@ -29,7 +29,7 @@ import { report } from '../../core/report.js';
 import { validate } from '../../core/schema.js';
 import { scan, VERSION } from '../../lib/erlang.js';
 import { slopeOf, MIN_POINTS } from '../../lib/trace-judge.js';
-import { ruleC, REASON } from '../../lib/timing.js';
+import { ruleC, REASON, COUNT_METRICS } from '../../lib/timing.js';
 import { linkStatic, fmt } from '../../lib/trace-judge.js';
 import { exitOnCrash } from '../../lib/crash.js';
 import { text, measured as M, declared as D, plain as plainText, asText, measuredPaths } from '../../lib/values.js';
@@ -63,7 +63,7 @@ const RATIO = 1.5;
 // else is timed: latencies, the share answered late (a time limit), the
 // shedding gap (served within okMs), and heap kept per request (neither a
 // count nor a share; it moves with the collector and the machine).
-const EXEMPT = new Set(['statements', 'rows', 'blocks', 'attempts', 'stub-open', 'connections', 'bytes', 'failed']);
+const EXEMPT = COUNT_METRICS;
 // The verdict of an exempt quantity: recorded like the timing rule's, with
 // the load averages kept as information, and always reliable.
 const exempt = ({ samples, before, after }) => {
@@ -212,6 +212,17 @@ function judgeTwin(raw, twin) {
         const kept = runs.map((r) => r.me <= 0 || r.me <= (step.floor ?? 0) / 2 || r.me <= (ratio / 2) * r.them);
         DECOYS.push({ ok: kept.every(Boolean), line: `${twin} step ${step.id} (${step.metric}): ${JSON.stringify(runs.map((r) => Number(r.me.toFixed(4))))} against the other twin's ${JSON.stringify(runs.map((r) => Number(r.them.toFixed(4))))}; half the floor ${(step.floor ?? 0) / 2}, half the ratio ${ratio / 2}${kept.every(Boolean) ? '' : `: OVER in ${kept.filter((k) => !k).length} of ${kept.length}`}` });
       }
+      // Planted margin (the owner, 20 November 2026): a timed step's planted
+      // defect clears every condition of its bar by 2x in every pair: at
+      // least twice the floor, and at least twice the ratio times the other
+      // twin's value (twiceOf, for a share). Expected misses are printed and
+      // skipped.
+      if (!EXEMPT.has(step.metric) && twin === 'planted' && EXPECTED_MISSES.some((d) => d.step === step.id)) PLANTEDS.push({ ok: true, skipped: true, line: `planted step ${step.id} (${step.metric}), an expected miss, margin not judged: ${JSON.stringify(runs.map((r) => Number(r.me.toFixed(4))))}` });
+      else if (!EXEMPT.has(step.metric) && twin === 'planted' && spec.defects.some((d) => d.step === step.id)) {
+        const floor2 = twiceOf(step.metric, step.floor ?? 0);
+        const held = runs.map((r) => r.me >= floor2 && r.me >= twiceOf(step.metric, ratio * r.them));
+        PLANTEDS.push({ ok: held.every(Boolean), line: `planted step ${step.id} (${step.metric}): ${JSON.stringify(runs.map((r) => Number(r.me.toFixed(4))))} against the other twin's ${JSON.stringify(runs.map((r) => Number(r.them.toFixed(4))))}; twice the floor ${Number(floor2.toFixed(4))}, twice the ratio ${2 * ratio}x${SHARE_METRICS.has(step.metric) ? ' (a share: past 0.5, half way to 1)' : ''}${held.every(Boolean) ? '' : `: SHORT in ${held.filter((k) => !k).length} of ${held.length}`}` });
+      }
       if (twin === 'planted') {
         const r4 = (xs) => JSON.stringify(xs.map((x) => Number(x.toFixed(4))));
         const v = EXEMPT.has(step.metric) ? exempt({ samples: runs.map((r) => r.me), before: env.before, after: env.after }) : ruleC({ clears: runs.map(clearsOf), samples: runs.map((r) => r.me), before: env.before, after: env.after }).timing;
@@ -296,6 +307,12 @@ let unreliable = false;
 const MEASURED = [];
 // Decoy margins, both twins: printed and judged after the verdicts.
 const DECOYS = [];
+const PLANTEDS = [];
+// Twice a bar, for the planted margin: twice the value; for a share bounded
+// by 1 (SHARE_METRICS), twice it when that is at most 1, else half way from
+// it to 1 (fixtures/PLAN.md, "Planted margin").
+const SHARE_METRICS = new Set(['late-share']);
+const twiceOf = (metric, x) => (SHARE_METRICS.has(metric) && 2 * x > 1 ? 1 - (1 - x) / 2 : 2 * x);
 const say = (ok, what, detail, status = ok ? 'PASS' : 'FAIL') => { if (status === 'FAIL') failed = true; if (status === 'UNRELIABLE') unreliable = true; console.log(`${status}  ${spec.fixture} ${spec.form} load ${what}${detail ? `  (${detail})` : ''}`); };
 // The timing verdict behind an unreliable finding, for the report: samples,
 // spread, load averages before and after.
@@ -337,6 +354,10 @@ for (const twin of ['planted', 'clean']) {
 for (const d of DECOYS) {
   console.log(`DECOY  ${spec.fixture} ${spec.form} load ${d.line}`);
   if (!d.ok) say(false, 'decoy margin', d.line);
+}
+for (const d of PLANTEDS) {
+  console.log(`${d.skipped ? 'EXPECTED-MISS' : 'PLANTED'}  ${spec.fixture} ${spec.form} load ${d.line}`);
+  if (!d.ok) say(false, 'planted margin', d.line);
 }
 // A form's acceptance condition on its clean twin (load.json step
 // "cleanMax", the owner, 20 November 2026; L09's export): the clean twin's
