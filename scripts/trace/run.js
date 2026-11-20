@@ -760,19 +760,33 @@ async function headroomMain() {
       try { await send(app.port, (q.method ?? 'GET').toUpperCase(), path, body, Math.min(q.timeoutMs ?? 10_000, 5_000)); } catch (e) { if (e.code !== 'ERLANG_TIMEOUT') throw e; }
     };
     for (let k = 0; k < HEADROOM_WARM; k++) await one();
-    await app.probe('elu-reset');
-    for (let k = 0; k < HEADROOM_N; k++) await one();
-    const u = await app.probe('elu');
-    return u.activeMs / HEADROOM_N;
+    // One measurement a request (the owner, 20 November 2026): its
+    // main-thread busy time, and the garbage collections inside it, so the
+    // judge takes the median and a single stall shows as one measurement.
+    await app.probe('gcs');
+    const each = [];
+    for (let k = 0; k < HEADROOM_N; k++) {
+      await app.probe('elu-reset');
+      await one();
+      const u = await app.probe('elu');
+      const g = (await app.probe('gcs')).gcs ?? [];
+      each.push({ ms: Number(u.activeMs.toFixed(3)), gcMs: Number(g.reduce((a, x) => a + (x.ms ?? x.duration ?? 0), 0).toFixed(3)), gcs: g.length });
+    }
+    return each;
   };
   const rows = [];
   try {
     for (const step of spec.steps) {
-      const ms = await cost(step, step.upstream);
-      const bg = step.background ? { method: step.background.method ?? 'GET', path: step.background.path, rate: step.background.rate, ms: await cost(step.background, step.upstream) } : null;
-      const busy = (step.rate * ms + (bg ? bg.rate * bg.ms : 0)) / 1000;
+      const each = await cost(step, step.upstream);
+      const bgEach = step.background ? await cost(step.background, step.upstream) : null;
+      const med = (xs) => { const t = [...xs].sort((a, b) => a - b); const m = t.length >> 1; return t.length % 2 ? t[m] : (t[m - 1] + t[m]) / 2; };
+      // Measurement k: step request k with background request k.
+      const busyEach = each.map((x, k) => Number(((step.rate * x.ms + (bgEach ? step.background.rate * bgEach[k].ms : 0)) / 1000).toFixed(4)));
+      const ms = med(each.map((x) => x.ms));
+      const bg = bgEach ? { method: step.background.method ?? 'GET', path: step.background.path, rate: step.background.rate, ms: med(bgEach.map((x) => x.ms)), each: bgEach } : null;
+      const busy = med(busyEach);
       // A step with no metric is not judged (a warm-up): its row is printed, never failed.
-      rows.push({ step: step.id, judged: step.metric !== undefined, method: step.method ?? 'GET', path: step.path, rate: step.rate, ms: Number(ms.toFixed(3)), background: bg && { ...bg, ms: Number(bg.ms.toFixed(3)) }, busy: Number(busy.toFixed(4)) });
+      rows.push({ step: step.id, judged: step.metric !== undefined, method: step.method ?? 'GET', path: step.path, rate: step.rate, ms: Number(ms.toFixed(3)), background: bg && { ...bg, ms: Number(bg.ms.toFixed(3)) }, busy: Number(busy.toFixed(4)), busyEach, each });
       console.log(`headroom: ${spec.fixture} ${spec.form} clean ${step.id}: busy ${busy.toFixed(3)}`);
     }
   } finally { await app.stop(); stubFor(); }

@@ -61,9 +61,11 @@ Request handlers are found in Express, Fastify, `node:http` and Next.js.
 - **The relative timing rule (c):** for a verdict comparing two conditions measured together. Five repeats; a finding when every repeat clears the threshold, none when no repeat does, and unreliable (info, never failing) for a mix. Pairs alternate twin order. Spread and load average are recorded but gate nothing.
 - **Absolute waits** (L06's fixed wait between retries): judged on the delay the code declares, recorded from the twin's timers (the global `setTimeout`, `node:timers`, and `node:timers/promises`' `setTimeout` and `scheduler.wait`), not on a clock; no load average or spread gates it. Retries spaced apart with no timer seen are info, "wait not observed", never clean.
 - **Priming start:** before the judged repeats of a timed form, trace or load, each twin is started once with the warm-up and one request per judged route; nothing from it is judged, and its figures are kept in the raw output, marked unjudged.
-- **Planted margin:** the fixture suite fails when a planted defect clears its bar by less than 2x (for a share bounded by 1, half way to 1 when twice is past it).
-- **Headroom** fails only on judged steps; warm-up steps are printed.
-- **Decoy margin:** in a timed form, every decoy stays at most half way to its bar on at least one of the bar's conditions; the judges print it on `DECOY` lines and fail the form when it is not.
+- **Planted margin:** the fixture suite fails when the median of a planted defect's samples clears its bar by less than 2x (for a share bounded by 1, half way to 1 when twice is past it), or when any one sample falls below the bar.
+- **Headroom** is judged on the median of ten measurements a step, one a request, each with the garbage collections inside it; any single measurement over 0.3 fails outright. It fails only on judged steps; warm-up steps are printed.
+- **Decoy margin:** in a timed form, the median of every decoy's samples stays at most half way to its bar on at least one of the bar's conditions, and no single sample reaches the bar; the judges print it on `DECOY` lines.
+- **Outliers:** a single sample past a margin but inside the bar is printed on an `OUTLIER` line with its diagnostics, not failed: one-off stalls on shared runners move one sample, not the median. Both margins cover the heap slope too.
+- **Diagnostics in CI:** every run uploads the twins' `raw.json`, their logs (every garbage collection) and the database server's log, for the trace, headroom and load jobs.
 - **ITTEN's timing lock:** the harnesses generate no load while it is active. They wait and log every wait (phase, taken, expires, duration). A lock in an unknown format counts as active.
 
 ### Exit codes
@@ -82,7 +84,7 @@ Error and warning fail a run; info never does.
 
 ### Release gate
 
-A `v*` tag is cut only when its commit's last five CI runs are green and their trace reports are identical apart from what each finding lists as measured, as is a local run on a second machine (`docs/CONTRACT.md`, "Release gate"; `scripts/release-gate.sh`). CI checks the gate again on the tag.
+A `v*` tag is cut only when its commit's last five CI runs are green and their trace reports are identical apart from what each finding lists as measured, as is a local run on a second machine (`docs/CONTRACT.md`, "Release gate"; `scripts/release-gate.sh`). Every planted row's finding must be present in all five runs with the same rule, severity and fingerprint, and never read "timing unreliable"; no row with nothing planted may be an error or a warning. An info "timing unreliable" on a row with nothing planted is counted and printed rather than compared, and the gate fails if one row has one in two or more runs, or one run has more than two. CI checks the gate again on the tag.
 
 ### Findings
 

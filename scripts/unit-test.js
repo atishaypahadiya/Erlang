@@ -306,13 +306,21 @@ console.log('\nThe load judge (compare), on recorded runs');
   const alike = run(() => ['signup', 'login', 'export', 'codes'].map((id) => step(id, 4)));
   ok('  the control: twins whose avatars are never late give nothing, and the three defects are missed', alike.code === 1 && /0\/3/.test(alike.text), alike.text);
   const near = run((k) => [step('signup', 180 + k), step('login', 190 + k), step('export', 150 + k), step('codes', 40)]);
-  ok('  decoy margin: a decoy step late 0.2 of the time, under the 0.3 floor but over half of it and over half the ratio, is not reported yet fails the form', near.code === 1 && /^DECOY  L09 express load planted step codes \(late-share\): .*OVER in 5 of 5/m.test(near.text) && /^FAIL  L09 express load decoy margin/m.test(near.text) && !/decoy reported/.test(near.text), near.text);
+  ok('  decoy margin: a decoy step late 0.2 of the time, under the 0.3 floor but over half of it and over half the ratio, is not reported yet fails the form', near.code === 1 && /^DECOY  L09 express load planted step codes \(late-share\): .*OVER on the median/m.test(near.text) && /^FAIL  L09 express load decoy margin/m.test(near.text) && !/decoy reported/.test(near.text), near.text);
   ok('  with every decoy under half way, the margin lines pass', /^DECOY  L09 express load clean step codes \(late-share\): \[0\.02,/m.test(good.text) && !/OVER/.test(good.text), good.text);
   // Planted margin: export late 0.75 of the time keeps it (0.6 is twice the
   // 0.3 floor); late 0.5 clears the bar, is found, and fails the margin.
   ok('  planted margin: defects clearing every condition by 2x print PLANTED lines and pass', /^PLANTED  L09 express load planted step export \(late-share\): \[0\.75,/m.test(good.text) && !/SHORT/.test(good.text), good.text);
   const thin = run((k) => [step('signup', 180 + k), step('login', 190 + k), step('export', 100), step('codes', 4)]);
-  ok('  a planted share of 0.5, over the 0.3 bar but under twice it, is found and fails the planted margin (exit 1)', thin.code === 1 && /^PASS  L09 express load planted: 3\/3/m.test(thin.text) && /^PLANTED  L09 express load planted step export \(late-share\): \[0\.5,.*twice the floor 0\.6.*SHORT in 5 of 5/m.test(thin.text) && /^FAIL  L09 express load planted margin/m.test(thin.text), thin.text);
+  ok('  a planted share of 0.5, over the 0.3 bar but under twice it, is found and fails the planted margin (exit 1)', thin.code === 1 && /^PASS  L09 express load planted: 3\/3/m.test(thin.text) && /^PLANTED  L09 express load planted step export \(late-share\): \[0\.5,.*twice the floor 0\.6.*SHORT on the median/m.test(thin.text) && /^FAIL  L09 express load planted margin/m.test(thin.text), thin.text);
+  // The median rule (the owner, 20 November 2026): one pair past the margin
+  // but inside the bar is an OUTLIER, printed, not failed.
+  const onePlanted = run((k) => [step('signup', 180 + k), step('login', 190 + k), step('export', k === 2 ? 100 : 150 + k), step('codes', 4)]);
+  ok('  one planted pair at 0.5 (over the bar, under the margin), the others 0.75: an OUTLIER with its load averages, not failed', onePlanted.code === 0 && /^OUTLIER  L09 express load planted step export \(late-share\): short of the planted margin but clearing the bar \(not failed\): pair 3: 0\.5 against 0\.02; load /m.test(onePlanted.text) && !/SHORT|BELOW/.test(onePlanted.text), onePlanted.text);
+  const oneDecoy = run((k) => [step('signup', 180 + k), step('login', 190 + k), step('export', 150 + k), step('codes', k === 1 ? 40 : 4)]);
+  ok('  one decoy pair late 0.2 (past half the floor, under the bar), the others 0.02: an OUTLIER, not failed', oneDecoy.code === 0 && /^OUTLIER  L09 express load planted step codes \(late-share\): past the decoy margin but inside the bar \(not failed\): pair 2: 0\.2 against 0\.02/m.test(oneDecoy.text) && !/OVER|REACHED/.test(oneDecoy.text), oneDecoy.text);
+  const decoyBar = run((k) => [step('signup', 180 + k), step('login', 190 + k), step('export', 150 + k), step('codes', k === 1 ? 80 : 4)]);
+  ok('  one decoy pair late 0.4, past the judge\'s bar: fails outright', decoyBar.code === 1 && /REACHED THE BAR in pair\(s\) 2/.test(decoyBar.text) && /^FAIL  L09 express load decoy margin/m.test(decoyBar.text), decoyBar.text);
   rmSync(form, { recursive: true, force: true });
 }
 
@@ -343,7 +351,14 @@ console.log('\nThe load judge (heap slope), on recorded runs');
   const wide = run((id, k) => (id === 'placeCart' ? 1500 + 400 * k : planted(id, k)), clean);
   ok('  slopes that spread 70% over the pairs, every pair over the bar: still reported (the spread recorded, not consulted)', wide.code === 0 && /PASS  L05 express load planted: 2\/2/.test(wide.text), wide.text);
   const onePair = run((id, k) => (id === 'searchProducts' && k === 3 ? 0 : planted(id, k)), clean);
-  ok('  a pair whose slope does not clear: info, timing unreliable, 4 of 5, exit 3, never a pass', onePair.code === 3 && /UNRELIABLE  L05 express load planted: memory-growth STB-05 step searchProducts: timing unreliable .*4 of 5 repeats cleared/.test(onePair.text), onePair.text);
+  ok('  a pair whose slope does not clear: info, timing unreliable, 4 of 5, never a pass; that pair is below the judge\'s bar, so the planted margin fails too (exit 1)', onePair.code === 1 && /UNRELIABLE  L05 express load planted: memory-growth STB-05 step searchProducts: timing unreliable .*4 of 5 repeats cleared/.test(onePair.text) && /^PLANTED  L05 express load planted step searchProducts \(heap-slope\): .*BELOW THE BAR in pair\(s\) 4/m.test(onePair.text), onePair.text);
+  // Heap slopes are under both margin tests, on the median (the owner, 20
+  // November 2026).
+  ok('  heap slope: PLANTED lines for both defects, DECOY lines for the decoy routes, EXPECTED-MISS for createOrder', /^PLANTED  L05 express load planted step placeCart \(heap-slope\)/m.test(good.text) && /^DECOY  L05 express load planted step suggest \(heap-slope\)/m.test(good.text) && /^DECOY  L05 express load clean step placeCart \(heap-slope\)/m.test(good.text) && /^EXPECTED-MISS  L05 express load planted step createOrder/m.test(good.text), good.text);
+  const nearSuggest = run((id, k) => (id === 'suggest' ? 330 : planted(id, k)), clean);
+  ok('  a decoy slope 1.65 times the clean twin\'s in every pair (under the 3x bar, over half of it): over on the median, the form fails with nothing reported', nearSuggest.code === 1 && /^DECOY  L05 express load planted step suggest \(heap-slope\): .*OVER on the median/m.test(nearSuggest.text) && /^PASS  L05 express load planted: 2\/2/m.test(nearSuggest.text), nearSuggest.text);
+  const thinSlope = run(planted, (id) => (id === 'searchProducts' ? 100 : clean(id)));
+  ok('  a planted slope 3.7 times the clean twin\'s (over the 3x bar, under 6x): short on the median, the form fails', thinSlope.code === 1 && /^PLANTED  L05 express load planted step searchProducts \(heap-slope\): .*SHORT on the median/m.test(thinSlope.text), thinSlope.text);
   const three = run(planted, clean, 3);
   ok('  three pairs are too few: unreliable, fewer than 5', three.code === 3 && /3 repeat\(s\), fewer than 5/.test(three.text), three.text);
   const same = run(clean, clean);
@@ -448,6 +463,48 @@ console.log('\nMeasured and declared values; the release gate\'s comparison');
   rmSync(dir, { recursive: true, force: true });
 }
 
+console.log('\nThe release gate\'s rows: planted, decoys, and "timing unreliable" infos');
+{
+  // L11's trace form: three planted rows (fixtures/L11-cold-start/trace/trace.json).
+  const dir = join(OUT, 'gate');
+  const spec = JSON.parse(readFileSync(join(ROOT, 'fixtures', 'L11-cold-start', 'trace', 'trace.json'), 'utf8'));
+  const finding = (method, route, severity, reliable = severity !== 'info') => ({ check: 'cold-start', rules: ['STB-10'], severity, fingerprint: `cold-start|${route}`, where: { endpoints: [{ method, route }] }, message: `${method} ${route}`, measured: ['erlang.trace.timing'], erlang: { trace: { judge: 'starts', timing: { reliable } } } });
+  const planted = (over = {}) => spec.defects.map((d) => over[d.route] === undefined ? finding(d.method, d.route, 'warning') : over[d.route]).filter(Boolean);
+  // runs: [{ planted: [...], clean: [...] }], one per run.
+  const gate = (runs) => {
+    rmSync(dir, { recursive: true, force: true });
+    runs.forEach((x, k) => { for (const twin of ['planted', 'clean']) { mkdirSync(join(dir, `run${k + 1}`, 'L11-cold-start', twin), { recursive: true }); writeFileSync(join(dir, `run${k + 1}`, 'L11-cold-start', twin, 'report.json'), JSON.stringify({ schema: 'report/1', started: `run${k + 1}`, findings: x[twin] })); } });
+    const r = spawnSync(process.execPath, [join(ROOT, 'scripts', 'compare-reports.js'), ...runs.map((_, k) => join(dir, `run${k + 1}`))], { encoding: 'utf8' });
+    return { code: r.status, text: r.stdout + r.stderr };
+  };
+  const five = (f) => [0, 1, 2, 3, 4].map(f);
+  const prices = finding('GET', '/prices/:id', 'info', false);
+  const orders = finding('POST', '/orders', 'info', false);
+  const all = gate(five(() => ({ planted: planted(), clean: [] })));
+  ok('gate: five runs, every planted row a warning, nothing on a clean row: holds', all.code === 0 && /UNRELIABLE-COUNT  0 /.test(all.text) && /^IDENTICAL  2 report/m.test(all.text), all.text);
+  const one = gate(five((k) => ({ planted: planted(), clean: k === 2 ? [prices] : [] })));
+  ok('  an info "timing unreliable" on a clean row in one run: no difference; counted and printed with its row and run', one.code === 0 && /^UNRELIABLE-INFO  L11-cold-start\/clean\/report\.json: cold-start STB-10 GET \/prices\/:id in .*run3 /m.test(one.text) && /UNRELIABLE-COUNT  1 /.test(one.text), one.text);
+  const decoyPlanted = gate(five((k) => ({ planted: k === 1 ? [...planted(), orders] : planted(), clean: [] })));
+  ok('  the same on a decoy row of the planted twin: no difference', decoyPlanted.code === 0 && /UNRELIABLE-INFO  L11-cold-start\/planted\/report\.json: cold-start STB-10 POST \/orders/.test(decoyPlanted.text), decoyPlanted.text);
+  const twice = gate(five((k) => ({ planted: planted(), clean: k === 1 || k === 3 ? [prices] : [] })));
+  ok('  the same row in two of the five runs: fails', twice.code === 1 && /^UNRELIABLE-REPEATED  L11-cold-start\/clean\/report\.json: cold-start STB-10 GET \/prices\/:id: "timing unreliable" in 2 runs/m.test(twice.text), twice.text);
+  const three = gate(five((k) => ({ planted: k === 4 ? [...planted(), orders] : planted(), clean: k === 4 ? [prices, finding('GET', '/checkout/countries', 'info', false)] : [] })));
+  ok('  three in one run, on different rows: fails (at most two a run)', three.code === 1 && /^UNRELIABLE-RUN  .*run5: 3 "timing unreliable" infos/m.test(three.text) && !/^UNRELIABLE-REPEATED/m.test(three.text), three.text);
+  const two = gate(five((k) => ({ planted: k === 4 ? [...planted(), orders] : planted(), clean: k === 4 ? [prices] : [] })));
+  ok('  two in one run, on different rows: holds', two.code === 0, two.text);
+  const plantedInfo = gate(five((k) => ({ planted: planted(k === 0 ? { '/regions/:postcode': finding('GET', '/regions/:postcode', 'info', false) } : {}), clean: [] })));
+  ok('  a planted row reading "timing unreliable" in one run: fails', plantedInfo.code === 1 && /^PLANTED-UNRELIABLE  L11-cold-start\/planted\/report\.json: cold-start STB-10 GET \/regions\/:postcode reads "timing unreliable" in .*run1/m.test(plantedInfo.text), plantedInfo.text);
+  const missing = gate(five((k) => ({ planted: planted(k === 3 ? { '/checkout/countries': null } : {}), clean: [] })));
+  ok('  a planted row missing in one run: fails', missing.code === 1 && /^PLANTED-MISSING  L11-cold-start\/planted\/report\.json: cold-start STB-10 GET \/checkout\/countries has no error or warning in .*run4/m.test(missing.text), missing.text);
+  const reported = gate(five((k) => ({ planted: planted(), clean: k === 0 ? [finding('GET', '/prices/:id', 'warning')] : [] })));
+  ok('  a clean row reported as a warning in one run: fails', reported.code === 1 && /^DECOY-REPORTED  L11-cold-start\/clean\/report\.json: cold-start STB-10 GET \/prices\/:id is a warning in .*run1, a row with nothing planted/m.test(reported.text), reported.text);
+  const fp = gate(five((k) => ({ planted: planted(k === 2 ? { '/regions/:postcode': { ...finding('GET', '/regions/:postcode', 'warning'), fingerprint: 'cold-start|other' } } : {}), clean: [] })));
+  ok('  a planted row whose fingerprint differs in one run: fails as a difference', fp.code === 1 && /^DIFFERS  L11-cold-start\/planted\/report\.json/m.test(fp.text) && /fingerprint/.test(fp.text), fp.text);
+  const info = gate(five((k) => ({ planted: planted(), clean: k === 2 ? [{ ...prices, erlang: { trace: { judge: 'starts', timing: { reliable: true } } } }] : [] })));
+  ok('  an info on a clean row that is not "timing unreliable" is still a difference', info.code === 1 && /^DIFFERS  L11-cold-start\/clean\/report\.json/m.test(info.text), info.text);
+  rmSync(dir, { recursive: true, force: true });
+}
+
 console.log('\nLoad and headroom modes start (no module-order error)');
 {
   // run.js dispatches load and headroom mode part way through the module, so
@@ -478,16 +535,32 @@ console.log('\nHeadroom: the clean twin under 0.2 busy at every step');
     return { code: r.status, text: (r.stdout + r.stderr).trim() };
   };
   const ok19 = run(0.19);
-  ok('headroom: a clean twin busy 0.19 of the time at the step\'s rate passes, with the rate x ms line', ok19.code === 0 && /^HEADROOM  L09 express clean avatars: 20\/s x 0\.50 ms \(GET \/avatars\/1\) \+ 6\/s x .* = busy 0\.190$/m.test(ok19.text), ok19.text);
+  ok('headroom: a clean twin busy 0.19 of the time at the step\'s rate passes, with the rate x ms line', ok19.code === 0 && /^HEADROOM  L09 express clean avatars: 20\/s x 0\.50 ms \(GET \/avatars\/1\) \+ 6\/s x .* = busy 0\.190 \(median of 1; max 0\.190\)$/m.test(ok19.text), ok19.text);
   const over = run(0.21);
-  ok('  busy 0.21 fails the form (exit 1), naming the step', over.code === 1 && /busy 0\.210, over 0\.2/.test(over.text) && /^FAIL  L09 express headroom/m.test(over.text), over.text);
+  ok('  busy 0.21 fails the form (exit 1), naming the step', over.code === 1 && /busy 0\.210 \(median of 1; max 0\.210\): median over 0\.2/.test(over.text) && /^FAIL  L09 express headroom/m.test(over.text), over.text);
   {
     mkdirSync(out, { recursive: true });
     writeFileSync(join(out, 'headroom.json'), JSON.stringify({ fixture: 'L05', form: 'express', twin: 'clean', n: 10, warm: 3, rows: [{ step: 'searchWarm', judged: false, method: 'GET', path: '/search', rate: 100, ms: 2.04, background: null, busy: 0.204 }, { step: 'searchProducts', judged: true, method: 'GET', path: '/search', rate: 100, ms: 1.12, background: null, busy: 0.112 }] }));
     const r = spawnSync(process.execPath, [join(ROOT, 'scripts', 'headroom', 'judge.js'), 'fixtures/L05-memory-growth', out], { encoding: 'utf8' });
     const text = r.stdout + r.stderr;
-    ok('  an unjudged step (a warm-up) over 0.2 is printed with its figures and does not fail the form', r.status === 0 && /searchWarm: 100\/s x 2\.04 ms .* = busy 0\.204 \(unjudged step: printed, not failed\)/.test(text) && /^PASS  L05 express headroom: .* at most 0\.112 of the time at any judged step's rate/m.test(text), text);
+    ok('  an unjudged step (a warm-up) over 0.2 is printed with its figures and does not fail the form', r.status === 0 && /searchWarm: 100\/s x 2\.04 ms .* = busy 0\.204 \(median of 1; max 0\.204\) \(unjudged step: printed, not failed\)/.test(text) && /^PASS  L05 express headroom: .* at most 0\.112 of the time at any judged step's rate/m.test(text), text);
   }
+  // The median rule (the owner, 20 November 2026): ten measurements a step.
+  const each = (busyEach) => {
+    rmSync(out, { recursive: true, force: true });
+    mkdirSync(out, { recursive: true });
+    const sorted = [...busyEach].sort((a, b) => a - b);
+    const busy = (sorted[4] + sorted[5]) / 2;
+    writeFileSync(join(out, 'headroom.json'), JSON.stringify({ fixture: 'L09', form: 'express', twin: 'clean', n: 10, warm: 3, rows: [{ step: 'codes', judged: true, method: 'POST', path: '/codes', rate: 20, ms: busy * 50, background: null, busy, busyEach, each: busyEach.map((b) => ({ ms: b * 50, gcMs: b > 0.2 ? 30 : 0, gcs: b > 0.2 ? 1 : 0 })) }] }));
+    const r = spawnSync(process.execPath, [join(ROOT, 'scripts', 'headroom', 'judge.js'), 'fixtures/L09-blocking-work', out], { encoding: 'utf8' });
+    return { code: r.status, text: (r.stdout + r.stderr).trim() };
+  };
+  const stall = each([0.05, 0.05, 0.06, 0.05, 0.25, 0.05, 0.06, 0.05, 0.05, 0.05]);
+  ok('  one measurement over 0.2 but under 0.3, the median 0.05: passes, the measurement printed with its collections', stall.code === 0 && /busy 0\.050 \(median of 10; max 0\.250\); collections 1, 30\.00 ms/.test(stall.text) && /codes measurements: busy \[.*0\.25.*\]; ms .*; collection ms \[0,0,0,0,30,/.test(stall.text), stall.text);
+  const single = each([0.05, 0.05, 0.06, 0.05, 0.31, 0.05, 0.06, 0.05, 0.05, 0.05]);
+  ok('  one measurement over 0.3 fails outright, though the median is 0.05', single.code === 1 && /: 1 measurement\(s\) over 0\.3/.test(single.text), single.text);
+  const median = each([0.21, 0.22, 0.21, 0.19, 0.22, 0.21, 0.2, 0.22, 0.21, 0.21]);
+  ok('  a median over 0.2 with no measurement over 0.3 fails', median.code === 1 && /: median over 0\.2$/m.test(median.text), median.text);
   rmSync(out, { recursive: true, force: true });
 }
 
@@ -608,11 +681,11 @@ console.log('\nTimed trace forms: unreliable is never a pass');
   // Decoy margin: the clean twin's price at 10 ms over the baseline in one
   // start (half the 20 ms bar: kept), then at 12 (over half, and over half
   // the 3x ratio: the form fails, though nothing is reported).
-  const nudge = (extra) => {
+  const nudge = (extra, at = [2]) => {
     rmSync(out, { recursive: true, force: true });
     for (const t of ['planted', 'clean']) {
       const r = raw(t, { before: { load1: 0.5, cpus: 8 }, after: { load1: 0.5, cpus: 8 } });
-      if (t === 'clean') { const q = r.scales[1].starts.find((x) => x.id === 'price').samples[2]; q.extraMs = q.baselineMs + extra; q.firstMs = q.extraMs + 1; }
+      if (t === 'clean') for (const i of at) { const q = r.scales[1].starts.find((x) => x.id === 'price').samples[i]; q.extraMs = q.baselineMs + extra; q.firstMs = q.extraMs + 1; }
       mkdirSync(join(out, t), { recursive: true });
       writeFileSync(join(out, t, 'raw.json'), JSON.stringify(r));
     }
@@ -624,23 +697,34 @@ console.log('\nTimed trace forms: unreliable is never a pass');
   // Planted margin: the planted region route 30 ms over the baseline in one
   // start (over the 20 ms bar, under twice it: found, and the form fails),
   // then 60 (twice the bar and over twice the 3x ratio: kept).
-  const planted = (extra) => {
+  const planted = (extra, at = [2]) => {
     rmSync(out, { recursive: true, force: true });
     for (const t of ['planted', 'clean']) {
       const r = raw(t, { before: { load1: 0.5, cpus: 8 }, after: { load1: 0.5, cpus: 8 } });
-      if (t === 'planted') { const q = r.scales[1].starts.find((x) => x.id === 'region').samples[2]; q.extraMs = q.baselineMs + extra; q.firstMs = q.extraMs + 1; }
+      if (t === 'planted') for (const i of at) { const q = r.scales[1].starts.find((x) => x.id === 'region').samples[i]; q.extraMs = q.baselineMs + extra; q.firstMs = q.extraMs + 1; }
       mkdirSync(join(out, t), { recursive: true });
       writeFileSync(join(out, t, 'raw.json'), JSON.stringify(r));
     }
     const r = spawnSync(process.execPath, [join(ROOT, 'scripts', 'trace', 'judge.js'), form, out], { encoding: 'utf8' });
     return { code: r.status, text: (r.stdout + r.stderr).trim() };
   };
+  // The median rule (the owner, 20 November 2026): one sample past the
+  // margin but inside the bar is an outlier, printed, not failed; the median
+  // past the margin fails; one sample past the judge's bar fails.
   const short = planted(30);
-  ok('  planted margin: a planted route 30 ms over the baseline (over the 20 ms bar, under twice it) is found and fails the margin', short.code === 1 && /^PASS  L11 express planted: 3\/3/m.test(short.text) && /^PLANTED  L11 express planted GET \/regions\/:postcode: .*SHORT in 1 of 5/m.test(short.text) && /^FAIL  L11 express planted: planted margin/m.test(short.text), short.text);
+  ok('  planted margin: one start 30 ms over the baseline (over the 20 ms bar, under twice it) is an OUTLIER, printed with its diagnostics, not failed', short.code === 0 && /^PASS  L11 express planted: 3\/3/m.test(short.text) && /^OUTLIER  L11 express planted GET \/regions\/:postcode: sample 3 short of the planted margin but clearing the bar \(not failed\): .*"load1":.*"laterMedianMs":1,"gcs":.*"db":/m.test(short.text) && !/planted margin/.test(short.text.split('\n').filter((l) => l.startsWith('FAIL')).join('\n')), short.text);
+  const shortMedian = planted(30, [0, 1, 2]);
+  ok('  three starts of five 30 ms over the baseline: short on the median, the form fails', shortMedian.code === 1 && /^PLANTED  L11 express planted GET \/regions\/:postcode: .*SHORT on the median/m.test(shortMedian.text) && /^FAIL  L11 express planted: planted margin  \(GET \/regions\/:postcode: the median cleared its bar by less than 2x\)/m.test(shortMedian.text), shortMedian.text);
+  const below = planted(10);
+  ok('  one start 10 ms over the baseline, under the judge\'s bar: fails outright, whatever the median', below.code === 1 && /BELOW THE BAR in sample\(s\) 3/.test(below.text) && /^FAIL  L11 express planted: planted margin  \(GET \/regions\/:postcode: 1 sample\(s\) below the judge's bar\)/m.test(below.text), below.text);
   const wide = planted(60);
-  ok('  at 60 ms over the baseline every condition clears by 2x, and the form passes', wide.code === 0 && /^PLANTED  L11 express planted GET \/regions\/:postcode: ms over the baseline \[\d+,\d+,60,/m.test(wide.text) && !/SHORT/.test(wide.text), wide.text);
+  ok('  at 60 ms over the baseline every condition clears by 2x, and the form passes', wide.code === 0 && /^PLANTED  L11 express planted GET \/regions\/:postcode: ms over the baseline \[\d+,\d+,60,/m.test(wide.text) && !/SHORT|OUTLIER/.test(wide.text), wide.text);
   const over = nudge(12);
-  ok('  at 12 ms (over half the bar, and over half the ratio) the form fails on the margin, with nothing reported', over.code === 1 && /^FAIL  L11 express clean: decoy margin/m.test(over.text) && /^PASS  L11 express clean: 0 error/m.test(over.text), over.text);
+  ok('  decoy margin: one start 12 ms over the baseline (over half the bar and half the ratio, inside the bar) is an OUTLIER, not failed', over.code === 0 && /^OUTLIER  L11 express clean GET \/prices\/:id: sample 3 past the decoy margin but inside the bar \(not failed\)/m.test(over.text) && /^PASS  L11 express clean: 0 error/m.test(over.text), over.text);
+  const overMedian = nudge(12, [0, 1, 2]);
+  ok('  three starts of five 12 ms over the baseline: over on the median, the form fails with nothing reported', overMedian.code === 1 && /^FAIL  L11 express clean: decoy margin  \(GET \/prices\/:id: the median reached half the bar on every condition\)/m.test(overMedian.text) && /^PASS  L11 express clean: 0 error/m.test(overMedian.text), overMedian.text);
+  const reached = nudge(25);
+  ok('  one start 25 ms over the baseline, past the judge\'s bar: fails outright', reached.code === 1 && /REACHED THE BAR in sample\(s\) 3/.test(reached.text) && /^FAIL  L11 express clean: decoy margin  \(GET \/prices\/:id: 1 sample\(s\) reached the judge's bar\)/m.test(reached.text), reached.text);
   rmSync(form, { recursive: true, force: true });
 }
 

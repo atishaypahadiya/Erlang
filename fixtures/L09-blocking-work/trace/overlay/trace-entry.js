@@ -18,11 +18,13 @@ import { store } from './src/store.js';
 const scryptSalt = crypto.randomBytes(16).toString('hex');
 const scryptHash = crypto.scryptSync('correct horse', Buffer.from(scryptSalt, 'hex'), 64).toString('hex');
 await store.saveUser({ email: 'old@example.test', legacyHash: bcrypt.hashSync('correct horse', 12), scryptSalt, scryptHash });
-const orders = [];
+let orders = [];
 const count = Number(process.env.L09_ORDERS);
 if (!Number.isInteger(count) || count < 1) throw new Error(`L09_ORDERS must be a whole number of orders, not ${process.env.L09_ORDERS}`);
 for (let i = 1; i <= count; i++) {
   orders.push({ id: i, customer: `c${i % 997}`, total: 1000 + (i % 5000), status: ['new', 'paid', 'shipped'][i % 3], items: [{ sku: `sku-${i % 211}`, quantity: 1 + (i % 4) }] });
 }
 await store.saveOrders(orders);
+// The store keeps the orders as JSON bytes only; nothing holds the objects.
+orders = null;
 export const { app } = await import('./src/app.js');

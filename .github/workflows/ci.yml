@@ -56,6 +56,23 @@ jobs:
           path: dist/trace/**/report.json
           if-no-files-found: error
           retention-days: 30
+      # Diagnostics (the owner, 20 November 2026): what each twin measured
+      # (raw.json, with every start's collections and database writes), its
+      # log (every garbage collection) and the database server's log, for
+      # the trace and headroom runs, so a one-off stall can be explained.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: trace-diagnostics
+          path: |
+            dist/trace/**/raw.json
+            dist/trace/**/twin.log
+            dist/trace/postgres.log
+            dist/headroom/**/headroom.json
+            dist/headroom/**/twin.log
+            dist/headroom/postgres.log
+          if-no-files-found: warn
+          retention-days: 30
 
   # The release gate, on a pushed v* tag only: the tagged commit's last five
   # completed CI runs are green, and their trace reports identical apart from
@@ -120,6 +137,19 @@ jobs:
           # Five pairs a form, the twins in alternating order: the relative
           # timing rule (docs/decisions.md, Q8) and the heap slope's spread.
           ERLANG_LOAD_PAIRS: 5
+      # Diagnostics: the run's raw.json, the twins' logs and the database
+      # server's log (the form is in the paths; artifact names cannot hold
+      # a slash, so the job's index names it).
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: load-diagnostics-${{ strategy.job-index }}
+          path: |
+            dist/load/**/raw.json
+            dist/load/**/twin.log
+            dist/load/postgres.log
+          if-no-files-found: warn
+          retention-days: 30
 
   # L05's load form alone, under the ci-long caps (lib/load-guard.js): its
   # 30 s heap steps would put it at the 1,200 s cap of a form's job.
@@ -145,3 +175,13 @@ jobs:
           # Five pairs a form, the twins in alternating order: the relative
           # timing rule (docs/decisions.md, Q8) and the heap slope's spread.
           ERLANG_LOAD_PAIRS: 5
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: load-long-diagnostics
+          path: |
+            dist/load/**/raw.json
+            dist/load/**/twin.log
+            dist/load/postgres.log
+          if-no-files-found: warn
+          retention-days: 30

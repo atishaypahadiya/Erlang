@@ -128,9 +128,13 @@ A commit is tagged `v*` only when the release gate holds for it (`scripts/releas
 2. The trace reports those runs uploaded (artifact `trace-reports`) are identical across them, and identical to a local trace run on a second machine, apart from what each finding itself lists as measured (`scripts/compare-reports.js`, which decides nothing per check):
    - the paths in the finding's `measured` (finding/1), including its measured values (`erlang.values.measured`) and the measured fields of its evidence (`erlang.trace`, `erlang.load`);
    - `message`, when the finding carries its template, which is compared instead; without one, the message is compared with its numbers masked, as finding/1 reads `"message"`;
-   - the report's `started` and `environment`.
+   - the report's `started` and `environment`;
+   - an info "timing unreliable" finding on a row with nothing planted (below).
 
-   Everything else must match: the set of findings, their verdicts, rules, severities, fingerprints, locations, fixes, declared values and message templates. A timed verdict that is a finding in one run and info in another is a difference.
+   Everything else must match: the set of findings, their verdicts, rules, severities, fingerprints, locations, fixes, counts, declared values and message templates.
+3. The rows hold in every run (the owner, 20 November 2026). Each report is read with its fixture's `trace.json`: a planted row is one of its `defects` in the planted twin; every row of the clean twin, and every row of the planted twin that is neither a defect nor an expected miss, has nothing planted.
+   - **Absolute:** every planted row's finding is present, as an error or a warning, in all five runs, with the same rule, severity and fingerprint. A planted row reading "timing unreliable" in any run fails the gate. No row with nothing planted is an error or a warning in any run.
+   - **Tolerated:** an info "timing unreliable" on a row with nothing planted does not make two reports differ, since a one-off stall on a shared runner can put a single start of a decoy past the bar while every verdict stays right. The gate counts them and prints each with its row and run (`UNRELIABLE-INFO`, `UNRELIABLE-COUNT`), and fails if the same row has one in two or more of the five runs (`UNRELIABLE-REPEATED`), or any single run has more than two (`UNRELIABLE-RUN`).
 
 If the gate does not hold, nothing is tagged; the differing form is reported with each run's measured values.
 
@@ -148,19 +152,25 @@ A form is timed when a verdict reads a time: under load, a step whose metric is 
 
 ## Margins in the fixture suite
 
-Two checks on ERLANG's own fixtures, never on a real project's findings (the owner, 20 November 2026; `fixtures/PLAN.md`):
+Two checks on ERLANG's own fixtures, never on a real project's findings (the owner, 20 November 2026; `fixtures/PLAN.md`; `lib/margin.js`). They apply to every timed row, trace and load, the heap slope included:
 
-- **Decoy margin:** in a timed form, every decoy's sample keeps some condition of its bar at most half way.
-- **Planted margin:** every planted defect's sample clears every condition of its bar by 2x: twice the time or count, twice the ratio times the other twin's value. For a share bounded by 1 (a late share, the loop's share of a request), twice the bar when that is at most 1, else half way from the bar to 1 (L09's trace: a share of 0.85 for the 0.7 bar). Expected misses are printed and skipped.
-- **Headroom:** only judged steps can fail it; unjudged steps (warm-ups) are printed with their figures.
+- **Decoy margin:** on the median of a decoy's samples, some condition of its bar is at most half way to it.
+- **Planted margin:** on the median of a planted defect's samples, every condition of its bar is cleared by 2x: twice the time or count, twice the ratio times the other twin's value. For a share bounded by 1 (a late share, the loop's share of a request), twice the bar when that is at most 1, else half way from the bar to 1 (L09's trace: a share of 0.85 for the 0.7 bar). Expected misses are printed and skipped.
+- **Single samples:** separately, a decoy fails if any one sample reaches the judge's own bar (clears it as a finding would), and a planted defect fails if any one sample falls below it. A sample past the margin but inside the bar is an outlier: printed on an `OUTLIER` line with its diagnostics (the load average; for a start, the later requests' median, the collections during the first request and the database's writes since the seed), never failed.
+- **Headroom:** each step's clean twin is measured request by request (ten after the warm requests), each measurement with the garbage collections inside it. The median busy share must be at most 0.2, and any single measurement over 0.3 fails outright. Only judged steps can fail; unjudged steps (warm-ups) are printed with their figures.
+
+Why the median: one-off stalls on shared runners. A CI runner shares its CPUs, and a single sample can take a stall that has nothing to do with the code: a collection, a neighbour's burst, the first touch of a page. Such a stall moves one sample, not the median. The margins exist to show that a fixture's rows sit well clear of the bars on a slower or busier machine, which the median shows; a single sample past the judge's own bar is still a failure, because there the verdict itself would change. In CI runs 44725479816 and 44755685238 every verdict was right, yet margin and headroom checks on single samples failed: L11's clean price route, 11.18 ms over its baseline in one start of five (1.02 to 1.19 in the others); L09's codes step at 0.241 busy on a runner where the same step measured 0.031 one run before.
 
 ## Trace diagnostics
 
 Every trace run records, for explaining a timing after the fact (the owner, 20 November 2026; none of it is judged):
 
-- the database server's log, with every checkpoint and every autovacuum and its time (`log_checkpoints`, `log_autovacuum_min_duration = 0`), in `dist/trace/postgres.log`;
+- the database server's log, with every checkpoint and every autovacuum and its time (`log_checkpoints`, `log_autovacuum_min_duration = 0`), in `dist/<mode>/postgres.log` (trace, headroom, load);
 - every garbage collection in the twin, with its wall-clock time, kind and duration, in the twin's `twin.log`;
-- for each start (judge `starts`): the rows and WAL the database had taken since the seed and the checkpoints since it, and, for each route's first request, its wall-clock time and the collections that ran during it, in `raw.json`.
+- for each start (judge `starts`): the rows and WAL the database had taken since the seed and the checkpoints since it, and, for each route's first request, its wall-clock time and the collections that ran during it, in `raw.json`;
+- for each headroom measurement: its main-thread time and the collections inside it, in `headroom.json`.
+
+CI uploads them beside the reports: artifact `trace-diagnostics` (the trace and headroom runs' `raw.json`, `twin.log`, `headroom.json` and database logs), `load-diagnostics-<n>` for each load job and `load-long-diagnostics`, kept 30 days.
 
 Two measured runs of one request are compared on everything but the fields the run lists as measured (`RUN_MEASURED` in `lib/trace-judge.js`: its time, bytes, the load average, the loop and the pool before it), through the same path mechanism as finding/1's `measured`.
 
@@ -182,7 +192,7 @@ finding/1's `measured` lists, for such a finding, `message`, `erlang.values.meas
 
 ## Decoy margin
 
-In a timed form, every decoy stays at most half way to the bar it is judged against (the owner, 20 November 2026), so that a slower or busier machine cannot carry it over. A decoy is every judged route or step of the clean twin, and every one of the planted twin that is neither a planted defect nor an expected miss. A verdict needs every condition of its bar, so a decoy is held off by any one of them, and a sample keeps its margin when some condition is at most half its threshold: the event loop's longest stretch (50 ms) or its share of the request (0.7); a first request's extra over the baseline (20 ms) or its ratio to it (3); in a load step, the floor or the ratio to the other twin. The trace and load judges print each decoy's samples on a `DECOY` line and fail the form when one is over (`fixtures/PLAN.md`, Acceptance test).
+In a timed form, every decoy stays at most half way to the bar it is judged against (the owner, 20 November 2026), so that a slower or busier machine cannot carry it over. A decoy is every judged route or step of the clean twin, and every one of the planted twin that is neither a planted defect nor an expected miss. A verdict needs every condition of its bar, so a decoy is held off by any one of them: on the median of its samples, some condition is at most half its threshold: the event loop's longest stretch (50 ms) or its share of the request (0.7); a first request's extra over the baseline (20 ms) or its ratio to it (3); in a load step, the floor or the ratio to the other twin (for a heap slope, per pair). The trace and load judges print each decoy's samples and medians on a `DECOY` line, each single sample past the margin on an `OUTLIER` line, and fail the form when the median is over or a sample reaches the bar (see "Margins in the fixture suite").
 
 ## Determinism
 

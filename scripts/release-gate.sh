@@ -5,7 +5,14 @@
 #      own run) are all green, with no red run among them; and
 #   2. the trace reports those five runs uploaded (artifact trace-reports) are
 #      identical apart from what a machine measures (scripts/compare-reports.js),
-#      and so is a local trace run, when one is given (--local <dir>).
+#      and so is a local trace run, when one is given (--local <dir>); and
+#   3. their rows hold (scripts/compare-reports.js, the owner, 20 November
+#      2026): every planted row's finding is present, as an error or a
+#      warning, in every run, and never reads "timing unreliable"; no row with
+#      nothing planted is an error or a warning in any run. An info "timing
+#      unreliable" on a row with nothing planted is not a difference: it is
+#      counted and printed with its row and run, and the gate fails if one row
+#      has one in two or more runs, or one run has more than two.
 # Run before tagging, and again by CI on the tag itself (job release-gate).
 #
 # Usage: scripts/release-gate.sh <commit> [--local <dir>] [--exclude-run <id>]

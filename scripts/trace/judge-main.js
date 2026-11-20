@@ -16,6 +16,8 @@
 // Usage: node scripts/trace/judge.js <form dir> <out dir>
 // Exit codes: 0 both twins as expected, 1 not.
 
+import { defectMatches } from '../../lib/trace-judge.js';
+import { decoyMargin, plantedMargin } from '../../lib/margin.js';
 import { readFileSync, writeFileSync, readdirSync, existsSync, statSync } from 'node:fs';
 import { join, resolve, relative, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -557,8 +559,7 @@ function judgeTwin(twin) {
 }
 
 const keyOf = (f) => `${f.check} ${f.rules?.[0] ?? ''} ${(f.where.endpoints ?? []).map((e) => `${e.method} ${e.route}`).join(',')}${f.erlang?.trace?.host ? ` ${f.erlang.trace.host}` : ''}`;
-const matches = (d, f) => d.check === f.check && (!d.rule || f.rules?.includes(d.rule)) && (!d.host || f.erlang?.trace?.host === d.host)
-  && ((f.where.endpoints ?? []).some((e) => e.method === d.method && e.route === d.route) || (!!d.symbol && f.erlang?.trace?.symbol === d.symbol));
+const matches = defectMatches;
 // A form passes only when the planted twin yields a failing finding for
 // every defect and the clean twin none. In a timed form (L09, L11), a defect
 // the planted twin reports only as "timing unreliable" is not a pass: the
@@ -615,23 +616,42 @@ if (TIMED_TRACE_JUDGES.has(spec.judge) && ['planted', 'clean'].every((t) => exis
     for (const row of rows) console.log(`        ${row}`);
   }
 }
-// Decoy margin (the owner, 20 November 2026; fixtures/PLAN.md): in a timed
-// form, every decoy stays at most half way to the bar it is judged against,
-// so a slower or busier machine cannot carry it over. A decoy is every
-// judged route of the clean twin, and every judged route of the planted twin
-// that is neither a planted defect nor an expected miss (printed on an
-// EXPECTED-MISS line, not judged). A verdict needs
-// every condition of its bar, so a decoy is held off by any one of them: a
-// sample keeps its margin when some condition is at most half its threshold.
-//   loop:   the longest stretch (BLOCK_MS) or its share of the request
+// Margins (the owner, 20 November 2026; docs/CONTRACT.md, "Margins in the
+// fixture suite"; lib/margin.js). In a timed form, a row's samples are judged
+// on their median against the margin, and each sample on its own against the
+// judge's bar; a sample past the margin but inside the bar is an OUTLIER
+// line with its diagnostics, not a failure.
+//   Decoy margin: every judged route of the clean twin, and every judged
+//   route of the planted twin that is neither a planted defect nor an
+//   expected miss (EXPECTED-MISS, printed, not judged). A verdict needs every
+//   condition of its bar, so a decoy is held off by any one of them: the
+//   median of some condition is at most half its threshold. It fails if a
+//   sample reaches the bar.
+//   Planted margin: every planted defect clears every condition's margin on
+//   the median: 2x the bar (a share: half way from the bar to 1). It fails
+//   if a sample falls below the bar.
+//   loop:   the longest stretch (BLOCK_MS) and its share of the request
 //           (BLOCK_SHARE);
-//   starts: the first request's extra over the baseline (FIRST_EXTRA_MS) or
+//   starts: the first request's extra over the baseline (FIRST_EXTRA_MS) and
 //           its ratio to the baseline (FIRST_RATIO).
 if (TIMED_TRACE_JUDGES.has(spec.judge) && ['planted', 'clean'].every((t) => existsSync(join(outDir, t, 'raw.json')))) {
-  const conds = spec.judge === 'loop'
-    ? [{ what: 'ms at a stretch', bar: BLOCK_MS, of: (x) => x.loopMaxMs ?? 0 }, { what: 'share of the request', bar: BLOCK_SHARE, of: (x) => (x.ms > 0 ? (x.loopMaxMs ?? 0) / x.ms : 0) }]
-    : [{ what: 'ms over the baseline', bar: FIRST_EXTRA_MS, of: (x) => (Number.isFinite(x.extraMs) ? x.extraMs - x.baselineMs : x.firstMs - median(x.laterMs)) },
-      { what: 'times the baseline', bar: FIRST_RATIO, of: (x) => (Number.isFinite(x.extraMs) ? (x.baselineMs > 0 ? x.extraMs / x.baselineMs : Infinity) : x.firstMs / median(x.laterMs)) }];
+  const twice = (bar, share) => (share && 2 * bar > 1 ? 1 - (1 - bar) / 2 : 2 * bar);
+  const extra = (x) => (Number.isFinite(x.extraMs) ? x.extraMs - x.baselineMs : x.firstMs - median(x.laterMs));
+  const ratio = (x) => (Number.isFinite(x.extraMs) ? (x.baselineMs > 0 ? x.extraMs / x.baselineMs : Infinity) : x.firstMs / median(x.laterMs));
+  const share = (x) => (x.ms > 0 ? (x.loopMaxMs ?? 0) / x.ms : 0);
+  const condsFor = (margin) => (spec.judge === 'loop'
+    ? [{ what: 'ms at a stretch', bar: () => BLOCK_MS, margin: () => margin(BLOCK_MS), of: (x) => x.loopMaxMs ?? 0 },
+      { what: 'share of the request', bar: () => BLOCK_SHARE, margin: () => margin(BLOCK_SHARE, true), of: share }]
+    : [{ what: 'ms over the baseline', bar: () => FIRST_EXTRA_MS, margin: () => margin(FIRST_EXTRA_MS), of: extra },
+      { what: 'times the baseline', bar: () => FIRST_RATIO, margin: () => margin(FIRST_RATIO), of: ratio }]);
+  const decoyConds = condsFor((bar) => bar / 2);
+  const plantedConds = condsFor(twice);
+  const num = (v) => (Number.isFinite(v) ? Number(v.toFixed(2)) : 'inf');
+  const listed = (conds, samples, label) => conds.map((c) => `${c.what} ${JSON.stringify(samples.map((x) => num(c.of(x))))} (${label(c)} ${Number(c.margin().toFixed(3))})`).join('; ');
+  // A sample's diagnostics: the load average, and for a start the later
+  // requests' median, the collections during the first request and the
+  // database's writes since the seed.
+  const diag = (x) => JSON.stringify({ load1: x.load1 ?? null, ...(spec.judge === 'starts' ? { laterMedianMs: Number(median(x.laterMs).toFixed(1)), gcs: x.gcs ?? null, db: x.db ?? null, at: x.at ?? null } : { ms: x.ms ?? null }) });
   const quiet = (d, it) => d.method === it.method && d.route === it.route;
   for (const twin of ['planted', 'clean']) {
     const raw = JSON.parse(readFileSync(join(outDir, twin, 'raw.json'), 'utf8'));
@@ -640,47 +660,30 @@ if (TIMED_TRACE_JUDGES.has(spec.judge) && ['planted', 'clean'].every((t) => exis
       ? (scale.requests ?? []).map((q) => ({ method: q.method, route: q.route ?? q.path, samples: q.samples.slice(1) }))
       : (scale.starts ?? []).map((q) => ({ method: q.method, route: q.route ?? q.path, samples: q.samples }));
     for (const it of items) {
-      if (twin === 'planted' && spec.defects.some((d) => quiet(d, it))) continue;
-      const miss = twin === 'planted' && (spec.expectedMisses ?? []).some((d) => quiet(d, it));
-      const kept = it.samples.map((x) => conds.some((c) => c.of(x) <= c.bar / 2));
-      const shown = conds.map((c) => `${c.what} ${JSON.stringify(it.samples.map((x) => { const v = c.of(x); return Number.isFinite(v) ? Number(v.toFixed(2)) : 'inf'; }))} (half the bar ${c.bar / 2})`).join('; ');
-      const ok = kept.every(Boolean);
+      const where = `${spec.fixture} ${spec.form} ${twin} ${it.method} ${it.route}`;
       // Beside each sample: the load average when it was taken, and, for a
       // start, the median of the requests after the first.
       const context = `; load ${JSON.stringify(it.samples.map((x) => x.load1 ?? null))}${spec.judge === 'starts' ? `; later requests, median ms ${JSON.stringify(it.samples.map((x) => Number(median(x.laterMs).toFixed(1))))}` : ''}`;
-      if (miss) { console.log(`EXPECTED-MISS  ${spec.fixture} ${spec.form} ${twin} ${it.method} ${it.route}, not a decoy, margin not judged: ${shown}${context}`); continue; }
-      console.log(`DECOY  ${spec.fixture} ${spec.form} ${twin} ${it.method} ${it.route}: ${shown}${context}${ok ? '' : `: OVER in ${kept.filter((k) => !k).length} of ${kept.length}`}`);
-      if (!ok) say(false, `${twin}: decoy margin`, `${it.method} ${it.route} reached half the bar on every condition in ${kept.filter((k) => !k).length} of ${kept.length} samples`);
+      if (twin === 'planted' && spec.defects.some((d) => quiet(d, it))) {
+        const m = plantedMargin(it.samples, plantedConds);
+        const medians = plantedConds.map((c, k) => `${c.what} ${num(m.medians[k] * c.margin())}`).join(', ');
+        console.log(`PLANTED  ${where}: ${listed(plantedConds, it.samples, () => '2x the bar')}; median ${medians}${m.held ? '' : ': SHORT on the median'}${m.below.length ? `: BELOW THE BAR in sample(s) ${m.below.map((i) => i + 1).join(', ')}` : ''}`);
+        for (const i of m.outliers) console.log(`OUTLIER  ${where}: sample ${i + 1} short of the planted margin but clearing the bar (not failed): ${plantedConds.map((c) => `${c.what} ${num(c.of(it.samples[i]))}`).join(', ')}; ${diag(it.samples[i])}`);
+        if (!m.held) say(false, 'planted: planted margin', `${it.method} ${it.route}: the median cleared its bar by less than 2x`);
+        if (m.below.length) say(false, 'planted: planted margin', `${it.method} ${it.route}: ${m.below.length} sample(s) below the judge's bar`);
+        continue;
+      }
+      if (twin === 'planted' && (spec.expectedMisses ?? []).some((d) => quiet(d, it))) {
+        console.log(`EXPECTED-MISS  ${where}, not a decoy, margin not judged: ${listed(decoyConds, it.samples, () => 'half the bar')}${context}`);
+        continue;
+      }
+      const m = decoyMargin(it.samples, decoyConds);
+      const medians = decoyConds.map((c, k) => `${c.what} ${num(m.medians[k] * c.margin())}`).join(', ');
+      console.log(`DECOY  ${where}: ${listed(decoyConds, it.samples, () => 'half the bar')}${context}; median ${medians}${m.kept ? '' : ': OVER on the median'}${m.reached.length ? `: REACHED THE BAR in sample(s) ${m.reached.map((i) => i + 1).join(', ')}` : ''}`);
+      for (const i of m.outliers) console.log(`OUTLIER  ${where}: sample ${i + 1} past the decoy margin but inside the bar (not failed): ${decoyConds.map((c) => `${c.what} ${num(c.of(it.samples[i]))}`).join(', ')}; ${diag(it.samples[i])}`);
+      if (!m.kept) say(false, `${twin}: decoy margin`, `${it.method} ${it.route}: the median reached half the bar on every condition`);
+      if (m.reached.length) say(false, `${twin}: decoy margin`, `${it.method} ${it.route}: ${m.reached.length} sample(s) reached the judge's bar`);
     }
-  }
-}
-// Planted margin (the owner, 20 November 2026; fixtures/PLAN.md): in a
-// timed form, every planted defect clears every condition of its bar by 2x
-// in every sample (a verdict needs all of them):
-//   loop:   a stretch of at least 2 x BLOCK_MS, and a share of the request
-//           at least half way from BLOCK_SHARE to 1 (a share: twice 0.7
-//           is past 1);
-//   starts: at least 2 x FIRST_EXTRA_MS over the baseline, and at least
-//           2 x FIRST_RATIO times it.
-// Expected misses are printed (EXPECTED-MISS, above) and skipped.
-if (TIMED_TRACE_JUDGES.has(spec.judge) && existsSync(join(outDir, 'planted', 'raw.json'))) {
-  const twice = (bar, share) => (share && 2 * bar > 1 ? 1 - (1 - bar) / 2 : 2 * bar);
-  const conds = spec.judge === 'loop'
-    ? [{ what: 'ms at a stretch', need: twice(BLOCK_MS), of: (x) => x.loopMaxMs ?? 0 }, { what: 'share of the request', need: twice(BLOCK_SHARE, true), of: (x) => (x.ms > 0 ? (x.loopMaxMs ?? 0) / x.ms : 0) }]
-    : [{ what: 'ms over the baseline', need: twice(FIRST_EXTRA_MS), of: (x) => (Number.isFinite(x.extraMs) ? x.extraMs - x.baselineMs : x.firstMs - median(x.laterMs)) },
-      { what: 'times the baseline', need: twice(FIRST_RATIO), of: (x) => (Number.isFinite(x.extraMs) ? (x.baselineMs > 0 ? x.extraMs / x.baselineMs : Infinity) : x.firstMs / median(x.laterMs)) }];
-  const raw = JSON.parse(readFileSync(join(outDir, 'planted', 'raw.json'), 'utf8'));
-  const scale = raw.scales[Object.keys(raw.scales).sort((a, b) => b - a)[0]];
-  const items = spec.judge === 'loop'
-    ? (scale.requests ?? []).map((q) => ({ method: q.method, route: q.route ?? q.path, samples: q.samples.slice(1) }))
-    : (scale.starts ?? []).map((q) => ({ method: q.method, route: q.route ?? q.path, samples: q.samples }));
-  for (const it of items) {
-    if (!spec.defects.some((d) => d.method === it.method && d.route === it.route)) continue;
-    const held = it.samples.map((x) => conds.every((c) => c.of(x) >= c.need));
-    const shown = conds.map((c) => `${c.what} ${JSON.stringify(it.samples.map((x) => { const v = c.of(x); return Number.isFinite(v) ? Number(v.toFixed(2)) : 'inf'; }))} (2x the bar ${Number(c.need.toFixed(3))})`).join('; ');
-    const ok = held.every(Boolean);
-    console.log(`PLANTED  ${spec.fixture} ${spec.form} planted ${it.method} ${it.route}: ${shown}${ok ? '' : `: SHORT in ${held.filter((k) => !k).length} of ${held.length}`}`);
-    if (!ok) say(false, 'planted: planted margin', `${it.method} ${it.route} cleared its bar by less than 2x in ${held.filter((k) => !k).length} of ${held.length} samples`);
   }
 }
 process.exit(failed ? 1 : unreliable ? 3 : 0);

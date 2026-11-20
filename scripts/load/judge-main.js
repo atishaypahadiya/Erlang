@@ -30,6 +30,7 @@ import { validate } from '../../core/schema.js';
 import { scan, VERSION } from '../../lib/erlang.js';
 import { slopeOf, MIN_POINTS } from '../../lib/trace-judge.js';
 import { ruleC, REASON, COUNT_METRICS } from '../../lib/timing.js';
+import { decoyMargin, plantedMargin } from '../../lib/margin.js';
 import { linkStatic, fmt } from '../../lib/trace-judge.js';
 import { exitOnCrash } from '../../lib/crash.js';
 import { text, measured as M, declared as D, plain as plainText, asText, measuredPaths } from '../../lib/values.js';
@@ -193,6 +194,10 @@ function judgeTwin(raw, twin) {
         // there is cleared by any positive one). All pairs, none, or a mix
         // (unreliable); the spread of the slopes is recorded only.
         const clears = fits.map((f) => f.me.points >= MIN_POINTS && f.me.slope > 0 && f.me.slope >= (step.floor ?? 0) && f.me.slope >= ratio * (f.them.slope ?? 0));
+        // Both margin tests, as for every timed step (the owner, 20 November
+        // 2026): the slopes per pair, with the judge's own test of a pair.
+        margins(step, twin, fits.map((f) => ({ me: f.me.slope ?? 0, them: f.them.slope ?? 0, fit: f })), raw.repeats.map((rep) => stepOf(rep, twin, step.id)),
+          (r) => r.fit.me.points >= MIN_POINTS && r.me > 0 && r.me >= (step.floor ?? 0) && r.me >= ratio * r.them);
         const c = ruleC({ clears, samples: slopes, before: env.before, after: env.after });
         if (!c.holds) continue;
         const s0 = stepOf(raw.repeats[0], twin, step.id);
@@ -203,26 +208,7 @@ function judgeTwin(raw, twin) {
         continue;
       }
       const clearsOf = (r) => r.me > 0 && r.me >= (step.floor ?? 0) && r.me >= ratio * r.them;
-      // Decoy margin (the owner, 20 November 2026): a timed step's decoy (every
-      // step of the clean twin; a step of the planted twin that is neither a
-      // defect nor an expected miss) keeps, in every pair, one condition of
-      // its bar at most half way: at most half the floor, or at most half the
-      // ratio times the other twin's value.
-      if (!EXEMPT.has(step.metric) && (twin === 'clean' || ![...spec.defects, ...EXPECTED_MISSES].some((d) => d.step === step.id))) {
-        const kept = runs.map((r) => r.me <= 0 || r.me <= (step.floor ?? 0) / 2 || r.me <= (ratio / 2) * r.them);
-        DECOYS.push({ ok: kept.every(Boolean), line: `${twin} step ${step.id} (${step.metric}): ${JSON.stringify(runs.map((r) => Number(r.me.toFixed(4))))} against the other twin's ${JSON.stringify(runs.map((r) => Number(r.them.toFixed(4))))}; half the floor ${(step.floor ?? 0) / 2}, half the ratio ${ratio / 2}${kept.every(Boolean) ? '' : `: OVER in ${kept.filter((k) => !k).length} of ${kept.length}`}` });
-      }
-      // Planted margin (the owner, 20 November 2026): a timed step's planted
-      // defect clears every condition of its bar by 2x in every pair: at
-      // least twice the floor, and at least twice the ratio times the other
-      // twin's value (twiceOf, for a share). Expected misses are printed and
-      // skipped.
-      if (!EXEMPT.has(step.metric) && twin === 'planted' && EXPECTED_MISSES.some((d) => d.step === step.id)) PLANTEDS.push({ ok: true, skipped: true, line: `planted step ${step.id} (${step.metric}), an expected miss, margin not judged: ${JSON.stringify(runs.map((r) => Number(r.me.toFixed(4))))}` });
-      else if (!EXEMPT.has(step.metric) && twin === 'planted' && spec.defects.some((d) => d.step === step.id)) {
-        const floor2 = twiceOf(step.metric, step.floor ?? 0);
-        const held = runs.map((r) => r.me >= floor2 && r.me >= twiceOf(step.metric, ratio * r.them));
-        PLANTEDS.push({ ok: held.every(Boolean), line: `planted step ${step.id} (${step.metric}): ${JSON.stringify(runs.map((r) => Number(r.me.toFixed(4))))} against the other twin's ${JSON.stringify(runs.map((r) => Number(r.them.toFixed(4))))}; twice the floor ${Number(floor2.toFixed(4))}, twice the ratio ${2 * ratio}x${SHARE_METRICS.has(step.metric) ? ' (a share: past 0.5, half way to 1)' : ''}${held.every(Boolean) ? '' : `: SHORT in ${held.filter((k) => !k).length} of ${held.length}`}` });
-      }
+      margins(step, twin, runs, raw.repeats.map((rep) => stepOf(rep, twin, step.id)), (r) => clearsOf(r));
       if (twin === 'planted') {
         const r4 = (xs) => JSON.stringify(xs.map((x) => Number(x.toFixed(4))));
         const v = EXEMPT.has(step.metric) ? exempt({ samples: runs.map((r) => r.me), before: env.before, after: env.after }) : ruleC({ clears: runs.map(clearsOf), samples: runs.map((r) => r.me), before: env.before, after: env.after }).timing;
@@ -313,6 +299,44 @@ const PLANTEDS = [];
 // it to 1 (fixtures/PLAN.md, "Planted margin").
 const SHARE_METRICS = new Set(['late-share']);
 const twiceOf = (metric, x) => (SHARE_METRICS.has(metric) && 2 * x > 1 ? 1 - (1 - x) / 2 : 2 * x);
+// Margins (the owner, 20 November 2026; docs/CONTRACT.md, "Margins in the
+// fixture suite"; lib/margin.js), for a timed step of one twin, its pairs
+// [{ me, them }] and the judge's own test of a pair (clears). The median of
+// the pairs is judged against the margin; a single pair fails only past the
+// judge's bar (a decoy that clears it, a planted row that does not), and a
+// pair past the margin but inside the bar is an OUTLIER line with its
+// diagnostics.
+//   Decoy (every step of the clean twin; a step of the planted twin that is
+//   neither a defect nor an expected miss): on the median, at most half the
+//   floor, or at most half the ratio times the other twin's value.
+//   Planted: on the median, at least twice the floor, and at least twice the
+//   ratio times the other twin's value (twiceOf, for a share).
+// Expected misses are printed and skipped.
+const num4 = (v) => (Number.isFinite(v) ? Number(v.toFixed(4)) : String(v));
+function margins(step, twin, pairs, records, clears) {
+  if (EXEMPT.has(step.metric)) return;
+  const ratio = step.ratio ?? RATIO;
+  const floor = step.floor ?? 0;
+  const values = `${JSON.stringify(pairs.map((r) => num4(r.me)))} against the other twin's ${JSON.stringify(pairs.map((r) => num4(r.them)))}`;
+  const diag = (i) => { const e = records[i]?.environment ?? {}; return `pair ${i + 1}: ${num4(pairs[i].me)} against ${num4(pairs[i].them)}; load ${e.before?.load1 ?? '?'} before, ${e.after?.load1 ?? '?'} after, of ${e.before?.cpus ?? '?'} CPUs`; };
+  const isDefect = spec.defects.some((d) => d.step === step.id);
+  const isMiss = EXPECTED_MISSES.some((d) => d.step === step.id);
+  if (twin === 'planted' && isMiss) {
+    PLANTEDS.push({ ok: true, skipped: true, line: `planted step ${step.id} (${step.metric}), an expected miss, margin not judged: ${values}` });
+    return;
+  }
+  if (twin === 'planted' && isDefect) {
+    const conds = [{ of: (r) => r.me, bar: () => floor, margin: () => twiceOf(step.metric, floor) }, { of: (r) => r.me, bar: (r) => ratio * r.them, margin: (r) => twiceOf(step.metric, ratio * r.them) }];
+    const m = plantedMargin(pairs, conds, clears);
+    PLANTEDS.push({ ok: m.ok, line: `planted step ${step.id} (${step.metric}): ${values}; twice the floor ${twiceOf(step.metric, floor)}, twice the ratio ${2 * ratio}x${SHARE_METRICS.has(step.metric) ? ' (a share: past 0.5, half way to 1)' : ''}; median against the margin: floor ${num4(m.medians[0])}, ratio ${num4(m.medians[1])} (1 is the margin)${m.held ? '' : ': SHORT on the median'}${m.below.length ? `: BELOW THE BAR in pair(s) ${m.below.map((i) => i + 1).join(', ')}` : ''}`,
+      outliers: m.outliers.map((i) => `planted step ${step.id} (${step.metric}): short of the planted margin but clearing the bar (not failed): ${diag(i)}`) });
+    return;
+  }
+  const conds = [{ of: (r) => r.me, bar: () => floor, margin: () => floor / 2 }, { of: (r) => r.me, bar: (r) => ratio * r.them, margin: (r) => (ratio / 2) * r.them }];
+  const m = decoyMargin(pairs, conds, clears);
+  DECOYS.push({ ok: m.ok, line: `${twin} step ${step.id} (${step.metric}): ${values}; half the floor ${floor / 2}, half the ratio ${ratio / 2}; median against the margin: floor ${num4(m.medians[0])}, ratio ${num4(m.medians[1])} (1 is the margin)${m.kept ? '' : ': OVER on the median'}${m.reached.length ? `: REACHED THE BAR in pair(s) ${m.reached.map((i) => i + 1).join(', ')}` : ''}`,
+    outliers: m.outliers.map((i) => `${twin} step ${step.id} (${step.metric}): past the decoy margin but inside the bar (not failed): ${diag(i)}`) });
+}
 const say = (ok, what, detail, status = ok ? 'PASS' : 'FAIL') => { if (status === 'FAIL') failed = true; if (status === 'UNRELIABLE') unreliable = true; console.log(`${status}  ${spec.fixture} ${spec.form} load ${what}${detail ? `  (${detail})` : ''}`); };
 // The timing verdict behind an unreliable finding, for the report: samples,
 // spread, load averages before and after.
@@ -353,10 +377,12 @@ for (const twin of ['planted', 'clean']) {
 }
 for (const d of DECOYS) {
   console.log(`DECOY  ${spec.fixture} ${spec.form} load ${d.line}`);
+  for (const o of d.outliers ?? []) console.log(`OUTLIER  ${spec.fixture} ${spec.form} load ${o}`);
   if (!d.ok) say(false, 'decoy margin', d.line);
 }
 for (const d of PLANTEDS) {
   console.log(`${d.skipped ? 'EXPECTED-MISS' : 'PLANTED'}  ${spec.fixture} ${spec.form} load ${d.line}`);
+  for (const o of d.outliers ?? []) console.log(`OUTLIER  ${spec.fixture} ${spec.form} load ${o}`);
   if (!d.ok) say(false, 'planted margin', d.line);
 }
 // A form's acceptance condition on its clean twin (load.json step
