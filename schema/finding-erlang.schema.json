@@ -371,7 +371,16 @@
             "number",
             "null"
           ],
-          "description": "Extra statements or calls per extra item between the two scales."
+          "description": "Extra statements or calls per extra item between the two scales; for judge memory, the heap kept per request (bytes), the least-squares slope over a soak's points."
+        },
+        "r2": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1,
+          "description": "judge memory: the fit of the slope (R²); a slope counts at 0.9 or better."
         },
         "ratio": {
           "type": [

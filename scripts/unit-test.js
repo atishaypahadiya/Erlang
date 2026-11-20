@@ -329,12 +329,60 @@ console.log('\nThe load judge (heap slope), on recorded runs');
   const clean = (id) => ({ searchProducts: 0, suggest: 200, createOrder: 110, orderLines: 0, placeCart: 0 })[id];
   const planted = (id, k) => ({ searchProducts: 370 + k, suggest: 200, createOrder: 186, orderLines: 0, placeCart: 2400 + 10 * k })[id];
   const good = run(planted, clean);
-  ok('heap slope: the cache and the idempotency store are reported on a busy machine (gated on the slopes\' spread, not the load average); the decoys are not', good.code === 0 && /PASS  L05 express load planted: 2\/2/.test(good.text) && /PASS  L05 express load clean: 0/.test(good.text), good.text);
+  ok('heap slope: the cache and the idempotency store are reported on a busy machine (per pair, the relative rule; the load average recorded only); the decoys are not', good.code === 0 && /PASS  L05 express load planted: 2\/2/.test(good.text) && /PASS  L05 express load clean: 0/.test(good.text), good.text);
   ok('  the expected miss (createOrder, about 1.7 times the clean twin) is not reported and does not fail the form', /EXPECTED  L05 express load planted: memory-growth STB-05 step createOrder, below the detection floor .*not found, as documented/.test(good.text), good.text);
   const wide = run((id, k) => (id === 'placeCart' ? 1500 + 400 * k : planted(id, k)), clean);
-  ok('  slopes that spread 40% or more over the repeats are unreliable (info), exit 3', wide.code === 3 && /UNRELIABLE  L05 express load planted: memory-growth STB-05 step placeCart: timing unreliable .*spread of slopes/.test(wide.text), wide.text);
+  ok('  slopes that spread 70% over the pairs, every pair over the bar: still reported (the spread recorded, not consulted)', wide.code === 0 && /PASS  L05 express load planted: 2\/2/.test(wide.text), wide.text);
+  const onePair = run((id, k) => (id === 'searchProducts' && k === 3 ? 0 : planted(id, k)), clean);
+  ok('  a pair whose slope does not clear: info, timing unreliable, 4 of 5, exit 3, never a pass', onePair.code === 3 && /UNRELIABLE  L05 express load planted: memory-growth STB-05 step searchProducts: timing unreliable .*4 of 5 repeats cleared/.test(onePair.text), onePair.text);
+  const three = run(planted, clean, 3);
+  ok('  three pairs are too few: unreliable, fewer than 5', three.code === 3 && /3 repeat\(s\), fewer than 5/.test(three.text), three.text);
   const same = run(clean, clean);
   ok('  the control: twins that keep alike give no finding, and both defects are missed', same.code === 1 && /missed memory-growth step searchProducts/.test(same.text) && /missed memory-growth step placeCart/.test(same.text), same.text);
+  rmSync(form, { recursive: true, force: true });
+}
+
+console.log('\nThe trace judge (memory), with no twin to compare against');
+{
+  // L05's trace form: each soak's heap after a full collection at each count;
+  // a slope of KEPT_BYTES (512) a request or more with R² 0.9 or better is
+  // reported, judged on the twin alone. Recorded shape; the numbers are those
+  // of a local run and of CI run 44666936253's two noisy decoys.
+  const form = join(OUT, 'trace-l05');
+  rmSync(form, { recursive: true, force: true });
+  for (const d of ['planted', 'clean', 'trace']) cpSync(join(ROOT, 'fixtures', 'L05-memory-growth', d), join(form, d), { recursive: true });
+  const out = join(form, 'out');
+  const spec = JSON.parse(readFileSync(join(form, 'trace', 'trace.json'), 'utf8'));
+  // A soak whose heap rises by perReq a request from its first count on,
+  // with a wobble of `noise` bytes in a pattern that leaves the slope as it
+  // is and lowers only the fit (six counts a soak).
+  const WOBBLE = [0, 1, -1, -1, -1, -1, 1];
+  const soak = (r, perReq, noise = 0) => ({ id: r.id, method: r.method, route: r.route ?? r.path, points: [0, ...r.counts].map((n, k) => ({ requests: n, heapUsed: 10_000_000 + perReq * n + noise * (WOBBLE[k] ?? 0), collected: true, answered: n })) });
+  const run = (per) => {
+    rmSync(out, { recursive: true, force: true });
+    for (const t of ['planted', 'clean']) {
+      mkdirSync(join(out, t), { recursive: true });
+      writeFileSync(join(out, t, 'raw.json'), JSON.stringify({ image: null, started: '2026-11-19T00:00:00Z', environment: { before: { load1: 6, cpus: 8 }, after: { load1: 6, cpus: 8 } }, fixture: 'L05', form: 'express', twin: t, seed: {}, scales: { 1: { n: 1, tables: {}, requests: [], pages: [], soaks: spec.soaks.map((r) => soak(r, ...per(t, r.id))) } } }));
+    }
+    const r = spawnSync(process.execPath, [join(ROOT, 'scripts', 'trace', 'judge.js'), form, out], { encoding: 'utf8' });
+    return { code: r.status, text: (r.stdout + r.stderr).trim() };
+  };
+  // [bytes a request, wobble]: the local run (searchProducts 5,232, placeCart
+  // 1,587, createOrder 83, all with R² 0.97 or better; the clean twin's
+  // bounded suggestion cache 37 with R² 0.96), CI's two decoys (planted
+  // /suggest 45 bytes a request at R² 0.22, clean /orders/:id/lines 97 at
+  // 0.06), and a large slope on a poor fit (900 bytes a request, R² about 0.5).
+  const local = (t, id) => (t === 'planted' ? { searchProducts: [5232, 5_000], suggest: [45, 14_500], createOrder: [83, 600], orderLines: [900, 60_000], placeCart: [1587, 5_000] } : { searchProducts: [8, 1_000], suggest: [37, 1_000], createOrder: [17, 1_000], orderLines: [97, 26_000], placeCart: [1, 1_000] })[id];
+  const good = run(local);
+  ok('memory: both real leaks reported, each twin judged alone; neither decoy, and nothing in the clean twin', good.code === 0 && /PASS  L05 express planted: 2\/2/.test(good.text) && /PASS  L05 express clean: 0/.test(good.text), good.text);
+  ok('  the slope and its fit are printed for every soak, both twins; the two CI decoys fit under 0.9', /SOAK  L05 express planted suggest: 45\.0 B\/request, R² 0\.[0-8]\d \(/.test(good.text) && /SOAK  L05 express clean orderLines: 97\.0 B\/request, R² 0\.[0-8]\d \(/.test(good.text), good.text);
+  ok('  a slope on a poor fit does not count, however large (900 bytes a request)', /SOAK  L05 express planted orderLines: 900\.0 B\/request, R² 0\.[0-8]\d \(6 points\)$/m.test(good.text), good.text);
+  ok('  the real leaks fit at 0.9 or better and are reported', /SOAK  L05 express planted searchProducts: 5232\.0 B\/request, R² (0\.9\d|1\.00) \(6 points\), reported/.test(good.text) && /SOAK  L05 express planted placeCart: 1587\.0 B\/request, R² (0\.9\d|1\.00) \(6 points\), reported/.test(good.text), good.text);
+  ok('  createOrder (83 bytes an order) stays the documented expected miss', /EXPECTED  L05 express planted: memory-growth STB-05 POST \/orders, below the detection floor .*not found, as documented/.test(good.text), good.text);
+  const steady = run((t, id) => (t === 'clean' && id === 'suggest' ? [700] : local(t, id)));
+  ok('  the same rule in the clean twin: a steady 700 bytes a request is reported there too', steady.code === 1 && /reported: memory-growth STB-05/.test(steady.text), steady.text);
+  const same = run((t, id) => local('clean', id));
+  ok('  the control: twins that keep alike give no finding, and both defects are missed', same.code === 1 && /missed memory-growth STB-05 GET \/search/.test(same.text) && /missed memory-growth STB-05 POST \/checkout/.test(same.text), same.text);
   rmSync(form, { recursive: true, force: true });
 }
 

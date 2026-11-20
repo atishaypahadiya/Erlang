@@ -52,12 +52,21 @@ const BLOCK_SHARE = 0.7;
 // s-maxage above 0, and neither no-store nor no-cache.
 const fresh = (cc) => !!cc && !/\b(no-store|no-cache)\b/i.test(cc) && /\b(s-)?max-age=0*[1-9]/i.test(cc);
 const COST_RATIO = 5;
-// judge "memory": heap kept per request, after a full collection: the slope
-// over the soak's points past its first count (past every bound a clean twin
-// sets), at least KEPT_BYTES and KEPT_RATIO times the other twin's slope on
-// the same soak (taken as at least 1 byte).
-const KEPT_BYTES = 32;
-const KEPT_RATIO = 3;
+// judge "memory": heap kept per request, after a full collection: the
+// least-squares slope over the soak's points from its first count on (past
+// every bound a fixed version sets). The rule a real project gets, with no
+// twin to compare against, and the one the fixtures use (the owner, 19
+// November 2026): a positive slope of at least KEPT_BYTES a request with a
+// fit of at least MIN_FIT (R²). Below MIN_FIT the slope is the collector's
+// noise, whatever its size (CI run 44666936253: 45 and 97 bytes a request on
+// fits of 0.22 and 0.06). Below KEPT_BYTES it may be what a live process
+// keeps anyway: code compiled late, caches still settling (37 bytes a request
+// with R² 0.96 on L05's bounded suggestion cache; a clean twin's own retention
+// up to 281 bytes a request on a short stretch, CI run 44609939663). A leak
+// smaller than that is not detected (L05's POST /orders, about 83 to 128
+// bytes an order, the documented expected miss).
+const KEPT_BYTES = 512;
+const MIN_FIT = 0.9;
 // judge "plans": a sequential scan with a filter, on a table of BIG_TABLE
 // rows or more, returning under SELECTIVE of the rows it read.
 const BIG_TABLE = 10_000;
@@ -429,27 +438,21 @@ function judgeTwin(twin) {
   // ---- Memory kept per request (judge "memory", L05): the twin's heap
   // after a full collection, at each point of a soak whose requests each
   // carry a key of their own. Judged on the least-squares slope over the
-  // points from the soak's first count on, which the counts put past every
-  // bound the clean twin sets (MIN_POINTS or more), against the other twin's
-  // slope on the same soak: a heap that keeps KEPT_BYTES or more a request,
-  // and KEPT_RATIO times what the other twin's keeps, keeps something per
-  // request that nothing removes (STB-05). The other twin's slope takes out
-  // what both keep alike (code compiled late, pools, a bounded cache still
-  // filling).
-  const otherSoaks = spec.judge === 'memory' ? JSON.parse(readFileSync(join(outDir, twin === 'planted' ? 'clean' : 'planted', 'raw.json'), 'utf8')).scales[HI].soaks ?? [] : [];
+  // points from the soak's first count on (MIN_POINTS or more), which the
+  // counts put past every bound a fixed version sets: KEPT_BYTES or more a
+  // request with a fit of MIN_FIT or better keeps something per request that
+  // nothing removes (STB-05). No other twin is needed.
   const soakSlope = (x, r) => slopeOf(x.points.filter((p) => p.requests >= r.counts[0]).map((p) => ({ x: p.requests, y: p.heapUsed })));
   for (const r of spec.judge === 'memory' ? spec.soaks : []) {
     const x = (hi.soaks ?? []).find((q) => q.id === r.id);
-    const y = otherSoaks.find((q) => q.id === r.id);
-    for (const [w, q] of [[twin, x], ['the other twin', y]]) if (!q || q.points.some((p) => !p.collected)) throw new Error(`${w}: soak ${r.id} has no heap measured after a full collection`);
+    if (!x || x.points.some((p) => !p.collected)) throw new Error(`${twin}: soak ${r.id} has no heap measured after a full collection`);
     const mine = soakSlope(x, r);
-    const theirs = soakSlope(y, r);
     if (mine.points < MIN_POINTS) throw new Error(`soak ${r.id}: ${mine.points} point(s) past ${r.counts[0]} requests, fewer than ${MIN_POINTS}`);
     const route = r.route ?? r.path;
-    const ratio = mine.slope / Math.max(theirs.slope ?? 0, 1);
-    const trace = { judge: 'memory', path: r.path, ratio, scales: x.points.map((p) => ({ scale: HI, requests: p.requests, heapBytesPerRequest: p.requests ? Number(((p.heapUsed - x.points[0].heapUsed) / p.requests).toFixed(1)) : 0 })) };
-    if (mine.slope >= KEPT_BYTES && ratio >= KEPT_RATIO) emit({ check: 'memory-growth', rule: 'STB-05', strength: 'SHOULD', severity: 'warning', method: r.method, route, trace,
-      message: `${r.method} ${route} kept about ${fmt(Math.round(mine.slope))} bytes of heap per request from request ${fmt(r.counts[0])} to ${fmt(r.counts.at(-1))} (least-squares slope over ${mine.points} points, R² ${mine.r2.toFixed(2)}), each with a key of its own, measured after a full collection, against ${fmt(Math.round(theirs.slope ?? 0))} for the twin without the defect: the heap grows with every new key and nothing gives it back (STB-05).` });
+    const trace = { judge: 'memory', path: r.path, slope: Number(mine.slope.toFixed(1)), r2: Number(mine.r2.toFixed(3)), scales: x.points.map((p) => ({ scale: HI, requests: p.requests, heapBytesPerRequest: p.requests ? Number(((p.heapUsed - x.points[0].heapUsed) / p.requests).toFixed(1)) : 0 })) };
+    if (mine.slope >= KEPT_BYTES && mine.r2 >= MIN_FIT) emit({ check: 'memory-growth', rule: 'STB-05', strength: 'SHOULD', severity: 'warning', method: r.method, route, trace,
+      message: `${r.method} ${route} kept about ${fmt(Math.round(mine.slope))} bytes of heap per request from request ${fmt(r.counts[0])} to ${fmt(r.counts.at(-1))}, each with a key of its own, measured after a full collection (least-squares slope over ${mine.points} points, R² ${mine.r2.toFixed(2)}; reported at ${KEPT_BYTES} bytes a request or more with R² ${MIN_FIT} or better): the heap grows with every new key and nothing gives it back (STB-05).` });
+    SOAKS.push(`${twin} ${r.id}: ${mine.slope.toFixed(1)} B/request, R² ${mine.r2.toFixed(2)} (${mine.points} points)${mine.slope >= KEPT_BYTES && mine.r2 >= MIN_FIT ? ', reported' : ''}`);
   }
 
   // ---- The first request after a start (judge "starts", L11): for each
@@ -547,6 +550,9 @@ const matches = (d, f) => d.check === f.check && (!d.rule || f.rules?.includes(d
 // Count-based forms never produce one.
 let failed = false;
 let unreliable = false;
+// judge "memory": each soak's slope and fit, both twins, printed so a CI log
+// carries them.
+const SOAKS = [];
 const say = (ok, what, detail, status = ok ? 'PASS' : 'FAIL') => { if (status === 'FAIL') failed = true; if (status === 'UNRELIABLE') unreliable = true; console.log(`${status}  ${spec.fixture} ${spec.form} ${what}${detail ? `  (${detail})` : ''}`); };
 const verdictOf = (t) => `samples ${JSON.stringify((t.samples ?? []).map((x) => Number(Number(x).toFixed(1))))}, spread ${t.spread == null ? 'unknown' : `${(t.spread * 100).toFixed(1)}%`}, load before ${t.before?.load1 ?? '?'}/${t.before?.cpus ?? '?'} CPUs, after ${t.after?.load1 ?? '?'}/${t.after?.cpus ?? '?'}: ${Array.isArray(t.why) ? t.why.join('; ') : t.why}`;
 for (const twin of ['planted', 'clean']) {
@@ -578,6 +584,7 @@ for (const twin of ['planted', 'clean']) {
     for (const f of judged) console.log(`      ${f.message}`);
   }
 }
+for (const line of SOAKS) console.log(`SOAK  ${spec.fixture} ${spec.form} ${line}`);
 // Timed judges: the measurements behind each verdict, both twins, printed so
 // a CI log carries them.
 if (['loop', 'starts'].includes(spec.judge) && ['planted', 'clean'].every((t) => existsSync(join(outDir, t, 'raw.json')))) {

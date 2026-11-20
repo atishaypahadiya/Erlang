@@ -96,14 +96,12 @@ const CONTROL_SHARE = 0.9;
 
 // The heap slope (L05; the owner, 19 November 2026): the heap after a full
 // collection against the responses answered, fitted by least squares over a
-// step's points (MIN_POINTS or more) in each repeat. A finding needs a
-// positive slope in every repeat and the median slope at least the step's
-// floor and ratio times the other twin's (taken as at least 1 byte). It is
-// gated on the spread of the slopes over the repeats (10% or less, three
-// repeats or more), not on the load average; each fit's R² is recorded.
-const MAX_SPREAD = 0.10;
+// step's points (MIN_POINTS or more) in each repeat, and judged per pair under
+// the relative rule: a pair clears when this twin's slope is positive, at
+// least the step's floor and at least ratio times the other twin's in the
+// same pair. Every pair, none, or a mix (unreliable); the spread of the slopes
+// and each fit's R² are recorded only.
 const fit = (points) => slopeOf((points ?? []).map((p) => ({ x: p.answered, y: p.heapUsed })));
-const spreadOf = (xs) => { const m = median(xs); return xs.length && m > 0 ? (Math.max(...xs) - Math.min(...xs)) / m : null; };
 
 const NOTE = {
   'OVL-02': 'Cap the requests in flight and answer the excess with 503 and Retry-After at once; find the cap with a load test stepped past the knee (CAP-02).',
@@ -184,14 +182,17 @@ function judgeTwin(raw, twin) {
         const slopes = fits.map((f) => f.me.slope ?? 0);
         const mineS = median(slopes);
         const theirsS = median(fits.map((f) => f.them.slope ?? 0));
-        if (!(slopes.every((x) => x > 0) && mineS >= (step.floor ?? 0) && mineS >= ratio * Math.max(theirsS, 1))) continue;
-        const why = [];
-        const spread = spreadOf(slopes);
-        if (fits.length < 3) why.push(`${fits.length} repeat(s), fewer than 3`);
-        else if (spread === null || spread > MAX_SPREAD) why.push(`spread of slopes ${spread === null ? 'unknown' : `${(spread * 100).toFixed(1)}%`}, over ${MAX_SPREAD * 100}%`);
-        for (const [k, f] of fits.entries()) if (f.me.points < MIN_POINTS) why.push(`repeat ${k + 1}: ${f.me.points} point(s), fewer than ${MIN_POINTS}`);
+        // Per pair, under the relative rule (the owner, 19 November 2026): a
+        // pair clears when this twin's slope, fitted over MIN_POINTS or more
+        // readings, is positive, at least the floor, and at least ratio times
+        // the other twin's slope in the same pair (a negative or flat slope
+        // there is cleared by any positive one). All pairs, none, or a mix
+        // (unreliable); the spread of the slopes is recorded only.
+        const clears = fits.map((f) => f.me.points >= MIN_POINTS && f.me.slope > 0 && f.me.slope >= (step.floor ?? 0) && f.me.slope >= ratio * (f.them.slope ?? 0));
+        const c = ruleC({ clears, samples: slopes, before: env.before, after: env.after });
+        if (!c.holds) continue;
         const s0 = stepOf(raw.repeats[0], twin, step.id);
-        const timing = { reliable: !why.length, reason: why.length ? REASON : null, why: why.join('; ') || null, samples: slopes.map((x) => Number(x.toFixed(2))), median: mineS, spread, before: env.before ?? null, after: env.after ?? null };
+        const timing = { ...c.timing, why: c.timing.why.join('; ') || null, samples: slopes.map((x) => Number(x.toFixed(2))), median: mineS };
         const t = { check: step.check ?? spec.check, rule: step.rule ?? spec.rule, method: s0.method, route: s0.route ?? step.route, symbol: step.symbol ?? null };
         const load = { judge: 'memory', step: step.id, path: s0.path, rate: step.rate, seconds: step.seconds, repeats: fits.length, samples: timing.samples, twin: { 'heap-slope': mineS, r2: fits.map((f) => Number((f.me.r2 ?? 0).toFixed(3))) }, other: { 'heap-slope': theirsS }, timing };
         out.push(emit(t, statics, `At ${fmt(step.rate)} requests a second for ${step.seconds} s, ${t.method} ${t.route} kept about ${fmt(Math.round(mineS))} bytes of heap per request (the least-squares slope of the heap after full collections against responses answered, positive in every repeat), against ${fmt(Math.round(theirsS))} for the twin without the defect (STB-05).${timing.reliable ? '' : ` Not judged: ${REASON} (${timing.why}).`}`, load, timing.reliable ? 'warning' : 'info'));
