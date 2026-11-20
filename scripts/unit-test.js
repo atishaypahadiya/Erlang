@@ -189,6 +189,14 @@ console.log('\nITTEN\'s timing lock (honoured, never written)');
   ok('nothing in the lock directory is written or deleted', Object.entries(before).every(([f, t]) => existsSync(join(dir, f)) && readFileSync(join(dir, f), 'utf8') === t) && readdirSync(dir).length === Object.keys(files).length);
   for (const f of ['timing-1.json', 'timing-4.json', 'timing-5.json']) rmSync(join(dir, f));
   ok('with only stale and non-lock files left, nothing is active', (await LOCK.waitForNoLock({ env, now, isAlive, limitMs: 0, log: () => {} })) === null);
+  // A running Lima VM is waited on like a lock (the owner, 20 November 2026).
+  const vmLines = [];
+  const vmLog = join(dir, 'vm-waits.jsonl');
+  let vmChecks = 0;
+  const vmHeld = await LOCK.waitForNoLock({ env, now, isAlive, vms: () => (++vmChecks < 3 ? ['bench-vm'] : []), limitMs: 10_000, log: (l) => vmLines.push(l), logFile: vmLog, label: 'unit-vm' });
+  ok('a running Lima VM is waited on, the wait logged with its name, and the wait ends when it stops', vmHeld === null && vmChecks === 3 && /waiting on a running Lima VM, bench-vm \(limactl list\)/.test(vmLines.join('\n')) && /"phase":"Lima VM bench-vm"/.test(readFileSync(vmLog, 'utf8')), vmLines.join('\n'));
+  ok('  describe names the VM', LOCK.describe(LOCK.active({ env, now, isAlive, vms: () => ['bench-vm'] }).find((l) => l.vm)) === 'Lima VM bench-vm is running (limactl list)');
+  ok('  a caller with its own env and no vms sees no VMs (limactl not consulted)', LOCK.active({ env, now, isAlive }).every((l) => !l.vm));
   rmSync(dir, { recursive: true, force: true });
 }
 

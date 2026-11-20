@@ -66,7 +66,7 @@ Request handlers are found in Express, Fastify, `node:http` and Next.js.
 - **Decoy margin:** in a timed form, the median of every decoy's samples stays at most half way to its bar on at least one of the bar's conditions, and no single sample reaches the bar; the judges print it on `DECOY` lines.
 - **Outliers:** a single sample past a margin but inside the bar is printed on an `OUTLIER` line with its diagnostics, not failed: one-off stalls on shared runners move one sample, not the median. Both margins cover the heap slope too.
 - **Diagnostics in CI:** every run uploads the twins' `raw.json`, their logs (every garbage collection) and the database server's log, for the trace, headroom and load jobs.
-- **ITTEN's timing lock:** the harnesses generate no load while it is active. They wait and log every wait (phase, taken, expires, duration). A lock in an unknown format counts as active.
+- **ITTEN's timing lock:** the harnesses generate no load while it is active. They wait and log every wait (phase, taken, expires, duration). A lock in an unknown format counts as active. A running Lima VM (`limactl list`) counts as a lock too: a benchmark harness on the same Mac runs 2-CPU VMs, and the harnesses wait while one runs, logging the wait with the VM's name; where limactl is absent, as in CI, nothing changes.
 
 ### Exit codes
 
