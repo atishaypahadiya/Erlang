@@ -37,13 +37,9 @@ jobs:
         with:
           node-version: 22
       - run: npm ci
-      # Candidate rule (c) (docs/decisions.md, Q8) needs 5 runs or starts after
-      # the warm-up: the timed forms run that many, so the judge can print the
-      # current rule and (c) side by side.
+      # The timed forms carry their own runs and starts (five after the
+      # warm-up, as the relative timing rule needs).
       - run: scripts/trace.sh
-        env:
-          ERLANG_TRIAL_RUNS: 6
-          ERLANG_TRIAL_STARTS: 5
 
   # The load forms, listed for the load job's matrix.
   load-forms:
@@ -85,8 +81,8 @@ jobs:
       - run: scripts/load.sh "$FORM"
         env:
           FORM: ${{ matrix.form }}
-          # Five pairs a form: the heap slope's spread, and candidate rule (c)
-          # (docs/decisions.md, Q8), printed beside the current rule.
+          # Five pairs a form, the twins in alternating order: the relative
+          # timing rule (docs/decisions.md, Q8) and the heap slope's spread.
           ERLANG_LOAD_PAIRS: 5
 
   # L05's load form alone, under the ci-long caps (lib/load-guard.js): its
@@ -110,6 +106,6 @@ jobs:
         env:
           FORM: L05-memory-growth
           ERLANG_LOAD_PROFILE: ci-long
-          # Five pairs a form: the heap slope's spread, and candidate rule (c)
-          # (docs/decisions.md, Q8), printed beside the current rule.
+          # Five pairs a form, the twins in alternating order: the relative
+          # timing rule (docs/decisions.md, Q8) and the heap slope's spread.
           ERLANG_LOAD_PAIRS: 5

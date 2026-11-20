@@ -310,11 +310,9 @@ async function measureRequest(app, r, n) {
   const body = r.body === undefined ? undefined : expand(r.body, n);
   const runs = [];
   // Three runs, the first a warm-up; two when trace.json says so (runs: 2),
-  // for requests that wait out a timeout; more for timings (the lock needs
-  // three after the warm-up).
-  // ERLANG_TRIAL_RUNS (candidate rule (c), Q8) raises the runs of a timed
-  // form (judge "loop"); counted forms keep theirs.
-  const count = Math.max(r.runs ?? spec.runs ?? 3, spec.judge === 'loop' ? Number(process.env.ERLANG_TRIAL_RUNS) || 0 : 0);
+  // for requests that wait out a timeout; more for timings (L09: six, five
+  // after the warm-up, as the relative timing rule needs).
+  const count = r.runs ?? spec.runs ?? 3;
   for (let k = 0; k < count; k++) {
     await paced();
     resetStats();
@@ -487,7 +485,7 @@ for (const twin of ['planted', 'clean']) {
       // that does not exist, expected to answer 404: that warms the
       // framework but not the database driver. The report says which ran.
       const warmup = warmupOf(join(twinsRoot, twin));
-      const count = Math.max(...spec.starts.map((r) => r.samples ?? 3), Number(process.env.ERLANG_TRIAL_STARTS) || 0);
+      const count = Math.max(...spec.starts.map((r) => r.samples ?? 5));
       const warmups = [];
       const byRoute = new Map(spec.starts.map((r) => [r.id, []]));
       for (let k = 0; k < count; k++) {
@@ -531,11 +529,11 @@ await new Promise((ok) => stubServer.close(ok));
 async function loadMain() {
   const mode = profile();
   const caps = CAPS[mode];
-  // Pairs: the form's repeats, or ERLANG_LOAD_PAIRS (five or more for
-  // candidate rule (c), Q8), the twins in alternating order.
+  // Pairs: the form's repeats, or ERLANG_LOAD_PAIRS when more (CI runs five
+  // a form), the twins in alternating order.
   // Pair k runs the twins in turn, planted first when k is even, clean first
   // when odd, so drift over the run falls on both alike.
-  const pairs = Number(process.env.ERLANG_LOAD_PAIRS) || spec.repeats || 3;
+  const pairs = Math.max(Number(process.env.ERLANG_LOAD_PAIRS) || 0, spec.repeats || 3);
   spec.repeats = pairs;
   try { checkRun(spec, caps); } catch (e) { if (e instanceof Refused) { console.error(`load: refused: ${e.message}`); process.exit(2); } throw e; }
   const k6 = process.env.ERLANG_K6 || 'k6';

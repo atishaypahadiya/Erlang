@@ -6,16 +6,20 @@
 // back, never against an absolute number (fixtures/PLAN.md): a twin reports
 // a finding when it does markedly worse than the other on a defect's step.
 // The planted twin should; the clean twin, held to the same test, should
-// not. Every load finding goes through the timing rule (lib/timing.js): the
-// judged quantity in each repeat (three or more), a relative spread of 10% or
-// less, and the load average below half the CPU count before and after every
-// step (after: once cooled, docs/decisions.md, Q6). Otherwise it is info, timing
-// unreliable, and never fails. A finding that agrees with a static finding
-// (check, rule, and the symbol or endpoint) is that finding, with load added
-// to its detection.
+// not. Counts and shares with no time limit in them are exempt from the
+// timing rule. A timed relative verdict (latencies, the event loop's longest
+// stretch, a late share, the shedding gap) is judged under the relative
+// timing rule (lib/timing.js ruleC; docs/decisions.md, Q8): five pairs or more, the
+// twins in alternating order; it holds when every pair clears the step's
+// threshold, there is no finding when none does, and a mix is info, timing
+// unreliable, never failing. Spread and load averages are recorded only. The
+// heap slope is gated on the spread of the slopes. A finding that agrees with
+// a static finding (check, rule, and the symbol or endpoint) is that
+// finding, with load added to its detection.
 //
 // Usage: node scripts/load/judge.js <form dir> <out dir>
-// Exit codes: 0 both twins as expected, 1 not.
+// Exit codes: 0 both twins as expected, 1 not, 3 a planted defect only
+// unreliable.
 
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join, resolve, relative, dirname } from 'node:path';
@@ -25,7 +29,7 @@ import { report } from '../../core/report.js';
 import { validate } from '../../core/schema.js';
 import { scan, VERSION } from '../../bin/erlang.js';
 import { slopeOf, MIN_POINTS } from '../../lib/trace-judge.js';
-import { ruleC, MIN_REPEATS, judge as timingJudge, REASON } from '../../lib/timing.js';
+import { ruleC, REASON } from '../../lib/timing.js';
 import { linkStatic, fmt } from '../../lib/trace-judge.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -90,10 +94,6 @@ const METRICS = {
 };
 const CONTROL_SHARE = 0.9;
 
-// Candidate rule (c) (docs/decisions.md, Q8): lib/timing.js ruleC, printed beside
-// the current rule; only "current" decides the exit code and writes the
-// reports.
-
 // The heap slope (L05; the owner, 19 November 2026): the heap after a full
 // collection against the responses answered, fitted by least squares over a
 // step's points (MIN_POINTS or more) in each repeat. A finding needs a
@@ -130,7 +130,7 @@ function environments(raw) {
 }
 
 const staticsOf = new Map();
-function judgeTwin(raw, twin, rule = 'current') {
+function judgeTwin(raw, twin) {
   const other = twin === 'planted' ? 'clean' : 'planted';
   const subjectDir = join(formDir, twin);
   if (!staticsOf.has(twin)) staticsOf.set(twin, scan(subjectDir).findings);
@@ -151,16 +151,12 @@ function judgeTwin(raw, twin, rule = 'current') {
       const runs = raw.repeats.map((rep) => ({ me: stepOf(rep, twin, id), them: stepOf(rep, other, id) }));
       const samples = runs.map((r) => Number((share(r.them) - share(r.me)).toFixed(4)));
       const gap = median(samples);
-      if (twin === 'planted' && rule === 'current') MEASURED.push(`step ${id} (goodput gap, clean minus planted): ${JSON.stringify(samples)}; ${verdictOf(timingJudge({ samples, before: env.before, after: env.after }))}`);
-      let timing;
-      if (rule === 'c') {
-        const c = ruleC({ clears: samples.map((g) => g >= SHED_GAP), samples, before: env.before, after: env.after });
-        if (!c.holds) continue;
-        timing = c.timing;
-      } else {
-        if (gap < SHED_GAP) continue;
-        timing = timingJudge({ samples, before: env.before, after: env.after });
-      }
+      // The relative timing rule (docs/decisions.md, Q8): every pair's gap over
+      // the bar, none, or a mix (unreliable).
+      const c = ruleC({ clears: samples.map((g) => g >= SHED_GAP), samples, before: env.before, after: env.after });
+      if (twin === 'planted') MEASURED.push(`step ${id} (goodput gap, clean minus planted, needs ${SHED_GAP}): ${JSON.stringify(samples)}; ${verdictOf(c.timing)}`);
+      if (!c.holds) continue;
+      const timing = c.timing;
       const s0 = runs[0].me;
       const step = spec.steps.find((x) => x.id === id);
       const medOf = (k, f) => median(runs.map((r) => f(r[k])));
@@ -181,7 +177,7 @@ function judgeTwin(raw, twin, rule = 'current') {
       const ratio = step.ratio ?? RATIO;
       if (step.metric === 'heap-slope') {
         const fits = raw.repeats.map((rep) => ({ me: fit(stepOf(rep, twin, step.id).heap?.points), them: fit(stepOf(rep, other, step.id).heap?.points) }));
-        if (twin === 'planted' && rule === 'current') {
+        if (twin === 'planted') {
           const fitsOf = (k) => fits.map((f) => (f[k].slope === null ? `none (${f[k].points} point(s))` : `${f[k].slope.toFixed(1)} R² ${f[k].r2.toFixed(2)}`)).join(', ');
           MEASURED.push(`step ${step.id} (heap slope, B/request, needs ${ratio}x and ${step.floor ?? 0}${spec.defects.some((d) => d.step === step.id) ? '' : EXPECTED_MISSES.some((d) => d.step === step.id) ? '; an expected miss' : '; a decoy route'}): planted ${fitsOf('me')}; clean ${fitsOf('them')}`);
         }
@@ -201,24 +197,24 @@ function judgeTwin(raw, twin, rule = 'current') {
         out.push(emit(t, statics, `At ${fmt(step.rate)} requests a second for ${step.seconds} s, ${t.method} ${t.route} kept about ${fmt(Math.round(mineS))} bytes of heap per request (the least-squares slope of the heap after full collections against responses answered, positive in every repeat), against ${fmt(Math.round(theirsS))} for the twin without the defect (STB-05).${timing.reliable ? '' : ` Not judged: ${REASON} (${timing.why}).`}`, load, timing.reliable ? 'warning' : 'info'));
         continue;
       }
-      if (twin === 'planted' && rule === 'current') {
+      const clearsOf = (r) => r.me > 0 && r.me >= (step.floor ?? 0) && r.me >= ratio * r.them;
+      if (twin === 'planted') {
         const r4 = (xs) => JSON.stringify(xs.map((x) => Number(x.toFixed(4))));
-        const v = (EXEMPT.has(step.metric) ? exempt : timingJudge)({ samples: runs.map((r) => r.me), before: env.before, after: env.after });
+        const v = EXEMPT.has(step.metric) ? exempt({ samples: runs.map((r) => r.me), before: env.before, after: env.after }) : ruleC({ clears: runs.map(clearsOf), samples: runs.map((r) => r.me), before: env.before, after: env.after }).timing;
         MEASURED.push(`step ${step.id} (${step.metric}, needs ${ratio}x and ${step.floor ?? 0}): planted ${r4(runs.map((r) => r.me))}, clean ${r4(runs.map((r) => r.them))}; ${v.exempt ? 'a count or share, exempt from the timing rule; ' : ''}${verdictOf(v)}`);
       }
       const samples = runs.map((r) => Number(r.me.toFixed(4)));
-      const clearsOf = (r) => r.me > 0 && r.me >= (step.floor ?? 0) && r.me >= ratio * r.them;
       let timing;
       if (EXEMPT.has(step.metric)) {
         if (!(mine >= (step.floor ?? 0)) || !(mine >= ratio * theirs) || mine === 0) continue;
         timing = exempt({ samples, before: env.before, after: env.after });
-      } else if (rule === 'c') {
+      } else {
+        // A timed relative verdict (latencies, the loop's longest stretch, a
+        // late share): the relative timing rule (docs/decisions.md, Q8), each
+        // twin against the other in every pair.
         const c = ruleC({ clears: runs.map(clearsOf), samples, before: env.before, after: env.after });
         if (!c.holds) continue;
         timing = c.timing;
-      } else {
-        if (!(mine >= (step.floor ?? 0)) || !(mine >= ratio * theirs) || mine === 0) continue;
-        timing = timingJudge({ samples, before: env.before, after: env.after });
       }
       const s0 = stepOf(raw.repeats[0], twin, step.id);
       // With a background (L09), the finding is about the background route,
@@ -241,7 +237,7 @@ function judgeTwin(raw, twin, rule = 'current') {
     findings: out,
     run: { load: { profile: raw.profile, k6: raw.k6, image: raw.image, fixture: raw.fixture, form: raw.form, twin, judge: spec.judge, repeats: raw.repeats.length, caps: raw.caps } },
   });
-  if (rule === 'current') writeFileSync(join(outDir, twin, 'report.json'), JSON.stringify(r, null, 2) + '\n');
+  writeFileSync(join(outDir, twin, 'report.json'), JSON.stringify(r, null, 2) + '\n');
   return r;
 }
 
@@ -319,26 +315,4 @@ for (const twin of ['planted', 'clean']) {
     say(!judged.length, `clean: ${judged.length} error(s) or warning(s)`, [...judged.map((f) => `reported: ${keyOf(f)}`), ...infos.map((f) => `info: ${keyOf(f)}`)].join('; '));
   }
 }
-// Candidate rule (c) (Q8): the same runs under each rule, one line per form,
-// with the clean twin's failing findings (false positives) and the decoys
-// the planted twin reported, and why each unreliable defect was so. Printed
-// only; the exit code is the current rule's.
-const outcome = (rule) => {
-  let p;
-  let c;
-  try { p = judgeTwin(raw, 'planted', rule); c = judgeTwin(raw, 'clean', rule); } catch (e) { return { status: 'FAIL', note: e.message, cleanFp: '?', decoys: '?', why: [] }; }
-  const judged = p.findings.filter((f) => f.severity !== 'info');
-  const infos = p.findings.filter((f) => f.severity === 'info' && f.erlang.load.timing.reliable === false);
-  const unrel = spec.defects.filter((d) => !judged.some((f) => matches(d, f)) && infos.some((f) => matches(d, f)));
-  const missing = spec.defects.filter((d) => !judged.some((f) => matches(d, f)) && !unrel.includes(d));
-  const extra = judged.filter((f) => !spec.defects.some((d) => matches(d, f)) && !expectedMiss(f));
-  const cleanFp = c.findings.filter((f) => f.severity !== 'info').length;
-  const status = missing.length || extra.length || cleanFp ? 'FAIL' : unrel.length ? 'UNRELIABLE' : 'PASS';
-  const why = unrel.map((d) => { const t = infos.find((f) => matches(d, f)).erlang.load.timing; return `step ${d.step}: ${t.why}`; });
-  return { status, cleanFp, decoys: extra.length, missed: missing.map((d) => d.step), why };
-};
-const rules = [['current', 'current rule'], ['c', `(c) all or none of ${MIN_REPEATS}+ repeats`]];
-const results = rules.map(([rule]) => outcome(rule));
-console.log(`TRIAL  ${spec.fixture} ${spec.form} load, ${raw.repeats.length} pairs: ${rules.map(([, name], k) => `${name} ${results[k].status} (clean false positives ${results[k].cleanFp}, decoys ${results[k].decoys}${results[k].missed?.length ? `, missed ${results[k].missed.join(' ')}` : ''})`).join(' | ')}`);
-rules.forEach(([, name], k) => { for (const w of results[k].why) console.log(`      ${name}: ${w}`); if (results[k].note) console.log(`      ${name}: ${results[k].note}`); });
 process.exit(failed ? 1 : unreliable ? 3 : 0);

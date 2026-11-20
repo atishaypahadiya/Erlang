@@ -1,11 +1,11 @@
 {
-  "note": "Load form (research/load-harness.md) for L12, the row only load can test (docs/decisions.md, Q3). Every order read takes 100 ms at the database (schema.sql), so the twins' pool of 10 serves at most 100 requests a second. Step below, at half that, is the control: both twins must answer at least 90% of it within 500 ms, or the form is wrong. Step past, at one and a half times the knee, is judged: goodput, the share of offered requests answered 2xx within 500 ms, of each twin against the other. The planted twin queues every request for a connection, and each waits up to the pool's connectionTimeoutMillis (2 s) before it is served late or fails; the clean twin holds at most 20 in flight and answers the rest 503 at once. defects are what the planted twin must report and the clean twin must not; the static finding has no endpoint, so it is linked by symbol (the app).",
+  "note": "Load form (research/load-harness.md) for L12, the row only load can test (docs/decisions.md, Q3). Every order read takes 100 ms at the database (schema.sql), so the twins' pool of 10 serves at most 100 requests a second. Step below, at half that, is the control: both twins must answer at least 90% of it within 500 ms, or the form is wrong. Step past, at one and a half times the knee, is judged: goodput, the share of offered requests answered 2xx within 500 ms, of each twin against the other. The planted twin queues every request for a connection, and each waits up to the pool's connectionTimeoutMillis (2 s) before it is served late or fails; the clean twin holds at most 20 in flight and answers the rest 503 at once. Judged over 5 pairs in alternating order under the relative timing rule (docs/decisions.md, Q8): the gap is at least 25 points in every pair, in none, or it is a mix (unreliable); spread and load average are recorded only. defects are what the planted twin must report and the clean twin must not; the static finding has no endpoint, so it is linked by symbol (the app).",
   "fixture": "L12",
   "form": "express",
   "judge": "shedding",
   "scale": 1,
   "n": 1,
-  "repeats": 3,
+  "repeats": 5,
   "steps": [
     {
       "id": "below",

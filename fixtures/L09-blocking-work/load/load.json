@@ -1,12 +1,12 @@
 {
-  "note": "Load form (research/load-harness.md) for L09: a cheap request (an avatar, about 1 ms) at 20 a second while a second scenario sends one route at a time at its own rate. Work on the main thread holds up every other request; work off it does not. For login and export the judged quantity is the share of avatar requests not answered within 100 ms; a twin reports at three times the other's share and at least 30%. Signup is judged on the event loop's longest stretch over the step (monitorEventLoopDelay), at three times the other twin's and at least 50 ms, with signups at 2 a second: at 8 a second the hashing filled both CPUs in the clean twin too, off the main thread, so its avatars were as late as the planted twin's (CI run 44609939663; the owner, 19 November 2026). The one-time codes hash with bcryptjs at cost 4 in both twins: the decoy. Each step runs at a fixed arrival rate (k6), each twin judged against the other over 3 repeats, every finding under the timing rule. defects are what the planted twin must report and the clean twin must not; every other judged step is a decoy, in both twins.",
+  "note": "Load form (research/load-harness.md) for L09: a cheap request (an avatar, about 1 ms) at 20 a second while a second scenario sends one route at a time at its own rate. Work on the main thread holds up every other request; work off it does not. For login and export the judged quantity is the share of avatar requests not answered within 100 ms; a twin reports at three times the other's share and at least 30%. Signup is judged on the event loop's longest stretch over the step (monitorEventLoopDelay), at three times the other twin's and at least 50 ms, with signups at 2 a second: at 8 a second the hashing filled both CPUs in the clean twin too, off the main thread, so its avatars were as late as the planted twin's (CI run 44609939663; the owner, 19 November 2026). The one-time codes hash with bcryptjs at cost 4 in both twins: the decoy. Each step runs at a fixed arrival rate (k6), each twin judged against the other over 5 pairs in alternating order, every finding under the relative timing rule (all five pairs, none, or a mix: unreliable). defects are what the planted twin must report and the clean twin must not; every other judged step is a decoy, in both twins.",
   "fixture": "L09",
   "form": "express",
   "judge": "compare",
   "check": "blocking-work",
   "rule": "OVL-12",
   "scale": 1,
-  "repeats": 3,
+  "repeats": 5,
   "steps": [
     {
       "id": "signup",

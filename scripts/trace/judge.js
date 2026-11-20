@@ -23,11 +23,8 @@ import { finding, fingerprint } from '../../core/finding.js';
 import { report } from '../../core/report.js';
 import { validate } from '../../core/schema.js';
 import { scan, VERSION } from '../../bin/erlang.js';
-import { judge as timingJudge, ruleC, MIN_REPEATS, environment, REASON } from '../../lib/timing.js';
+import { judge as timingJudge, ruleC, environment, REASON } from '../../lib/timing.js';
 
-// Candidate rule (c) (docs/decisions.md, Q8; lib/timing.js ruleC) is printed beside
-// the current rule for the timed judges (loop, starts); only "current"
-// decides the exit code and writes the reports.
 const median_ = (xs) => { const s = [...xs].sort((a, b) => a - b); const m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
 import { growth, rowsGrowth, repeated, linkStatic, normalizeSql, routePattern, fmt, COMPRESS_MIN, UNREAD, ROWS, SLOPE, slopeOf, MIN_POINTS } from '../../lib/trace-judge.js';
 
@@ -112,7 +109,7 @@ function sourceOf(dir) {
 }
 const locate = (src, test) => [...src].flatMap(([file, lines]) => lines.flatMap((l, k) => (test(l) ? [{ file, line: k + 1 }] : [])));
 
-function judgeTwin(twin, rule = 'current') {
+function judgeTwin(twin) {
   const raw = JSON.parse(readFileSync(join(outDir, twin, 'raw.json'), 'utf8'));
   const subjectDir = join(spec.twins ? resolve(formDir, spec.twins) : formDir, twin);
   const src = sourceOf(subjectDir);
@@ -352,8 +349,8 @@ function judgeTwin(twin, rule = 'current') {
     const clears = blocked.map((b, k) => b >= BLOCK_MS && shares[k] >= BLOCK_SHARE);
     const env0 = { before: raw.environment?.before ?? environment(), after: raw.environment?.after ?? environment() };
     let v;
-    if (rule === 'c') { const c = ruleC({ clears, samples: blocked, ...env0 }); if (!c.holds) continue; v = c.timing; }
-    else { if (!clears.every(Boolean)) continue; v = timingJudge({ samples: blocked, ...env0 }); }
+    // The relative timing rule (docs/decisions.md, Q8): every run, none, or a mix.
+    { const c = ruleC({ clears, samples: blocked, ...env0 }); if (!c.holds) continue; v = c.timing; }
     const t = { ...v, why: Array.isArray(v.why) ? v.why.join('; ') || null : v.why ?? null };
     const share = Math.min(...shares);
     const trace = { judge: 'timing', path: x.path, timing: t, scales: [{ scale: HI, ms: Number(t.median.toFixed(1)) }] };
@@ -477,8 +474,8 @@ function judgeTwin(twin, rule = 'current') {
     const env0 = { before: raw.environment?.before ?? environment(), after: raw.environment?.after ?? environment() };
     const firsts = x.samples.map((s) => (warm ? s.extraMs : s.firstMs));
     let v;
-    if (rule === 'c') { const c = ruleC({ clears, samples: firsts, ...env0 }); if (!c.holds) continue; v = c.timing; }
-    else { if (!clears.every(Boolean)) continue; v = timingJudge({ samples: firsts, ...env0 }); }
+    // The relative timing rule (docs/decisions.md, Q8): every start, none, or a mix.
+    { const c = ruleC({ clears, samples: firsts, ...env0 }); if (!c.holds) continue; v = c.timing; }
     const t = { ...v, why: Array.isArray(v.why) ? v.why.join('; ') || null : v.why ?? null };
     const route = r.route ?? r.path;
     const steady = median(later);
@@ -536,7 +533,7 @@ function judgeTwin(twin, rule = 'current') {
     findings: out,
     run: { trace: { image: raw.image, fixture: raw.fixture, form: raw.form, twin, judge: spec.judge, ...(hi.warmup ? { warmup: hi.warmup } : {}), seed: raw.seed, scales: Object.fromEntries(Object.entries(raw.scales).map(([k, v]) => [k, { n: v.n, tables: v.tables }])) } },
   });
-  if (rule === 'current') writeFileSync(join(outDir, twin, 'report.json'), JSON.stringify(r, null, 2) + '\n');
+  writeFileSync(join(outDir, twin, 'report.json'), JSON.stringify(r, null, 2) + '\n');
   return r;
 }
 
@@ -581,10 +578,8 @@ for (const twin of ['planted', 'clean']) {
     for (const f of judged) console.log(`      ${f.message}`);
   }
 }
-// Candidate rule (c) (Q8), timed judges only: the same run under each rule,
-// one line per form, with the clean twin's failing findings and the decoys,
-// and the measurements behind them. Printed only; the exit code is the
-// current rule's.
+// Timed judges: the measurements behind each verdict, both twins, printed so
+// a CI log carries them.
 if (['loop', 'starts'].includes(spec.judge) && ['planted', 'clean'].every((t) => existsSync(join(outDir, t, 'raw.json')))) {
   for (const twin of ['planted', 'clean']) {
     const raw = JSON.parse(readFileSync(join(outDir, twin, 'raw.json'), 'utf8'));
@@ -596,20 +591,5 @@ if (['loop', 'starts'].includes(spec.judge) && ['planted', 'clean'].every((t) =>
     console.log(`      measured ${twin}: load ${e.before?.load1}/${e.before?.cpus} before, ${e.after?.load1}/${e.after?.cpus} after`);
     for (const row of rows) console.log(`        ${row}`);
   }
-  const outcome = (rule) => {
-    const p = judgeTwin('planted', rule);
-    const c = judgeTwin('clean', rule);
-    const judged = p.findings.filter((f) => f.severity !== 'info');
-    const unrel = spec.defects.filter((d) => !judged.some((f) => matches(d, f)) && p.findings.some((f) => f.severity === 'info' && matches(d, f) && f.erlang?.trace?.timing?.reliable === false));
-    const missing = spec.defects.filter((d) => !judged.some((f) => matches(d, f)) && !unrel.includes(d));
-    const extra = judged.filter((f) => !spec.defects.some((d) => matches(d, f)));
-    const cleanFp = c.findings.filter((f) => f.severity !== 'info').length;
-    const why = unrel.map((d) => `${d.method} ${d.route}: ${p.findings.find((f) => f.severity === 'info' && matches(d, f)).erlang.trace.timing.why}`);
-    return { status: missing.length || extra.length || cleanFp ? 'FAIL' : unrel.length ? 'UNRELIABLE' : 'PASS', cleanFp, decoys: extra.length, missed: missing.map((d) => `${d.method} ${d.route}`), why };
-  };
-  const rules = [['current', 'current rule'], ['c', `(c) all or none of ${MIN_REPEATS}+ runs`]];
-  const results = rules.map(([rule]) => outcome(rule));
-  console.log(`TRIAL  ${spec.fixture} ${spec.form} trace: ${rules.map(([, name], k) => `${name} ${results[k].status} (clean false positives ${results[k].cleanFp}, decoys ${results[k].decoys}${results[k].missed.length ? `, missed ${results[k].missed.join(', ')}` : ''})`).join(' | ')}`);
-  rules.forEach(([, name], k) => { for (const w of results[k].why) console.log(`      ${name}: ${w}`); });
 }
 process.exit(failed ? 1 : unreliable ? 3 : 0);

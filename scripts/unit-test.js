@@ -231,30 +231,25 @@ console.log('\nThe load judge (shedding), on recorded runs');
     return { code: r.status, text: r.stdout + r.stderr, planted: existsSync(join(out, 'planted', 'report.json')) ? JSON.parse(readFileSync(join(out, 'planted', 'report.json'), 'utf8')) : null };
   };
   const queued = (k, env) => ({ planted: { steps: [step('below', 50, 15, [745, 0, 0, 5], env), step('past', 150, 20, [30 + k, 1960, 0, 1010 - k], env)] }, clean: { steps: [step('below', 50, 15, [748, 0, 0, 2], env), step('past', 150, 20, [1990 - k, 0, 1010 + k, 0], env)] } });
-  const good = run([0, 7, 15].map((k) => queued(k)));
+  const good = run([0, 3, 7, 11, 15].map((k) => queued(k)));
   const f = good.planted?.findings[0];
   ok('shedding: the queueing twin is reported, the capped twin is not', good.code === 0 && /PASS  L12 express load planted: 1\/1/.test(good.text) && /PASS  L12 express load clean: 0/.test(good.text), good.text.trim());
   ok('  linked to the static finding by symbol, with load in its detection and its fingerprint unchanged', !!f && f.detection.includes('static') && f.detection.includes('load') && f.fingerprint === scan(join(form, 'planted')).findings.find((s) => s.check === 'no-load-shedding')?.fingerprint, f && JSON.stringify(f.detection));
-  ok('  the measured shares are in erlang.load, never in the fingerprint', !!f && f.erlang.load.samples.length === 3 && f.erlang.load.timing.reliable === true && !/\d\.\d/.test(f.fingerprint), f?.fingerprint);
-  // Candidate rule (c) (Q8): five pairs, all or none.
-  const trialOf = (text) => /^TRIAL .*$/m.exec(text)?.[0] ?? '';
-  const steady = run([0, 3, 6, 9, 12].map((k) => queued(k, { load1: 6 })));
-  ok('rule (c): on a busy machine, five pairs that all show the gap: current UNRELIABLE, (c) PASS, no clean false positive', /current rule UNRELIABLE \(clean false positives 0/.test(trialOf(steady.text)) && /\(c\) all or none of 5\+ repeats PASS \(clean false positives 0, decoys 0\)/.test(trialOf(steady.text)), trialOf(steady.text));
+  ok('  the measured shares are in erlang.load, never in the fingerprint', !!f && f.erlang.load.samples.length === 5 && f.erlang.load.timing.reliable === true && !/\d\.\d/.test(f.fingerprint), f?.fingerprint);
+  // The relative timing rule (Q8): five pairs, all, none, or a mix.
+  const busy = run([0, 3, 6, 9, 12].map((k) => queued(k, { load1: 6 })));
+  ok('relative rule: on a busy machine, five pairs that all show the gap: a failing finding, the load averages recorded only', busy.code === 0 && /PASS  L12 express load planted: 1\/1/.test(busy.text) && /load before 6\/8 CPUs/.test(busy.text), busy.text);
   const wide = run([0, 100, 200, 300, 400].map((k) => queued(k)));
-  ok('  a spread of 51% with every pair over the bar: current UNRELIABLE (spread), (c) PASS (spread recorded, not consulted)', /current rule UNRELIABLE/.test(trialOf(wide.text)) && /\(c\) all or none of 5\+ repeats PASS/.test(trialOf(wide.text)), wide.text);
+  ok('  a spread of 51% with every pair over the bar: a failing finding (spread recorded, not consulted)', wide.code === 0 && /PASS  L12 express load planted: 1\/1/.test(wide.text) && /spread 5\d\.\d%/.test(wide.text), wide.text);
+  const hot = run([0, 3, 6, 9, 12].map((k) => queued(k, { load1: 0.5, cooled: false })));
+  ok('  a load average that never cooled is recorded, not a gate', hot.code === 0 && /never cooled/.test(hot.text), hot.text);
   const onePair = run([0, 3, 6, 9, 12].map((k) => { const q = queued(k); if (k === 9) q.planted = queued(k).clean; return q; }));
-  ok('  a pair that does not show the gap: (c) UNRELIABLE, 4 of 5 repeats', /\(c\) all or none of 5\+ repeats UNRELIABLE/.test(trialOf(onePair.text)) && /4 of 5 repeats cleared the threshold/.test(onePair.text), onePair.text);
+  ok('  a pair that does not show the gap: info, timing unreliable, 4 of 5, and the form is UNRELIABLE (exit 3), never a pass', onePair.code === 3 && /UNRELIABLE  L12 express load planted: .*4 of 5 repeats cleared the threshold/.test(onePair.text) && !/^PASS  L12 express load planted/m.test(onePair.text), onePair.text);
   const three = run([0, 7, 15].map((k) => queued(k)));
-  ok('  three pairs are too few for (c): UNRELIABLE, fewer than 5', /\(c\) all or none of 5\+ repeats UNRELIABLE/.test(trialOf(three.text)) && /3 repeat\(s\), fewer than 5/.test(three.text), three.text);
-  const none = run([0, 3, 6, 9, 12].map((k) => { const q = queued(k); return { planted: q.clean, clean: q.clean }; }));
-  ok('  no pair shows the gap: (c) finds nothing (missed), no clean false positive', /\(c\) all or none of 5\+ repeats FAIL \(clean false positives 0, decoys 0, missed past\)/.test(trialOf(none.text)), trialOf(none.text));
-  const same = run([0, 7, 15].map((k) => { const q = queued(k); return { planted: q.clean, clean: q.clean }; }));
-  ok('  the control: twins that behave alike give no finding, and the planted defect is missed', same.code === 1 && /missed no-load-shedding step past/.test(same.text), same.text.trim());
-  const busy = run([0, 7, 15].map((k) => queued(k, { load1: 6 })));
-  ok('shedding: on a busy machine the finding is info, timing unreliable, and the form is UNRELIABLE (exit 3), never a pass', busy.code === 3 && !/^PASS  L12 express load planted/m.test(busy.text) && /UNRELIABLE  L12 express load planted: .*timing unreliable \(samples .*spread .*load before 6\/8 CPUs/.test(busy.text) && busy.planted?.findings[0]?.severity === 'info', busy.text.trim());
-  const hot = run([0, 7, 15].map((k) => queued(k, { load1: 0.5, cooled: false })));
-  ok('  a step whose load average never cooled is unreliable too (docs/decisions.md, Q6)', hot.code === 3 && /UNRELIABLE.*never cooled/.test(hot.text), hot.text.trim());
-  const broken = run([0, 7, 15].map((k) => { const q = queued(k); q.clean.steps[0] = step('below', 50, 15, [300, 450, 0, 0]); return q; }));
+  ok('  three pairs are too few: UNRELIABLE, fewer than 5', three.code === 3 && /3 repeat\(s\), fewer than 5/.test(three.text), three.text);
+  const same = run([0, 3, 6, 9, 12].map((k) => { const q = queued(k); return { planted: q.clean, clean: q.clean }; }));
+  ok('  the control: no pair shows the gap: no finding, the defect missed, no clean false positive', same.code === 1 && /missed no-load-shedding step past/.test(same.text) && /PASS  L12 express load clean: 0/.test(same.text), same.text.trim());
+  const broken = run([0, 3, 7, 11, 15].map((k) => { const q = queued(k); q.clean.steps[0] = step('below', 50, 15, [300, 450, 0, 0]); return q; }));
   ok('shedding: a twin that is late below the knee stops the judge: the form is wrong', broken.code !== 0 && /below the knee: the fixture or its load form is wrong/.test(broken.text), broken.text.trim().slice(0, 300));
   rmSync(form, { recursive: true, force: true });
 }
@@ -300,7 +295,7 @@ console.log('\nThe load judge (compare), on recorded runs');
     rmSync(out, { recursive: true, force: true });
     for (const t of ['planted', 'clean']) mkdirSync(join(out, t), { recursive: true });
     const clean = () => ['signup', 'login', 'export', 'codes'].map((id) => step(id, 4));
-    writeFileSync(join(out, 'raw.json'), JSON.stringify({ profile: 'ci', fixture: 'L09', form: 'express', repeats: [0, 1, 2].map((k) => ({ planted: { steps: planted(k) }, clean: { steps: clean() } })) }));
+    writeFileSync(join(out, 'raw.json'), JSON.stringify({ profile: 'ci', fixture: 'L09', form: 'express', repeats: [0, 1, 2, 3, 4].map((k) => ({ planted: { steps: planted(k) }, clean: { steps: clean() } })) }));
     const r = spawnSync(process.execPath, [join(ROOT, 'scripts', 'load', 'judge.js'), form, out], { encoding: 'utf8' });
     return { code: r.status, text: (r.stdout + r.stderr).trim(), report: JSON.parse(readFileSync(join(out, 'planted', 'report.json'), 'utf8')) };
   };
@@ -393,15 +388,15 @@ console.log('\nTimed trace forms: unreliable is never a pass');
   const out = join(form, 'out');
   const routes = [['region', 'GET', '/regions/P123', '/regions/:postcode'], ['countries', 'GET', '/checkout/countries', '/checkout/countries'], ['invoicePdf', 'GET', '/invoices/1.pdf', '/invoices/:id.pdf'], ['price', 'GET', '/prices/1', '/prices/:id'], ['createOrder', 'POST', '/orders', '/orders']];
   const cold = { region: 300, countries: 115, invoicePdf: 230 };
-  const raw = (twin, env) => ({ image: null, started: '2026-11-19T00:00:00Z', environment: env, fixture: 'L11', form: 'express', twin, seed: {}, scales: { 1: { n: 1, tables: {}, requests: [], pages: [],
+  const raw = (twin, env, notCold = () => false) => ({ image: null, started: '2026-11-19T00:00:00Z', environment: env, fixture: 'L11', form: 'express', twin, seed: {}, scales: { 1: { n: 1, tables: {}, requests: [], pages: [],
     // Each start: a warm-up, then every route's first request in one process;
     // the extra is first minus the later median (1 ms), the baseline the
     // cheapest route's extra in that start.
     warmup: { source: 'fallback', method: 'GET', path: '/__erlang/warm-up-not-found', runs: [0, 1, 2, 3, 4].map(() => ({ status: 404, ms: 9 })) },
-    starts: routes.map(([id, method, path, route]) => ({ id, method, path, route, samples: [0, 1, 2, 3, 4].map((k) => { const firstMs = (twin === 'planted' && cold[id] ? cold[id] : 5) + k; return { start: k, position: (routes.findIndex((r) => r[0] === id) - k + 5) % 5, warmupMs: 30, firstMs, laterMs: [1, 1.1, 0.9, 1, 1.2], extraMs: firstMs - 1, baselineMs: 4 + k }; }) })) } } });
-  const run = (env) => {
+    starts: routes.map(([id, method, path, route]) => ({ id, method, path, route, samples: [0, 1, 2, 3, 4].map((k) => { const firstMs = (twin === 'planted' && cold[id] && !notCold(id, k) ? cold[id] : 5) + k; return { start: k, position: (routes.findIndex((r) => r[0] === id) - k + 5) % 5, warmupMs: 30, firstMs, laterMs: [1, 1.1, 0.9, 1, 1.2], extraMs: firstMs - 1, baselineMs: 4 + k }; }) })) } } });
+  const run = (env, notCold = () => false) => {
     rmSync(out, { recursive: true, force: true });
-    for (const t of ['planted', 'clean']) { mkdirSync(join(out, t), { recursive: true }); writeFileSync(join(out, t, 'raw.json'), JSON.stringify(raw(t, env))); }
+    for (const t of ['planted', 'clean']) { mkdirSync(join(out, t), { recursive: true }); writeFileSync(join(out, t, 'raw.json'), JSON.stringify(raw(t, env, notCold))); }
     const r = spawnSync(process.execPath, [join(ROOT, 'scripts', 'trace', 'judge.js'), form, out], { encoding: 'utf8' });
     return { code: r.status, text: (r.stdout + r.stderr).trim() };
   };
@@ -409,7 +404,9 @@ console.log('\nTimed trace forms: unreliable is never a pass');
   ok('starts on a calm machine: the three cold routes are failing findings, and the form passes (exit 0)', calm.code === 0 && /^PASS  L11 express planted: 3\/3/m.test(calm.text), calm.text);
   ok('  the report says which warm-up ran: the 404 fallback, which warms the framework but not the database driver', /^WARM-UP  L11 express planted: fallback, GET \/__erlang\/warm-up-not-found, a path that does not exist \(answered 404\): warms the framework, not the database driver/m.test(calm.text) && /a 404: it warms the framework, not the database driver/.test(calm.text + readFileSync(join(out, 'planted', 'report.json'), 'utf8')) && JSON.parse(readFileSync(join(out, 'planted', 'report.json'), 'utf8')).erlang.trace.warmup.source === 'fallback', calm.text);
   const busy = run({ before: { load1: 6, cpus: 8 }, after: { load1: 6, cpus: 8 } });
-  ok('  the same run on a busy machine: UNRELIABLE with samples, spread and load averages, exit 3, never SKIP or PASS', busy.code === 3 && /^UNRELIABLE  L11 express planted: cold-start STB-10 GET \/regions\/:postcode: timing unreliable \(samples .*spread .*load before 6\/8 CPUs/m.test(busy.text) && /^UNRELIABLE  L11 express planted: 0\/3/m.test(busy.text) && !/^(SKIP|PASS)  L11 express planted/m.test(busy.text), busy.text);
+  ok('  the same run on a busy machine: still failing findings, the load averages recorded only (the relative rule)', busy.code === 0 && /^PASS  L11 express planted: 3\/3/m.test(busy.text), busy.text);
+  const mixed = run({ before: { load1: 0.5, cpus: 8 }, after: { load1: 0.5, cpus: 8 } }, (id, k) => id === 'region' && k === 2);
+  ok('  a start where a cold route did not clear: UNRELIABLE with samples and why, exit 3, never SKIP or PASS', mixed.code === 3 && /^UNRELIABLE  L11 express planted: cold-start STB-10 GET \/regions\/:postcode: timing unreliable \(samples .*4 of 5 repeats cleared the threshold/m.test(mixed.text) && !/^PASS  L11 express planted/m.test(mixed.text), mixed.text);
   rmSync(form, { recursive: true, force: true });
 }
 
