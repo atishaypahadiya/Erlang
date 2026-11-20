@@ -465,8 +465,10 @@ function judgeTwin(twin) {
     const later = x.samples.map((s) => median(s.laterMs));
     // With a warm-up (trace.json "warmup", L11): the route's first-request
     // extra (first minus the median of the later ones) against the baseline,
-    // the cheapest route's extra in the same process after the warm-up, at
-    // FIRST_RATIO times and FIRST_EXTRA_MS above it; no other twin needed.
+    // at FIRST_RATIO times and FIRST_EXTRA_MS above it; no other twin needed.
+    // The baseline is the cheapest route's extra in the same process after
+    // the warm-up, or, with the 404 fallback, the 404 request's own time
+    // (baselineOf "warm-up").
     // Without one: the first request against the later ones of its start.
     const warm = x.samples.every((q) => Number.isFinite(q.extraMs));
     const wu = hi.warmup ?? null;
@@ -485,7 +487,7 @@ function judgeTwin(twin) {
     const trace = { judge: 'timing', path: x.path, timing: t, ...(wu ? { warmup: { source: wu.source, method: wu.method, path: wu.path } } : {}), scales: [{ scale: HI, ms: Number(t.median.toFixed(1)) }] };
     if (t.reliable) emit({ check: 'cold-start', rule: 'STB-10', strength: 'SHOULD', severity: 'warning', method: r.method, route, trace,
       message: warm
-        ? `${r.method} ${route}'s first request after a start took ${fmt(Math.round(t.median))} ms longer than the requests after it (median of ${x.samples.length} starts, spread ${(t.spread * 100).toFixed(1)}%), against ${fmt(Math.round(median(x.samples.map((q) => q.baselineMs))))} ms for the cheapest route in the same process${warmedBy}: the first request waits for set-up the start could have done (STB-10).`
+        ? `${r.method} ${route}'s first request after a start took ${fmt(Math.round(t.median))} ms longer than the requests after it (median of ${x.samples.length} starts, spread ${(t.spread * 100).toFixed(1)}%), against ${fmt(Math.round(median(x.samples.map((q) => q.baselineMs))))} ms for ${x.samples.every((q) => q.baselineOf === 'warm-up') ? 'the warm-up request itself, in the same process' : 'the cheapest route in the same process'}${warmedBy}: the first request waits for set-up the start could have done (STB-10).`
         : `${r.method} ${route} took ${fmt(Math.round(t.median))} ms as the first request after a start (median of ${x.samples.length} starts, spread ${(t.spread * 100).toFixed(1)}%), against ${steady.toFixed(1)} ms for the requests after it: the first request waits for set-up the start could have done (STB-10).` });
     else emit({ check: 'cold-start', rule: 'STB-10', strength: 'SHOULD', severity: 'info', unresolved: true, method: r.method, route, trace,
       message: `${r.method} ${route}'s first request after a start looked slow, but timing unreliable: ${t.why}.` });

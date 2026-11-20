@@ -441,7 +441,7 @@ console.log('\nTimed trace forms: unreliable is never a pass');
     // the extra is first minus the later median (1 ms), the baseline the
     // cheapest route's extra in that start.
     warmup: { source: 'fallback', method: 'GET', path: '/__erlang/warm-up-not-found', runs: [0, 1, 2, 3, 4].map(() => ({ status: 404, ms: 9 })) },
-    starts: routes.map(([id, method, path, route]) => ({ id, method, path, route, samples: [0, 1, 2, 3, 4].map((k) => { const firstMs = (twin === 'planted' && cold[id] && !notCold(id, k) ? cold[id] : 5) + k; return { start: k, position: (routes.findIndex((r) => r[0] === id) - k + 5) % 5, warmupMs: 30, firstMs, laterMs: [1, 1.1, 0.9, 1, 1.2], extraMs: firstMs - 1, baselineMs: 4 + k }; }) })) } } });
+    starts: routes.map(([id, method, path, route]) => ({ id, method, path, route, samples: [0, 1, 2, 3, 4].map((k) => { const firstMs = (twin === 'planted' && cold[id] && !notCold(id, k) ? cold[id] : 5) + k; return { start: k, position: (routes.findIndex((r) => r[0] === id) - k + 5) % 5, warmupMs: 4 + k, firstMs, laterMs: [1, 1.1, 0.9, 1, 1.2], extraMs: firstMs - 1, baselineMs: 4 + k, baselineOf: 'warm-up' }; }) })) } } });
   const run = (env, notCold = () => false) => {
     rmSync(out, { recursive: true, force: true });
     for (const t of ['planted', 'clean']) { mkdirSync(join(out, t), { recursive: true }); writeFileSync(join(out, t, 'raw.json'), JSON.stringify(raw(t, env, notCold))); }
@@ -451,6 +451,7 @@ console.log('\nTimed trace forms: unreliable is never a pass');
   const calm = run({ before: { load1: 0.5, cpus: 8 }, after: { load1: 0.5, cpus: 8 } });
   ok('starts on a calm machine: the three cold routes are failing findings, and the form passes (exit 0)', calm.code === 0 && /^PASS  L11 express planted: 3\/3/m.test(calm.text), calm.text);
   ok('  the report says which warm-up ran: the 404 fallback, which warms the framework but not the database driver', /^WARM-UP  L11 express planted: fallback, GET \/__erlang\/warm-up-not-found, a path that does not exist \(answered 404\): warms the framework, not the database driver/m.test(calm.text) && /a 404: it warms the framework, not the database driver/.test(calm.text + readFileSync(join(out, 'planted', 'report.json'), 'utf8')) && JSON.parse(readFileSync(join(out, 'planted', 'report.json'), 'utf8')).erlang.trace.warmup.source === 'fallback', calm.text);
+  ok('  after the 404 fallback, the baseline is the 404 request\'s own time, and the finding says so', /against \d+ ms for the warm-up request itself, in the same process after a request to a path that does not exist/.test(JSON.stringify(readdirSync(out).flatMap((t) => (existsSync(join(out, t, 'report.json')) ? [readFileSync(join(out, t, 'report.json'), 'utf8')] : [])))), calm.text);
   const busy = run({ before: { load1: 6, cpus: 8 }, after: { load1: 6, cpus: 8 } });
   ok('  the same run on a busy machine: still failing findings, the load averages recorded only (the relative rule)', busy.code === 0 && /^PASS  L11 express planted: 3\/3/m.test(busy.text), busy.text);
   const mixed = run({ before: { load1: 0.5, cpus: 8 }, after: { load1: 0.5, cpus: 8 } }, (id, k) => id === 'region' && k === 2);

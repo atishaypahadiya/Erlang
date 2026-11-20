@@ -504,8 +504,13 @@ for (const twin of ['planted', 'clean']) {
             const later = runs.slice(1).map((x) => x.ms);
             seen.push({ id: r.id, sample: { start: k, position, warmupMs: w.extra.ms, firstMs: runs[0].ms, laterMs: later, extraMs: runs[0].ms - median(later) } });
           }
-          const baseline = Math.max(0, Math.min(...seen.map((x) => x.sample.extraMs)));
-          for (const x of seen) byRoute.get(x.id).push({ ...x.sample, baselineMs: baseline });
+          // The baseline: the cheapest route's extra in this process; with
+          // the 404 fallback, the 404 request's own time (the owner, 19
+          // November 2026): no route is warmed, so the cheapest route's extra
+          // can be 0 and the bar would fall to FIRST_EXTRA_MS alone.
+          const fallback = warmup.source === 'fallback';
+          const baseline = fallback ? w.extra.ms : Math.max(0, Math.min(...seen.map((x) => x.sample.extraMs)));
+          for (const x of seen) byRoute.get(x.id).push({ ...x.sample, baselineMs: baseline, baselineOf: fallback ? 'warm-up' : 'cheapest route' });
         } finally { await fresh.stop(); }
       }
       raw.scales[scale].starts = spec.starts.map((r) => ({ id: r.id, method: r.method, path: expand(r.path, n), route: r.route ?? null, samples: byRoute.get(r.id) }));
