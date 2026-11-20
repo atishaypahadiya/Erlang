@@ -1,5 +1,5 @@
 {
-  "note": "Trace form (research/trace-harness.md) for L05: the static twins, served by scripts/trace.sh. Each soak sends one request many times, each with a key of its own ($i), one at a time at most 50 a second, and reads the twin's heap after a full collection (node --expose-gc) before and at each count. Judged on the last stretch, which the counts put past every bound the clean twin sets (search: 1,000 entries; recent orders: 100; suggestions: 500): a heap still growing there by 32 bytes or more a request is memory kept per request (STB-05). Not soaked: POST /login (L05-3), whose clean twin is bounded at 100,000 sessions, more than a trace sends, so it is confirmed statically and by the load soak; PUT /rates/:pair (d5, d6), whose entries a timer removes after an hour in both twins. defects are what the planted twin must report and the clean twin must not; every other soak is a decoy, in both twins. createOrder's last stretch is 3,000 requests: the planted twin keeps about 128 bytes an order, and a stretch of 1,000 left the clean twin's collection-to-collection noise (about 60 KB) near the 32-byte bar.",
+  "note": "Trace form (research/trace-harness.md) for L05: the static twins, served by scripts/trace.sh. Each soak sends one request many times, each with a key of its own ($i), one at a time at most 50 a second, and reads the twin's heap after a full collection (node --expose-gc) before and at each count. Judged on the least-squares slope of the heap over the points from each soak's first count on, which the counts put past every bound the clean twin sets (search: 1,000 entries; recent orders: 100; suggestions: 500; checkout replies: 500), against the other twin's slope on the same soak: 32 bytes or more a request and three times the other twin's is memory kept per request (STB-05). The other twin's slope takes out what both keep alike; judged on the last stretch alone, the clean twin's own retention (53 to 281 bytes a request on CI run 44609939663) read as a leak. Not soaked: POST /login (L05-3), whose clean twin is bounded at 100,000 sessions, more than a trace sends, so it is confirmed statically and by the load soak; PUT /rates/:pair (d5, d6), whose entries a timer removes after an hour in both twins. defects are what the planted twin must report and the clean twin must not; every other soak is a decoy, in both twins. POST /orders (L05-2) is an expected miss: the planted twin keeps about 128 bytes an order, under three times what the clean twin keeps on the same route, so it stays as the hard case below the floor; POST /checkout (L05-4), an idempotency store that keeps each cart, is the leak above the floor that must be caught.",
   "fixture": "L05",
   "form": "express",
   "judge": "memory",
@@ -16,6 +16,10 @@
       "route": "/search",
       "counts": [
         1500,
+        1700,
+        1900,
+        2100,
+        2300,
         2500
       ]
     },
@@ -26,6 +30,10 @@
       "route": "/suggest",
       "counts": [
         700,
+        800,
+        900,
+        1000,
+        1100,
         1200
       ]
     },
@@ -40,6 +48,10 @@
       },
       "counts": [
         500,
+        1100,
+        1700,
+        2300,
+        2900,
         3500
       ]
     },
@@ -50,7 +62,81 @@
       "route": "/orders/:id/lines",
       "counts": [
         100,
+        140,
+        180,
+        220,
+        260,
         300
+      ]
+    },
+    {
+      "id": "placeCart",
+      "method": "POST",
+      "path": "/checkout",
+      "route": "/checkout",
+      "body": {
+        "cart": {
+          "id": "c$i",
+          "currency": "EUR",
+          "items": [
+            {
+              "sku": "SKU-0000-$i",
+              "name": "Product 0 in a cart of eight, size M, colour blue",
+              "price": 1000,
+              "quantity": 1
+            },
+            {
+              "sku": "SKU-0001-$i",
+              "name": "Product 1 in a cart of eight, size M, colour blue",
+              "price": 1001,
+              "quantity": 2
+            },
+            {
+              "sku": "SKU-0002-$i",
+              "name": "Product 2 in a cart of eight, size M, colour blue",
+              "price": 1002,
+              "quantity": 3
+            },
+            {
+              "sku": "SKU-0003-$i",
+              "name": "Product 3 in a cart of eight, size M, colour blue",
+              "price": 1003,
+              "quantity": 1
+            },
+            {
+              "sku": "SKU-0004-$i",
+              "name": "Product 4 in a cart of eight, size M, colour blue",
+              "price": 1004,
+              "quantity": 2
+            },
+            {
+              "sku": "SKU-0005-$i",
+              "name": "Product 5 in a cart of eight, size M, colour blue",
+              "price": 1005,
+              "quantity": 3
+            },
+            {
+              "sku": "SKU-0006-$i",
+              "name": "Product 6 in a cart of eight, size M, colour blue",
+              "price": 1006,
+              "quantity": 1
+            },
+            {
+              "sku": "SKU-0007-$i",
+              "name": "Product 7 in a cart of eight, size M, colour blue",
+              "price": 1007,
+              "quantity": 2
+            }
+          ]
+        }
+      },
+      "counts": [
+        600,
+        700,
+        800,
+        900,
+        1000,
+        1100
       ]
     }
   ],
@@ -66,8 +152,17 @@
       "check": "memory-growth",
       "rule": "STB-05",
       "method": "POST",
-      "route": "/orders",
+      "route": "/checkout",
       "linked": true
+    }
+  ],
+  "expectedMisses": [
+    {
+      "check": "memory-growth",
+      "rule": "STB-05",
+      "method": "POST",
+      "route": "/orders",
+      "floor": "a leak under about three times the clean twin's own heap kept per request on the same route is not detected"
     }
   ]
 }

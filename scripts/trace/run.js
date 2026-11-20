@@ -32,7 +32,6 @@
 // Environment: ERLANG_TRACE_CONTAINER, ERLANG_TRACE_PORT, ERLANG_TRACE_APP_PASSWORD_FILE.
 // Writes <out dir>/<twin>/raw.json and the twin's log.
 
-import { probe } from '../../lib/calibration.js';
 import { readFileSync, writeFileSync, mkdirSync, rmSync, cpSync, symlinkSync, existsSync, openSync, closeSync, readdirSync, statSync } from 'node:fs';
 import { join, resolve, dirname, basename } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -171,7 +170,9 @@ function loggedBetween(start, end, sinceIso) {
 // Per statement: calls and rows, and, for a form that asks for parameters
 // (trace.json "params"), the blocks it touched (shared hit + read).
 function readStats() {
-  const json = psql('postgres', DB, `select coalesce(json_object_agg(query, json_build_object('calls', calls, 'rows', rows${spec.params ? ", 'blocks', blocks" : ''})), '{}')
+  // Blocks (shared hit + read) for a form that asks for parameters, and in
+  // every load run (rows and blocks per request, L02 and L03).
+  const json = psql('postgres', DB, `select coalesce(json_object_agg(query, json_build_object('calls', calls, 'rows', rows${spec.params || LOAD ? ", 'blocks', blocks" : ''})), '{}')
 from (select s.query, sum(s.calls)::int as calls, sum(s.rows)::int as rows, sum(s.shared_blks_hit + s.shared_blks_read)::int as blocks
       from pg_stat_statements s join pg_roles r on r.oid = s.userid join pg_database d on d.oid = s.dbid
       where s.toplevel and r.rolname = '${ROLE}' and d.datname = '${DB}' group by s.query) q;\n`);
@@ -296,7 +297,7 @@ async function measureRequest(app, r, n) {
   // Three runs, the first a warm-up; two when trace.json says so (runs: 2),
   // for requests that wait out a timeout; more for timings (the lock needs
   // three after the warm-up).
-  // ERLANG_TRIAL_RUNS (the timing trial, Q6) raises the runs of a timed
+  // ERLANG_TRIAL_RUNS (candidate rule (c), Q8) raises the runs of a timed
   // form (judge "loop"); counted forms keep theirs.
   const count = Math.max(r.runs ?? spec.runs ?? 3, spec.judge === 'loop' ? Number(process.env.ERLANG_TRIAL_RUNS) || 0 : 0);
   for (let k = 0; k < count; k++) {
@@ -432,7 +433,7 @@ for (const twin of ['planted', 'clean']) {
   if (existsSync(join(formDir, 'trace', 'overlay'))) cpSync(join(formDir, 'trace', 'overlay'), work, { recursive: true });
   symlinkSync(modules, join(work, 'node_modules'), 'dir');
   const log = join(out, 'twin.log');
-  const raw = { image: process.env.ERLANG_TRACE_IMAGE ?? null, started: new Date().toISOString(), environment: { before: environment(), probe: { before: probe(join(outDir, twin)) } }, fixture: spec.fixture, form: spec.form, twin, seed: { schema: Object.fromEntries(schemaFiles(join(formDir, twin)).map((f) => [f.slice(formDir.length + 1), sha256(f)])), seed: sha256(join(formDir, 'trace', 'seed.sql')) }, scales: {} };
+  const raw = { image: process.env.ERLANG_TRACE_IMAGE ?? null, started: new Date().toISOString(), environment: { before: environment() }, fixture: spec.fixture, form: spec.form, twin, seed: { schema: Object.fromEntries(schemaFiles(join(formDir, twin)).map((f) => [f.slice(formDir.length + 1), sha256(f)])), seed: sha256(join(formDir, 'trace', 'seed.sql')) }, scales: {} };
   for (const scale of spec.scales) {
     const n = spec.n * scale;
     const tables = freshDatabase(scale, join(formDir, twin));
@@ -475,7 +476,6 @@ for (const twin of ['planted', 'clean']) {
     console.log(`trace: ${spec.fixture} ${spec.form} ${twin} at ${scale}x: ${(spec.requests ?? []).length} request(s), ${(spec.pages ?? []).length} page view(s)`);
   }
   rmSync(work, { recursive: true, force: true });
-  raw.environment.probe.after = probe(join(outDir, twin));
   raw.environment.after = environment();
   writeFileSync(join(out, 'raw.json'), JSON.stringify(raw, null, 2) + '\n');
 }
@@ -491,7 +491,8 @@ await new Promise((ok) => stubServer.close(ok));
 async function loadMain() {
   const mode = profile();
   const caps = CAPS[mode];
-  // Pairs: the form's repeats, or ERLANG_LOAD_PAIRS (the timing trial, Q6).
+  // Pairs: the form's repeats, or ERLANG_LOAD_PAIRS (five or more for
+  // candidate rule (c), Q8), the twins in alternating order.
   // Pair k runs the twins in turn, planted first when k is even, clean first
   // when odd, so drift over the run falls on both alike.
   const pairs = Number(process.env.ERLANG_LOAD_PAIRS) || spec.repeats || 3;
@@ -532,14 +533,10 @@ async function loadMain() {
           if (held) { console.error(`load: ITTEN's timing lock is still active; not starting step ${step.id}. ${describeLock(held)}`); process.exit(EXIT_LOCKED); }
           stubFor(step.upstream ?? {});
           const before = environment();
-          // The calibration probe (trial, Q6), right before k6 starts and
-          // right after it exits: recorded beside the load averages.
-          const probeBefore = probe(out);
           const result = await runK6(k6, app, step, join(out, `r${k + 1}-${step.id}`), caps);
-          const probeAfter = probe(out);
           const after = await cooled();
           console.log(`load: ${spec.fixture} ${twin} repeat ${k + 1} ${step.id}: ${result.interrupted ? 'interrupted by ITTEN\'s lock' : `${result.counts.requests} requests, ${result.counts.ok} ok, ${result.counts.refused} refused, ${result.counts.failed} failed`}`);
-          steps.push({ id: step.id, method: step.method ?? 'GET', path: step.path, route: step.route ?? routeOf(app.routes, step.method ?? 'GET', step.path), rate: step.rate, seconds: step.seconds, ...result, environment: { before, after, probe: { before: probeBefore, after: probeAfter } } });
+          steps.push({ id: step.id, method: step.method ?? 'GET', path: step.path, route: step.route ?? routeOf(app.routes, step.method ?? 'GET', step.path), rate: step.rate, seconds: step.seconds, ...result, environment: { before, after } });
           if (result.interrupted) break;
         }
       } finally { await app.stop(); }
@@ -579,9 +576,11 @@ async function runK6(k6, app, step, base, caps) {
   // Statements (step "measure": ["statements"]): pg_stat_statements over the
   // whole step, for statements per request.
   if (step.measure?.includes('statements')) resetStats();
+  // The event loop's longest stretch over the step ("measure": ["loop"], L09).
+  if (step.measure?.includes('loop')) await app.probe('loop-reset');
   let heapBefore = null;
   let heapAfter = null;
-  // A heap series (trial, Q6): the heap after a full collection, with the
+  // The heap series (L05's heap slope): the heap after a full collection, with the
   // responses answered so far, every heapEvery seconds through the step:
   // at least 5 points with the readings before and after.
   const heapSeries = [];
@@ -618,7 +617,8 @@ async function runK6(k6, app, step, base, caps) {
   const own = count('erlang_ok') + count('erlang_late') + count('erlang_refused') + count('erlang_failed');
   const counts = { requests: step.background ? own : count('http_reqs'), ok: count('erlang_ok'), late: count('erlang_late'), refused: count('erlang_refused'), failed: count('erlang_failed'), dropped: count('dropped_iterations'), wireBytes: count('data_received') };
   const statements = step.measure?.includes('statements') ? readStats() : null;
+  const loop = step.measure?.includes('loop') ? await app.probe('loop') : null;
   // The calls the stub received during the step, by host (attempts, L06).
   const upstream = stub.hits.length ? Object.entries(stub.hits.reduce((m, h) => ({ ...m, [h.host]: (m[h.host] ?? 0) + 1 }), {})).map(([host, calls]) => ({ host, calls })) : null;
-  return { interrupted: false, counts, served: trend('erlang_served_ms'), refusals: trend('erlang_refused_ms'), ...(statements ? { statements: { calls: Object.values(statements).reduce((a, x) => a + x.calls, 0), byQuery: statements } } : {}), ...(upstream ? { upstream } : {}), ...(heapBefore ? { heap: { before: heapBefore.heapUsed, after: heapAfter?.heapUsed ?? null, points: [{ t: 0, answered: heapBefore.answered, heapUsed: heapBefore.heapUsed }, ...heapSeries, ...(heapAfter ? [{ t: step.seconds, answered: heapAfter.answered, heapUsed: heapAfter.heapUsed }] : [])] } } : {}), samples };
+  return { interrupted: false, counts, served: trend('erlang_served_ms'), refusals: trend('erlang_refused_ms'), ...(statements ? { statements: { calls: Object.values(statements).reduce((a, x) => a + x.calls, 0), rows: Object.values(statements).reduce((a, x) => a + x.rows, 0), blocks: Object.values(statements).reduce((a, x) => a + (x.blocks ?? 0), 0), byQuery: statements } } : {}), ...(loop ? { loop: { maxMs: loop.maxMs, meanMs: loop.meanMs } } : {}), ...(upstream ? { upstream } : {}), ...(heapBefore ? { heap: { before: heapBefore.heapUsed, after: heapAfter?.heapUsed ?? null, points: [{ t: 0, answered: heapBefore.answered, heapUsed: heapBefore.heapUsed }, ...heapSeries, ...(heapAfter ? [{ t: step.seconds, answered: heapAfter.answered, heapUsed: heapAfter.heapUsed }] : [])] } } : {}), samples };
 }

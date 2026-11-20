@@ -215,9 +215,12 @@ Each form's `load/load.json` lists its steps (method, path, rate, seconds, the l
 | Metric | The quantity, per step | Rows |
 |---|---|---|
 | `statements` | statements per request (pg_stat_statements) | L01a, L01b, L10 |
+| `rows` | rows the statements returned per request (pg_stat_statements) | L02 |
+| `blocks` | shared blocks the statements read per request, hit or from disk (pg_stat_statements) | L03 |
 | `bytes` | bytes on the wire per response, k6 offering gzip and br | L02, L04 |
-| `median`, `p90`, `p99` | latency of the requests served | L02, L03 |
-| `heap-growth` | heap kept per request, after a full collection before and after | L05 |
+| `median`, `p90`, `p99` | latency of the requests served | |
+| `heap-slope` | heap kept per request: the least-squares slope of the heap after full collections (about every 2 s) against responses answered, positive in every repeat | L05 |
+| `loop-max` | the event loop's longest stretch over the step (monitorEventLoopDelay), with a `background` | L09 |
 | `attempts` | calls the stub received from one failing host, per request | L06 |
 | `stub-open` | calls held open at a hanging host, at most | L07 |
 | `failed` | share of requests that failed | L08 |
@@ -227,7 +230,11 @@ Each form's `load/load.json` lists its steps (method, path, rate, seconds, the l
 
 A step's paths must start with a single `/` and resolve to the twin's own origin; anything else is refused.
 
-**Judging.** Each twin against the other, never against an absolute number. A verdict on a count, or on a share with no time limit in it (`statements`, `attempts`, `stub-open`, `connections`, `bytes`, `failed`), is exempt from the timing rule: always judged, with the load averages recorded as information and `exempt: true` in `erlang.load.timing`. Every other load finding (latencies, `late-share`, the shedding gap, `heap-growth`) goes through the timing rule: the judged quantity in each repeat (at least 3), a relative spread of 10% or less, and the one-minute load average below half the CPU count before every step and after it, "after" read once the harness's own load has stopped and the average has fallen (up to 120 s; docs/decisions.md, Q6). Otherwise the finding is `info`, `timing unreliable`, and never fails; a planted defect judged that way is reported as `UNRELIABLE`: neither missed nor passed. A finding that agrees with a static finding (check, rule, and the symbol or endpoint) is that finding, with `load` in its `detection` and the measurements in `erlang.load`; its fingerprint stays the static finding's, and never holds a measured value.
+**Judging.** Each twin against the other, never against an absolute number. A verdict on a count, or on a share with no time limit in it (`statements`, `rows`, `blocks`, `attempts`, `stub-open`, `connections`, `bytes`, `failed`), is exempt from the timing rule: always judged, with the load averages recorded as information and `exempt: true` in `erlang.load.timing`. `heap-slope` is gated on the spread of the slopes over the repeats (at least 3, 10% or less), not on the load average. Every other load finding (latencies, `loop-max`, `late-share`, the shedding gap) goes through the timing rule: the judged quantity in each repeat (at least 3), a relative spread of 10% or less, and the one-minute load average below half the CPU count before every step and after it, "after" read once the harness's own load has stopped and the average has fallen (up to 120 s; docs/decisions.md, Q6). Otherwise the finding is `info`, `timing unreliable`, and never fails; a planted defect judged that way is reported as `UNRELIABLE`: neither missed nor passed. A finding that agrees with a static finding (check, rule, and the symbol or endpoint) is that finding, with `load` in its `detection` and the measurements in `erlang.load`; its fingerprint stays the static finding's, and never holds a measured value.
+
+**Expected misses.** A form's `expectedMisses` names planted defects below its measure's detection floor, each with the floor stated (L05's `createOrder`: a leak under about three times the clean twin's own retention). They stay in the fixture as the hard case: the planted twin need not report them and the run says whether it did; the clean twin must still report nothing there.
+
+**Candidate rule (c)** (docs/decisions.md, Q8; not adopted): for timed relative verdicts, at least 5 repeats; a finding holds when every repeat clears the threshold, none clearing is no finding, a mix is `timing unreliable`; spread and load average recorded only. Both judges print it beside the current rule on a `TRIAL` line; the exit code is the current rule's.
 
 **Output.** `dist/load/<id>/<form>/raw.json` (every step of every repeat: counts of requests served in time, late, refused and failed, latency percentiles, the twin's probes, the load average before and after), the k6 scripts and summaries, and `<twin>/report.json`, a report/1.
 

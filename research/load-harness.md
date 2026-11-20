@@ -57,8 +57,9 @@ Counts wherever a row has one, since a count holds on a busy machine and a time 
 - L01a, L01b and L10 count statements per request; L10's "throughput against the twin" became statements per request, which is what a cache saves and does not depend on the machine.
 - L06 counts calls per request to the failing host. A retry with no wait (RTY-03) changes no count, so under load it is a decoy; the trace form judges it by its gaps.
 - L07 counts calls held open at the hanging host; L08, the share of requests that fail acquiring a connection; L13 compose, connections at the database.
-- L05 measures heap kept per request after a warm-up step, with keys the warm-up did not use.
-- Times remain where a row has nothing to count: L02's revenue total and L03's lookups (median), L09 (the share of a cheap route's requests late while a heavy route runs as a second k6 scenario), L11 (the slowest response after a restart).
+- L05 measures heap kept per request after a warm-up step, with keys the warm-up did not use: the slope of the heap after full collections against responses answered, read about every 2 s through the step. Its `createOrder` leak (about 1.6 times the clean twin's own retention) is an expected miss, below the floor; `placeCart`, an idempotency store keeping each cart, is the leak above it.
+- Counts replace times where the defect allows (the owner, 19 November 2026): L02's revenue total by rows read per request, L03's lookups by shared blocks read per request.
+- Times remain where a row has nothing to count: L09 (signup by the event loop's longest stretch, with signups at 2 a second, below what fills the CPUs; login and export by the share of a cheap route's requests late while the heavy route runs as a second k6 scenario), L11 (the slowest response after a restart), L12 (the shedding gap).
 - L04 judges bytes on the wire; its call per product on the list page is counted per page view by the trace form. L08's leaks (STB-08) and L13's sum of pools across processes (L13-c1) stay with the trace form and the static check.
 
 ## The load average after a step
@@ -71,11 +72,8 @@ A load step raises the machine's load average itself: k6, the twin and PostgreSQ
 - Any target ERLANG did not start.
 - Absolute thresholds (a p99 of 200 ms): every judgement compares the twins on the same machine, back to back.
 
-## The timing trial (docs/decisions.md, Q6; not adopted)
+## The timing trial (docs/decisions.md, Q6 and Q7; not adopted)
 
-Two replacements for the load-average gate on timed verdicts, tried on the fixtures before either is adopted. CI runs five pairs a form (`ERLANG_LOAD_PAIRS`), the timed trace forms six runs and five starts (`ERLANG_TRIAL_RUNS`, `ERLANG_TRIAL_STARTS`), and both judges print a `TRIAL` line per form: the result under the current rule, under (a), under (a)+(b), each with the clean twin's failing findings and the decoys reported. The exit code stays the current rule's.
+Two replacements for the load-average gate on timed verdicts were tried on CI run 44609939663, five pairs a form: (a) a calibration probe (a fixed CPU and I/O workload) before and after every judged step, reliable when its timings agree within 10%; (b) whole-run pairs in alternating order, every pair showing the finding, the 10% spread on the per-pair ratios. Neither made a form pass that failed under the current rule, and neither was adopted (the owner, 19 November 2026): around a load step the probe's I/O half disagreed by 17 to 166% (PostgreSQL writing out what the load wrote), and per-pair ratios carry both twins' noise, so their spread was wider than the planted samples'. The probe is gone from the harness; the pairs stay, as the repeats.
 
-- **(a) The calibration probe** (`lib/calibration.js`): SHA-256 over a fixed buffer and 64 MiB written, fsync'd and read back, before and after every run of a judged step (around each twin's run in a trace form). Reliable when every probe agrees within 10%, CPU and I/O apart; the load averages are kept as information.
-- **(b) Pairs**: a pair is one fresh run of each twin, in alternating order (planted first, then clean first). A finding holds only if every pair shows it; the 10% spread applies to the per-pair ratios (the per-pair gaps for shedding). Pairs are whole runs rather than single steps: alternating steps would need a database and a stub per twin, or the planted L06 twin's retries, which outlive their requests, would reach the stub during the clean twin's step.
-- **L05, the heap slope**: the heap after a full collection, read with the responses answered at 5 or more points through the step, fitted by least squares. A finding needs a positive slope in every repeat, each fit R² 0.9 or more, and the median slope over the floor and 3 times the other twin's. The slopes of both twins and of the decoy routes are printed.
-- **L11 (trace), the absolute first request**: the first request's time over 5 or more fresh starts, each against the median warm request of all starts, beside the per-start ratio.
+What came of it: counts where the defect allows (L02 rows, L03 blocks), the heap slope for L05, and L09's signup on the event loop's longest stretch at a rate below saturation. For the verdicts that stay timed and relative, candidate rule (c) (docs/decisions.md, Q8) is printed beside the current rule.

@@ -23,34 +23,13 @@ import { finding, fingerprint } from '../../core/finding.js';
 import { report } from '../../core/report.js';
 import { validate } from '../../core/schema.js';
 import { scan, VERSION } from '../../bin/erlang.js';
-import { judge as timingJudge, environment, REASON } from '../../lib/timing.js';
-import { agree } from '../../lib/calibration.js';
+import { judge as timingJudge, ruleC, MIN_REPEATS, environment, REASON } from '../../lib/timing.js';
 
-// ---- The timing trial (docs/decisions.md, Q6; on trial, not the rule), for the
-// timed judges (loop, starts). Three rules judge the same run; only "current"
-// decides the exit code and writes the reports:
-//   current  the timing rule on the timed samples (3 or more, spread 10% or
-//            less, load average below half the CPUs before and after);
-//   probe    (a): the same, the load-average gate replaced by the
-//            calibration probe before and after the twin's run, which must
-//            agree within 10%;
-//   paired   (a)+(b): the per-pair ratio of the two conditions each run
-//            measures (loop: the longest blocked stretch over the request's
-//            time; starts: the first request over the later ones), 5 pairs or
-//            more, every pair showing it, the 10% spread on the ratios.
-const MIN_PAIRS = 5;
+// Candidate rule (c) (docs/decisions.md, Q8; lib/timing.js ruleC) is printed beside
+// the current rule for the timed judges (loop, starts); only "current"
+// decides the exit code and writes the reports.
 const median_ = (xs) => { const s = [...xs].sort((a, b) => a - b); const m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
-function trialVerdict({ samples, probes, before, after, minSamples }) {
-  const why = [];
-  const xs = samples.filter((x) => Number.isFinite(x));
-  const m = xs.length ? median_(xs) : null;
-  const spread = xs.length && m > 0 ? (Math.max(...xs) - Math.min(...xs)) / m : null;
-  if (xs.length < minSamples) why.push(`${xs.length} sample(s), fewer than ${minSamples}`);
-  else if (spread === null || spread > 0.1) why.push(`spread ${spread === null ? 'unknown' : `${(spread * 100).toFixed(1)}%`}, over 10%`);
-  why.push(...agree(probes).why);
-  return { reliable: why.length === 0, reason: why.length ? REASON : null, why, samples: xs, median: m, spread, before: before ?? null, after: after ?? null };
-}
-import { growth, rowsGrowth, repeated, linkStatic, normalizeSql, routePattern, fmt, COMPRESS_MIN, UNREAD, ROWS, SLOPE } from '../../lib/trace-judge.js';
+import { growth, rowsGrowth, repeated, linkStatic, normalizeSql, routePattern, fmt, COMPRESS_MIN, UNREAD, ROWS, SLOPE, slopeOf, MIN_POINTS } from '../../lib/trace-judge.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const extensionSchema = JSON.parse(readFileSync(join(ROOT, 'schema', 'finding-erlang.schema.json'), 'utf8'));
@@ -76,9 +55,12 @@ const BLOCK_SHARE = 0.7;
 // s-maxage above 0, and neither no-store nor no-cache.
 const fresh = (cc) => !!cc && !/\b(no-store|no-cache)\b/i.test(cc) && /\b(s-)?max-age=0*[1-9]/i.test(cc);
 const COST_RATIO = 5;
-// judge "memory": heap kept per request, after a full collection, over the
-// soak's last stretch (past every bound a clean twin sets).
+// judge "memory": heap kept per request, after a full collection: the slope
+// over the soak's points past its first count (past every bound a clean twin
+// sets), at least KEPT_BYTES and KEPT_RATIO times the other twin's slope on
+// the same soak (taken as at least 1 byte).
 const KEPT_BYTES = 32;
+const KEPT_RATIO = 3;
 // judge "plans": a sequential scan with a filter, on a table of BIG_TABLE
 // rows or more, returning under SELECTIVE of the rows it read.
 const BIG_TABLE = 10_000;
@@ -367,11 +349,11 @@ function judgeTwin(twin, rule = 'current') {
     const judged = x.samples.slice(1);
     const blocked = judged.map((s) => s.loopMaxMs ?? 0);
     const shares = judged.map((s) => (s.ms > 0 ? (s.loopMaxMs ?? 0) / s.ms : 0));
-    if (!blocked.every((b, k) => b >= BLOCK_MS && shares[k] >= BLOCK_SHARE)) continue;
+    const clears = blocked.map((b, k) => b >= BLOCK_MS && shares[k] >= BLOCK_SHARE);
     const env0 = { before: raw.environment?.before ?? environment(), after: raw.environment?.after ?? environment() };
-    const probes = [raw.environment?.probe?.before, raw.environment?.probe?.after];
-    const v = rule === 'current' ? timingJudge({ samples: blocked, ...env0 })
-      : trialVerdict({ samples: rule === 'paired' ? shares : blocked, probes, ...env0, minSamples: rule === 'paired' ? MIN_PAIRS : 3 });
+    let v;
+    if (rule === 'c') { const c = ruleC({ clears, samples: blocked, ...env0 }); if (!c.holds) continue; v = c.timing; }
+    else { if (!clears.every(Boolean)) continue; v = timingJudge({ samples: blocked, ...env0 }); }
     const t = { ...v, why: Array.isArray(v.why) ? v.why.join('; ') || null : v.why ?? null };
     const share = Math.min(...shares);
     const trace = { judge: 'timing', path: x.path, timing: t, scales: [{ scale: HI, ms: Number(t.median.toFixed(1)) }] };
@@ -449,19 +431,28 @@ function judgeTwin(twin, rule = 'current') {
 
   // ---- Memory kept per request (judge "memory", L05): the twin's heap
   // after a full collection, at each point of a soak whose requests each
-  // carry a key of their own. Judged on the last stretch, which the soak's
-  // counts put past every bound the clean twin sets: a heap that still grows
-  // there by KEPT_BYTES or more a request keeps something per request that
-  // nothing removes (STB-05).
+  // carry a key of their own. Judged on the least-squares slope over the
+  // points from the soak's first count on, which the counts put past every
+  // bound the clean twin sets (MIN_POINTS or more), against the other twin's
+  // slope on the same soak: a heap that keeps KEPT_BYTES or more a request,
+  // and KEPT_RATIO times what the other twin's keeps, keeps something per
+  // request that nothing removes (STB-05). The other twin's slope takes out
+  // what both keep alike (code compiled late, pools, a bounded cache still
+  // filling).
+  const otherSoaks = spec.judge === 'memory' ? JSON.parse(readFileSync(join(outDir, twin === 'planted' ? 'clean' : 'planted', 'raw.json'), 'utf8')).scales[HI].soaks ?? [] : [];
+  const soakSlope = (x, r) => slopeOf(x.points.filter((p) => p.requests >= r.counts[0]).map((p) => ({ x: p.requests, y: p.heapUsed })));
   for (const r of spec.judge === 'memory' ? spec.soaks : []) {
     const x = (hi.soaks ?? []).find((q) => q.id === r.id);
-    if (!x || x.points.some((p) => !p.collected)) throw new Error(`${twin}: soak ${r.id} has no heap measured after a full collection`);
-    const [a, b] = x.points.slice(-2);
-    const per = (b.heapUsed - a.heapUsed) / (b.requests - a.requests);
+    const y = otherSoaks.find((q) => q.id === r.id);
+    for (const [w, q] of [[twin, x], ['the other twin', y]]) if (!q || q.points.some((p) => !p.collected)) throw new Error(`${w}: soak ${r.id} has no heap measured after a full collection`);
+    const mine = soakSlope(x, r);
+    const theirs = soakSlope(y, r);
+    if (mine.points < MIN_POINTS) throw new Error(`soak ${r.id}: ${mine.points} point(s) past ${r.counts[0]} requests, fewer than ${MIN_POINTS}`);
     const route = r.route ?? r.path;
-    const trace = { judge: 'memory', path: r.path, scales: x.points.map((p) => ({ scale: HI, requests: p.requests, heapBytesPerRequest: p.requests ? Number(((p.heapUsed - x.points[0].heapUsed) / p.requests).toFixed(1)) : 0 })) };
-    if (per >= KEPT_BYTES) emit({ check: 'memory-growth', rule: 'STB-05', strength: 'SHOULD', severity: 'warning', method: r.method, route, trace,
-      message: `${r.method} ${route} kept about ${fmt(Math.round(per))} bytes of heap per request from request ${fmt(a.requests)} to ${fmt(b.requests)}, each with a key of its own, measured after a full collection: the heap grows with every new key and nothing gives it back (STB-05).` });
+    const ratio = mine.slope / Math.max(theirs.slope ?? 0, 1);
+    const trace = { judge: 'memory', path: r.path, ratio, scales: x.points.map((p) => ({ scale: HI, requests: p.requests, heapBytesPerRequest: p.requests ? Number(((p.heapUsed - x.points[0].heapUsed) / p.requests).toFixed(1)) : 0 })) };
+    if (mine.slope >= KEPT_BYTES && ratio >= KEPT_RATIO) emit({ check: 'memory-growth', rule: 'STB-05', strength: 'SHOULD', severity: 'warning', method: r.method, route, trace,
+      message: `${r.method} ${route} kept about ${fmt(Math.round(mine.slope))} bytes of heap per request from request ${fmt(r.counts[0])} to ${fmt(r.counts.at(-1))} (least-squares slope over ${mine.points} points, R² ${mine.r2.toFixed(2)}), each with a key of its own, measured after a full collection, against ${fmt(Math.round(theirs.slope ?? 0))} for the twin without the defect: the heap grows with every new key and nothing gives it back (STB-05).` });
   }
 
   // ---- The first request after a start (judge "starts", L11): for each
@@ -472,17 +463,12 @@ function judgeTwin(twin, rule = 'current') {
   for (const r of spec.judge === 'starts' ? spec.starts : []) {
     const x = (hi.starts ?? []).find((q) => q.id === r.id);
     const later = x.samples.map((s) => median(s.laterMs));
-    // Trial column "absolute" (L11): the first request's own time over 5 or
-    // more fresh starts, each against the median warm request of all starts.
-    const warm = median(x.samples.flatMap((s) => s.laterMs));
-    const slow = rule === 'absolute'
-      ? x.samples.every((s) => s.firstMs - warm >= FIRST_EXTRA_MS && s.firstMs >= FIRST_RATIO * warm)
-      : x.samples.every((s, k) => s.firstMs - later[k] >= FIRST_EXTRA_MS && s.firstMs >= FIRST_RATIO * later[k]);
-    if (!slow) continue;
+    const clears = x.samples.map((s, k) => s.firstMs - later[k] >= FIRST_EXTRA_MS && s.firstMs >= FIRST_RATIO * later[k]);
     const env0 = { before: raw.environment?.before ?? environment(), after: raw.environment?.after ?? environment() };
-    const probes = [raw.environment?.probe?.before, raw.environment?.probe?.after];
-    const v = rule === 'current' ? timingJudge({ samples: x.samples.map((s) => s.firstMs), ...env0 })
-      : trialVerdict({ samples: rule === 'paired' ? x.samples.map((s, k) => s.firstMs / Math.max(later[k], 0.001)) : x.samples.map((s) => s.firstMs), probes, ...env0, minSamples: rule === 'paired' || rule === 'absolute' ? MIN_PAIRS : 3 });
+    const firsts = x.samples.map((s) => s.firstMs);
+    let v;
+    if (rule === 'c') { const c = ruleC({ clears, samples: firsts, ...env0 }); if (!c.holds) continue; v = c.timing; }
+    else { if (!clears.every(Boolean)) continue; v = timingJudge({ samples: firsts, ...env0 }); }
     const t = { ...v, why: Array.isArray(v.why) ? v.why.join('; ') || null : v.why ?? null };
     const route = r.route ?? r.path;
     const steady = median(later);
@@ -568,10 +554,12 @@ for (const twin of ['planted', 'clean']) {
       const f = r.findings.find((x) => x.severity === 'info' && matches(d, x) && x.erlang?.trace?.timing?.reliable === false);
       console.log(`UNRELIABLE  ${spec.fixture} ${spec.form} planted: ${d.check} ${d.rule ?? ''} ${d.method} ${d.route}${d.host ? ` ${d.host}` : ''}: timing unreliable (${verdictOf(f.erlang.trace.timing)})`);
     }
-    const extra = judged.filter((f) => !spec.defects.some((d) => matches(d, f)));
+    const expectedMiss = (f) => (spec.expectedMisses ?? []).some((d) => matches(d, f));
+    const extra = judged.filter((f) => !spec.defects.some((d) => matches(d, f)) && !expectedMiss(f));
+    for (const d of spec.expectedMisses ?? []) console.log(`EXPECTED  ${spec.fixture} ${spec.form} planted: ${d.check} ${d.rule ?? ''} ${d.method} ${d.route}, below the detection floor (${d.floor}): ${judged.some((f) => matches(d, f)) ? 'found this run all the same' : 'not found, as documented'}`);
     const unlinked = spec.defects.filter((d) => d.linked && judged.some((f) => matches(d, f) && !f.detection.includes('static')));
     const wrong = missing.length || extra.length || unlinked.length;
-    say(!wrong && !inconclusive.length, `planted: ${judged.length - extra.length}/${spec.defects.length} defects traced${inconclusive.length ? ` (${inconclusive.length} timing unreliable)` : ''}${spec.defects.some((d) => d.linked) ? `, ${spec.defects.filter((d) => d.linked && !inconclusive.includes(d)).length - unlinked.length} linked to a static finding` : ''}`,
+    say(!wrong && !inconclusive.length, `planted: ${judged.filter((f) => spec.defects.some((d) => matches(d, f))).length}/${spec.defects.length} defects traced${inconclusive.length ? ` (${inconclusive.length} timing unreliable)` : ''}${spec.defects.some((d) => d.linked) ? `, ${spec.defects.filter((d) => d.linked && !inconclusive.includes(d)).length - unlinked.length} linked to a static finding` : ''}`,
       [...missing.map((d) => `missed ${d.check} ${d.rule ?? ''} ${d.method} ${d.route}`), ...extra.map((f) => `decoy reported: ${keyOf(f)}`), ...unlinked.map((d) => `not linked: ${d.method} ${d.route}`), ...infos.map((i) => `info: ${i}`)].join('; '), wrong ? 'FAIL' : inconclusive.length ? 'UNRELIABLE' : 'PASS');
     for (const f of extra) console.log(`      ${f.message}`);
   } else {
@@ -579,7 +567,7 @@ for (const twin of ['planted', 'clean']) {
     for (const f of judged) console.log(`      ${f.message}`);
   }
 }
-// The timing trial (Q6), timed judges only: the same run under each rule,
+// Candidate rule (c) (Q8), timed judges only: the same run under each rule,
 // one line per form, with the clean twin's failing findings and the decoys,
 // and the measurements behind them. Printed only; the exit code is the
 // current rule's.
@@ -591,7 +579,7 @@ if (['loop', 'starts'].includes(spec.judge) && ['planted', 'clean'].every((t) =>
     const rows = spec.judge === 'loop'
       ? (scale.requests ?? []).map((q) => `${q.id}: blocked ms ${JSON.stringify(q.samples.slice(1).map((s) => Math.round(s.loopMaxMs ?? 0)))}, share of request ${JSON.stringify(q.samples.slice(1).map((s) => Number(((s.loopMaxMs ?? 0) / s.ms).toFixed(2))))}`)
       : (scale.starts ?? []).map((q) => `${q.id}: first ms ${JSON.stringify(q.samples.map((s) => Math.round(s.firstMs)))}, first over later ${JSON.stringify(q.samples.map((s) => Number((s.firstMs / median_(s.laterMs)).toFixed(1))))}`);
-    console.log(`      measured ${twin}: load ${e.before?.load1}/${e.before?.cpus} before, ${e.after?.load1}/${e.after?.cpus} after; probe ${JSON.stringify(e.probe ?? null)}`);
+    console.log(`      measured ${twin}: load ${e.before?.load1}/${e.before?.cpus} before, ${e.after?.load1}/${e.after?.cpus} after`);
     for (const row of rows) console.log(`        ${row}`);
   }
   const outcome = (rule) => {
@@ -605,7 +593,7 @@ if (['loop', 'starts'].includes(spec.judge) && ['planted', 'clean'].every((t) =>
     const why = unrel.map((d) => `${d.method} ${d.route}: ${p.findings.find((f) => f.severity === 'info' && matches(d, f)).erlang.trace.timing.why}`);
     return { status: missing.length || extra.length || cleanFp ? 'FAIL' : unrel.length ? 'UNRELIABLE' : 'PASS', cleanFp, decoys: extra.length, missed: missing.map((d) => `${d.method} ${d.route}`), why };
   };
-  const rules = [['current', 'current rule'], ['probe', '(a) probe'], ['paired', '(a)+(b) probe and pairs'], ...(spec.judge === 'starts' ? [['absolute', '(a) with the absolute first request over 5+ starts']] : [])];
+  const rules = [['current', 'current rule'], ['c', `(c) all or none of ${MIN_REPEATS}+ runs`]];
   const results = rules.map(([rule]) => outcome(rule));
   console.log(`TRIAL  ${spec.fixture} ${spec.form} trace: ${rules.map(([, name], k) => `${name} ${results[k].status} (clean false positives ${results[k].cleanFp}, decoys ${results[k].decoys}${results[k].missed.length ? `, missed ${results[k].missed.join(', ')}` : ''})`).join(' | ')}`);
   rules.forEach(([, name], k) => { for (const w of results[k].why) console.log(`      ${name}: ${w}`); });

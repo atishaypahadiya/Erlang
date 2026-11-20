@@ -24,8 +24,8 @@ import { finding, fingerprint } from '../../core/finding.js';
 import { report } from '../../core/report.js';
 import { validate } from '../../core/schema.js';
 import { scan, VERSION } from '../../bin/erlang.js';
-import { judge as timingJudge, REASON } from '../../lib/timing.js';
-import { agree } from '../../lib/calibration.js';
+import { slopeOf, MIN_POINTS } from '../../lib/trace-judge.js';
+import { ruleC, MIN_REPEATS, judge as timingJudge, REASON } from '../../lib/timing.js';
 import { linkStatic, fmt } from '../../lib/trace-judge.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -55,7 +55,7 @@ const RATIO = 1.5;
 // else is timed: latencies, the share answered late (a time limit), the
 // shedding gap (served within okMs), and heap kept per request (neither a
 // count nor a share; it moves with the collector and the machine).
-const EXEMPT = new Set(['statements', 'attempts', 'stub-open', 'connections', 'bytes', 'failed']);
+const EXEMPT = new Set(['statements', 'rows', 'blocks', 'attempts', 'stub-open', 'connections', 'bytes', 'failed']);
 // The verdict of an exempt quantity: recorded like the timing rule's, with
 // the load averages kept as information, and always reliable.
 const exempt = ({ samples, before, after }) => {
@@ -63,8 +63,15 @@ const exempt = ({ samples, before, after }) => {
   const med = xs.length ? median(xs) : null;
   return { reliable: true, exempt: true, reason: null, why: [], samples: xs, median: med, spread: xs.length && med > 0 ? (Math.max(...xs) - Math.min(...xs)) / med : null, before: before ?? null, after: after ?? null };
 };
-const JUDGE_OF = { 'stub-open': 'inflight', failed: 'pool-errors', connections: 'connection-errors', p99: 'latency', p90: 'latency', median: 'latency', max: 'first-request', 'late-share': 'throughput', 'heap-growth': 'memory' };
+const JUDGE_OF = { rows: 'statements', blocks: 'statements', 'loop-max': 'latency', 'heap-slope': 'memory', 'stub-open': 'inflight', failed: 'pool-errors', connections: 'connection-errors', p99: 'latency', p90: 'latency', median: 'latency', max: 'first-request', 'late-share': 'throughput' };
 const METRICS = {
+  // Rows the app received, and shared blocks its statements read (hit or
+  // read from disk), per request, from pg_stat_statements (L02, L03).
+  rows: { what: 'rows read per request', of: (s) => (s.counts.requests ? (s.statements?.rows ?? 0) / s.counts.requests : 0), fmt: (x) => fmt(Math.round(x)) },
+  blocks: { what: 'shared blocks read per request', of: (s) => (s.counts.requests ? (s.statements?.blocks ?? 0) / s.counts.requests : 0), fmt: (x) => fmt(Math.round(x)) },
+  // The event loop's longest stretch over the step (monitorEventLoopDelay's
+  // max, L09): timed.
+  'loop-max': { what: 'ms, the event loop\'s longest stretch', of: (s) => s.loop?.maxMs ?? 0, fmt: (x) => String(Math.round(x)) },
   statements: { what: 'statements per request', of: (s) => (s.counts.requests ? (s.statements?.calls ?? 0) / s.counts.requests : 0), fmt: (x) => x.toFixed(1) },
   attempts: { what: 'calls to the failing host per request', of: (s, step) => (offered(s) ? (s.upstream ?? []).filter((u) => u.host === step.host).reduce((a, u) => a + u.calls, 0) / offered(s) : 0), fmt: (x) => x.toFixed(1) },
   failed: { what: 'share of requests that failed', of: (s) => (offered(s) ? s.counts.failed / offered(s) : 0), fmt: pct },
@@ -78,60 +85,25 @@ const METRICS = {
   // compressed as sent), for a step with no background.
   bytes: { what: 'bytes on the wire per response', of: (s) => (s.counts.requests ? (s.counts.wireBytes ?? 0) / s.counts.requests : 0), fmt: (x) => fmt(Math.round(x)) },
   'late-share': { what: 'share of requests not answered in time', of: (s) => (offered(s) ? 1 - s.counts.ok / offered(s) : 0), fmt: pct },
-  'heap-growth': { what: 'bytes of heap kept per request, after a full collection', of: (s) => (s.heap?.after != null && s.counts.requests ? Math.max(0, (s.heap.after - s.heap.before) / s.counts.requests) : 0), fmt: (x) => fmt(Math.round(x)) },
+  // The heap slope (L05): judged in its own branch of the compare judge.
+  'heap-slope': { what: 'bytes of heap kept per request (slope)', of: () => 0, fmt: (x) => fmt(Math.round(x)) },
 };
 const CONTROL_SHARE = 0.9;
 
-// ---- The timing trial (docs/decisions.md, Q6; on trial, not the rule). Three
-// rules judge the same runs; only "current" decides the exit code and writes
-// the reports:
-//   current  the timing rule: three or more samples, spread 10% or less, the
-//            load average below half the CPUs before and after;
-//   probe    (a): the same samples and spread, the load-average gate replaced
-//            by the calibration probe (lib/calibration.js) around every run
-//            of the step, both twins: all probes agree within 10%;
-//   paired   (a)+(b): the pairs (planted and clean runs, in alternating
-//            order), five or more; the finding holds only if every pair shows
-//            it, and the 10% spread applies to the per-pair ratios (the
-//            per-pair gaps for shedding); the probes as in (a).
-// The load averages are kept as information under probe and paired.
-const MIN_PAIRS = 5;
+// Candidate rule (c) (docs/decisions.md, Q8): lib/timing.js ruleC, printed beside
+// the current rule; only "current" decides the exit code and writes the
+// reports.
+
+// The heap slope (L05; the owner, 19 November 2026): the heap after a full
+// collection against the responses answered, fitted by least squares over a
+// step's points (MIN_POINTS or more) in each repeat. A finding needs a
+// positive slope in every repeat and the median slope at least the step's
+// floor and ratio times the other twin's (taken as at least 1 byte). It is
+// gated on the spread of the slopes over the repeats (10% or less, three
+// repeats or more), not on the load average; each fit's R² is recorded.
 const MAX_SPREAD = 0.10;
-// The heap slope (trial, L05): the heap after a full collection against the
-// responses answered, fitted by least squares over a step's points (5 or
-// more). A finding needs a positive slope in every repeat, each fit at least
-// MIN_R2, the median slope at least the step's floor and ratio times the
-// other twin's; the probes as in (a).
-const MIN_POINTS = 5;
-const MIN_R2 = 0.9;
-function fit(points) {
-  const ps = (points ?? []).filter((p) => Number.isFinite(p.answered) && Number.isFinite(p.heapUsed));
-  if (ps.length < 2) return { slope: null, r2: null, points: ps.length };
-  const mx = ps.reduce((a, p) => a + p.answered, 0) / ps.length;
-  const my = ps.reduce((a, p) => a + p.heapUsed, 0) / ps.length;
-  const sxx = ps.reduce((a, p) => a + (p.answered - mx) ** 2, 0);
-  const sxy = ps.reduce((a, p) => a + (p.answered - mx) * (p.heapUsed - my), 0);
-  const syy = ps.reduce((a, p) => a + (p.heapUsed - my) ** 2, 0);
-  if (!sxx) return { slope: null, r2: null, points: ps.length };
-  const slope = sxy / sxx;
-  return { slope, r2: syy ? (sxy * sxy) / (sxx * syy) : 0, points: ps.length };
-}
-// The smallest value a quantity can be told apart from zero, for a ratio
-// whose other side measured nothing: a share's one request in a hundred, a
-// millisecond, a byte.
-const RESOLUTION = { 'late-share': 0.01, failed: 0.01, median: 1, p90: 1, p99: 1, max: 1, 'heap-growth': 1 };
+const fit = (points) => slopeOf((points ?? []).map((p) => ({ x: p.answered, y: p.heapUsed })));
 const spreadOf = (xs) => { const m = median(xs); return xs.length && m > 0 ? (Math.max(...xs) - Math.min(...xs)) / m : null; };
-const probesOf = (raw, id) => raw.repeats.flatMap((rep) => ['planted', 'clean'].flatMap((t) => { const p = rep[t].steps.find((x) => x.id === id)?.environment?.probe; return p ? [p.before, p.after] : []; }));
-function trialVerdict({ samples, probes, before, after, minSamples }) {
-  const why = [];
-  const xs = samples.filter((x) => Number.isFinite(x));
-  const spread = spreadOf(xs);
-  if (xs.length < minSamples) why.push(`${xs.length} sample(s), fewer than ${minSamples}`);
-  else if (spread === null || spread > MAX_SPREAD) why.push(`spread ${spread === null ? 'unknown' : `${(spread * 100).toFixed(1)}%`}, over ${MAX_SPREAD * 100}%`);
-  const p = agree(probes);
-  why.push(...p.why);
-  return { reliable: why.length === 0, reason: why.length ? REASON : null, why, samples: xs.map((x) => Number(x.toFixed(4))), median: xs.length ? median(xs) : null, spread, before: before ?? null, after: after ?? null };
-}
 
 const NOTE = {
   'OVL-02': 'Cap the requests in flight and answer the excess with 503 and Retry-After at once; find the cap with a load test stepped past the knee (CAP-02).',
@@ -180,9 +152,15 @@ function judgeTwin(raw, twin, rule = 'current') {
       const samples = runs.map((r) => Number((share(r.them) - share(r.me)).toFixed(4)));
       const gap = median(samples);
       if (twin === 'planted' && rule === 'current') MEASURED.push(`step ${id} (goodput gap, clean minus planted): ${JSON.stringify(samples)}; ${verdictOf(timingJudge({ samples, before: env.before, after: env.after }))}`);
-      if (rule === 'paired' ? !samples.every((g) => g >= SHED_GAP) : gap < SHED_GAP) continue;
-      const timing = rule === 'current' ? timingJudge({ samples, before: env.before, after: env.after })
-        : trialVerdict({ samples, probes: probesOf(raw, id), before: env.before, after: env.after, minSamples: rule === 'paired' ? MIN_PAIRS : 3 });
+      let timing;
+      if (rule === 'c') {
+        const c = ruleC({ clears: samples.map((g) => g >= SHED_GAP), samples, before: env.before, after: env.after });
+        if (!c.holds) continue;
+        timing = c.timing;
+      } else {
+        if (gap < SHED_GAP) continue;
+        timing = timingJudge({ samples, before: env.before, after: env.after });
+      }
       const s0 = runs[0].me;
       const step = spec.steps.find((x) => x.id === id);
       const medOf = (k, f) => median(runs.map((r) => f(r[k])));
@@ -201,42 +179,47 @@ function judgeTwin(raw, twin, rule = 'current') {
       const mine = median(runs.map((r) => r.me));
       const theirs = median(runs.map((r) => r.them));
       const ratio = step.ratio ?? RATIO;
+      if (step.metric === 'heap-slope') {
+        const fits = raw.repeats.map((rep) => ({ me: fit(stepOf(rep, twin, step.id).heap?.points), them: fit(stepOf(rep, other, step.id).heap?.points) }));
+        if (twin === 'planted' && rule === 'current') {
+          const fitsOf = (k) => fits.map((f) => (f[k].slope === null ? `none (${f[k].points} point(s))` : `${f[k].slope.toFixed(1)} R² ${f[k].r2.toFixed(2)}`)).join(', ');
+          MEASURED.push(`step ${step.id} (heap slope, B/request, needs ${ratio}x and ${step.floor ?? 0}${spec.defects.some((d) => d.step === step.id) ? '' : EXPECTED_MISSES.some((d) => d.step === step.id) ? '; an expected miss' : '; a decoy route'}): planted ${fitsOf('me')}; clean ${fitsOf('them')}`);
+        }
+        const slopes = fits.map((f) => f.me.slope ?? 0);
+        const mineS = median(slopes);
+        const theirsS = median(fits.map((f) => f.them.slope ?? 0));
+        if (!(slopes.every((x) => x > 0) && mineS >= (step.floor ?? 0) && mineS >= ratio * Math.max(theirsS, 1))) continue;
+        const why = [];
+        const spread = spreadOf(slopes);
+        if (fits.length < 3) why.push(`${fits.length} repeat(s), fewer than 3`);
+        else if (spread === null || spread > MAX_SPREAD) why.push(`spread of slopes ${spread === null ? 'unknown' : `${(spread * 100).toFixed(1)}%`}, over ${MAX_SPREAD * 100}%`);
+        for (const [k, f] of fits.entries()) if (f.me.points < MIN_POINTS) why.push(`repeat ${k + 1}: ${f.me.points} point(s), fewer than ${MIN_POINTS}`);
+        const s0 = stepOf(raw.repeats[0], twin, step.id);
+        const timing = { reliable: !why.length, reason: why.length ? REASON : null, why: why.join('; ') || null, samples: slopes.map((x) => Number(x.toFixed(2))), median: mineS, spread, before: env.before ?? null, after: env.after ?? null };
+        const t = { check: step.check ?? spec.check, rule: step.rule ?? spec.rule, method: s0.method, route: s0.route ?? step.route, symbol: step.symbol ?? null };
+        const load = { judge: 'memory', step: step.id, path: s0.path, rate: step.rate, seconds: step.seconds, repeats: fits.length, samples: timing.samples, twin: { 'heap-slope': mineS, r2: fits.map((f) => Number((f.me.r2 ?? 0).toFixed(3))) }, other: { 'heap-slope': theirsS }, timing };
+        out.push(emit(t, statics, `At ${fmt(step.rate)} requests a second for ${step.seconds} s, ${t.method} ${t.route} kept about ${fmt(Math.round(mineS))} bytes of heap per request (the least-squares slope of the heap after full collections against responses answered, positive in every repeat), against ${fmt(Math.round(theirsS))} for the twin without the defect (STB-05).${timing.reliable ? '' : ` Not judged: ${REASON} (${timing.why}).`}`, load, timing.reliable ? 'warning' : 'info'));
+        continue;
+      }
       if (twin === 'planted' && rule === 'current') {
         const r4 = (xs) => JSON.stringify(xs.map((x) => Number(x.toFixed(4))));
         const v = (EXEMPT.has(step.metric) ? exempt : timingJudge)({ samples: runs.map((r) => r.me), before: env.before, after: env.after });
         MEASURED.push(`step ${step.id} (${step.metric}, needs ${ratio}x and ${step.floor ?? 0}): planted ${r4(runs.map((r) => r.me))}, clean ${r4(runs.map((r) => r.them))}; ${v.exempt ? 'a count or share, exempt from the timing rule; ' : ''}${verdictOf(v)}`);
-        if (step.metric === 'heap-growth') {
-          const fitsOf = (t) => raw.repeats.map((rep) => fit(stepOf(rep, t, step.id).heap?.points)).map((f) => (f.slope === null ? `none (${f.points} point(s))` : `${f.slope.toFixed(1)} B/req R² ${f.r2.toFixed(2)} (${f.points} points)`)).join(', ');
-          MEASURED.push(`step ${step.id} heap slope${spec.defects.some((d) => d.step === step.id) ? '' : ' (decoy route)'}: planted ${fitsOf('planted')}; clean ${fitsOf('clean')}`);
-        }
       }
-      if (rule === 'slope' && step.metric === 'heap-growth') {
-        const fits = raw.repeats.map((rep) => ({ me: fit(stepOf(rep, twin, step.id).heap?.points), them: fit(stepOf(rep, other, step.id).heap?.points) }));
-        const slopes = fits.map((f) => f.me.slope);
-        const mineS = median(slopes.map((x) => x ?? 0));
-        const theirsS = median(fits.map((f) => f.them.slope ?? 0));
-        if (!(slopes.every((x) => x > 0) && mineS >= (step.floor ?? 0) && mineS >= ratio * Math.max(theirsS, 1))) continue;
-        const why = [];
-        for (const [k, f] of fits.entries()) {
-          if (f.me.points < MIN_POINTS) why.push(`repeat ${k + 1}: ${f.me.points} point(s), fewer than ${MIN_POINTS}`);
-          else if (!(f.me.r2 >= MIN_R2)) why.push(`repeat ${k + 1}: fit R² ${f.me.r2?.toFixed(2)}, under ${MIN_R2}`);
-        }
-        why.push(...agree(probesOf(raw, step.id)).why);
-        const s0 = stepOf(raw.repeats[0], twin, step.id);
-        const timing = { reliable: !why.length, reason: why.length ? REASON : null, why: why.join('; ') || null, samples: slopes.map((x) => Number((x ?? 0).toFixed(2))), median: mineS, spread: spreadOf(slopes.map((x) => x ?? 0)), before: env.before ?? null, after: env.after ?? null };
-        const t = { check: step.check ?? spec.check, rule: step.rule ?? spec.rule, method: s0.method, route: s0.route ?? step.route, symbol: step.symbol ?? null };
-        const load = { judge: 'memory', step: step.id, path: s0.path, rate: step.rate, seconds: step.seconds, repeats: fits.length, samples: timing.samples, twin: { 'heap-slope': mineS }, other: { 'heap-slope': theirsS }, timing };
-        out.push(emit(t, statics, `${t.method} ${t.route} kept about ${fmt(Math.round(mineS))} bytes of heap per request (least-squares slope after full collections, every repeat positive), against ${fmt(Math.round(theirsS))} for the twin without the defect (STB-05).`, load, timing.reliable ? 'warning' : 'info'));
-        continue;
-      }
-      const res = RESOLUTION[step.metric] ?? 1e-9;
-      const pairRatios = runs.map((r) => r.me / Math.max(r.them, res));
-      const paired = (rule === 'paired' || rule === 'slope') && !EXEMPT.has(step.metric);
-      if (paired ? !runs.every((r, k) => r.me > 0 && r.me >= (step.floor ?? 0) && pairRatios[k] >= ratio) : (!(mine >= (step.floor ?? 0)) || !(mine >= ratio * theirs) || mine === 0)) continue;
       const samples = runs.map((r) => Number(r.me.toFixed(4)));
-      const timing = EXEMPT.has(step.metric) ? exempt({ samples, before: env.before, after: env.after })
-        : rule === 'current' ? timingJudge({ samples, before: env.before, after: env.after })
-          : trialVerdict({ samples: paired ? pairRatios : samples, probes: probesOf(raw, step.id), before: env.before, after: env.after, minSamples: paired ? MIN_PAIRS : 3 });
+      const clearsOf = (r) => r.me > 0 && r.me >= (step.floor ?? 0) && r.me >= ratio * r.them;
+      let timing;
+      if (EXEMPT.has(step.metric)) {
+        if (!(mine >= (step.floor ?? 0)) || !(mine >= ratio * theirs) || mine === 0) continue;
+        timing = exempt({ samples, before: env.before, after: env.after });
+      } else if (rule === 'c') {
+        const c = ruleC({ clears: runs.map(clearsOf), samples, before: env.before, after: env.after });
+        if (!c.holds) continue;
+        timing = c.timing;
+      } else {
+        if (!(mine >= (step.floor ?? 0)) || !(mine >= ratio * theirs) || mine === 0) continue;
+        timing = timingJudge({ samples, before: env.before, after: env.after });
+      }
       const s0 = stepOf(raw.repeats[0], twin, step.id);
       // With a background (L09), the finding is about the background route,
       // whose work slowed the measured one.
@@ -305,6 +288,13 @@ const verdictOf = (t) => `samples ${JSON.stringify(t.samples)}, spread ${t.sprea
 if (!raw) { say(false, '', 'no raw.json: run scripts/load.sh'); process.exit(1); }
 const keyOf = (f) => `${f.check} ${f.rules?.[0] ?? ''} ${f.erlang?.load?.step ?? ''}`;
 const matches = (d, f) => d.check === f.check && (!d.rule || f.rules?.includes(d.rule)) && f.erlang?.load?.step === d.step;
+// Expected misses (load.json "expectedMisses": [{ step, check, rule, floor }]):
+// a planted defect below the measure's detection floor, kept and documented
+// rather than deleted. The planted twin is not required to report it; if it
+// does, the line says so (the floor moved) without failing. The clean twin
+// must still report nothing there.
+const EXPECTED_MISSES = spec.expectedMisses ?? [];
+const expectedMiss = (f) => EXPECTED_MISSES.some((d) => matches(d, f));
 for (const twin of ['planted', 'clean']) {
   let r;
   try { r = judgeTwin(raw, twin); } catch (e) { say(false, twin, e.message); continue; }
@@ -317,18 +307,19 @@ for (const twin of ['planted', 'clean']) {
       console.log(`UNRELIABLE  ${spec.fixture} ${spec.form} load planted: ${d.check} ${d.rule ?? ''} step ${d.step}: ${REASON} (${verdictOf(f.erlang.load.timing)})`);
     }
     const missing = spec.defects.filter((d) => !judged.some((f) => matches(d, f)) && !inconclusive.includes(d));
-    const extra = judged.filter((f) => !spec.defects.some((d) => matches(d, f)));
+    const extra = judged.filter((f) => !spec.defects.some((d) => matches(d, f)) && !expectedMiss(f));
     const unlinked = spec.defects.filter((d) => d.linked && judged.some((f) => matches(d, f) && !f.detection.includes('static')));
     const wrong = missing.length || extra.length || unlinked.length;
-    say(!wrong && !inconclusive.length, `planted: ${judged.length - extra.length}/${spec.defects.length} defects found under load${inconclusive.length ? ` (${inconclusive.length} timing unreliable)` : ''}`,
+    say(!wrong && !inconclusive.length, `planted: ${judged.filter((f) => spec.defects.some((d) => matches(d, f))).length}/${spec.defects.length} defects found under load${inconclusive.length ? ` (${inconclusive.length} timing unreliable)` : ''}`,
       [...missing.map((d) => `missed ${d.check} step ${d.step}`), ...extra.map((f) => `decoy reported: ${keyOf(f)}`), ...unlinked.map((d) => `not linked: step ${d.step}`), ...infos.map((f) => `info: ${keyOf(f)}`)].join('; '), wrong ? 'FAIL' : inconclusive.length ? 'UNRELIABLE' : 'PASS');
+    for (const d of EXPECTED_MISSES) console.log(`EXPECTED  ${spec.fixture} ${spec.form} load planted: ${d.check} ${d.rule ?? ''} step ${d.step}, below the detection floor (${d.floor}): ${judged.some((f) => matches(d, f)) ? 'found this run all the same' : 'not found, as documented'}`);
     for (const m of MEASURED) console.log(`      measured ${m}`);
     for (const f of extra) console.log(`      ${f.message}`);
   } else {
     say(!judged.length, `clean: ${judged.length} error(s) or warning(s)`, [...judged.map((f) => `reported: ${keyOf(f)}`), ...infos.map((f) => `info: ${keyOf(f)}`)].join('; '));
   }
 }
-// The timing trial (Q6): the same runs under each rule, one line per form,
+// Candidate rule (c) (Q8): the same runs under each rule, one line per form,
 // with the clean twin's failing findings (false positives) and the decoys
 // the planted twin reported, and why each unreliable defect was so. Printed
 // only; the exit code is the current rule's.
@@ -340,13 +331,13 @@ const outcome = (rule) => {
   const infos = p.findings.filter((f) => f.severity === 'info' && f.erlang.load.timing.reliable === false);
   const unrel = spec.defects.filter((d) => !judged.some((f) => matches(d, f)) && infos.some((f) => matches(d, f)));
   const missing = spec.defects.filter((d) => !judged.some((f) => matches(d, f)) && !unrel.includes(d));
-  const extra = judged.filter((f) => !spec.defects.some((d) => matches(d, f)));
+  const extra = judged.filter((f) => !spec.defects.some((d) => matches(d, f)) && !expectedMiss(f));
   const cleanFp = c.findings.filter((f) => f.severity !== 'info').length;
   const status = missing.length || extra.length || cleanFp ? 'FAIL' : unrel.length ? 'UNRELIABLE' : 'PASS';
   const why = unrel.map((d) => { const t = infos.find((f) => matches(d, f)).erlang.load.timing; return `step ${d.step}: ${t.why}`; });
   return { status, cleanFp, decoys: extra.length, missed: missing.map((d) => d.step), why };
 };
-const rules = [['current', 'current rule'], ['probe', '(a) probe'], ['paired', '(a)+(b) probe and pairs'], ...(spec.steps.some((s) => s.metric === 'heap-growth') ? [['slope', '(a)+(b) with the heap slope']] : [])];
+const rules = [['current', 'current rule'], ['c', `(c) all or none of ${MIN_REPEATS}+ repeats`]];
 const results = rules.map(([rule]) => outcome(rule));
 console.log(`TRIAL  ${spec.fixture} ${spec.form} load, ${raw.repeats.length} pairs: ${rules.map(([, name], k) => `${name} ${results[k].status} (clean false positives ${results[k].cleanFp}, decoys ${results[k].decoys}${results[k].missed?.length ? `, missed ${results[k].missed.join(' ')}` : ''})`).join(' | ')}`);
 rules.forEach(([, name], k) => { for (const w of results[k].why) console.log(`      ${name}: ${w}`); if (results[k].note) console.log(`      ${name}: ${results[k].note}`); });

@@ -229,17 +229,18 @@ console.log('\nThe load judge (shedding), on recorded runs');
   ok('shedding: the queueing twin is reported, the capped twin is not', good.code === 0 && /PASS  L12 express load planted: 1\/1/.test(good.text) && /PASS  L12 express load clean: 0/.test(good.text), good.text.trim());
   ok('  linked to the static finding by symbol, with load in its detection and its fingerprint unchanged', !!f && f.detection.includes('static') && f.detection.includes('load') && f.fingerprint === scan(join(form, 'planted')).findings.find((s) => s.check === 'no-load-shedding')?.fingerprint, f && JSON.stringify(f.detection));
   ok('  the measured shares are in erlang.load, never in the fingerprint', !!f && f.erlang.load.samples.length === 3 && f.erlang.load.timing.reliable === true && !/\d\.\d/.test(f.fingerprint), f?.fingerprint);
-  // The timing trial (Q6): probes around every run, five pairs.
-  const withProbes = (q, cpuMs = 100, busy = false) => { for (const t of ['planted', 'clean']) for (const s of q[t].steps) { s.environment = { before: { load1: busy ? 6 : 0.5, cpus: 8 }, after: { load1: busy ? 6 : 0.5, cpus: 8, cooledAfterS: 5 }, probe: { before: { cpuMs, ioMs: 50 }, after: { cpuMs, ioMs: 50 } } }; } return q; };
+  // Candidate rule (c) (Q8): five pairs, all or none.
   const trialOf = (text) => /^TRIAL .*$/m.exec(text)?.[0] ?? '';
-  const steady = run([0, 3, 6, 9, 12].map((k) => withProbes(queued(k), 100, true)));
-  ok('trial: on a busy machine whose probes agree, current is UNRELIABLE, (a) and (a)+(b) PASS, no clean false positive', /current rule UNRELIABLE \(clean false positives 0/.test(trialOf(steady.text)) && /\(a\) probe PASS \(clean false positives 0/.test(trialOf(steady.text)) && /\(a\)\+\(b\) probe and pairs PASS \(clean false positives 0/.test(trialOf(steady.text)), trialOf(steady.text));
-  const drift = run([0, 3, 6, 9, 12].map((k) => withProbes(queued(k), k === 6 ? 140 : 100)));
-  ok('  probes that disagree (one run 40% slower) make (a) and (a)+(b) UNRELIABLE, whatever the load average', /\(a\) probe UNRELIABLE/.test(trialOf(drift.text)) && /\(a\)\+\(b\) probe and pairs UNRELIABLE/.test(trialOf(drift.text)) && /probe CPU times disagree by 40\.0%/.test(drift.text), drift.text);
-  const onePair = run([0, 3, 6, 9, 12].map((k) => { const q = withProbes(queued(k)); if (k === 9) q.planted = withProbes(queued(k)).clean; return q; }));
-  ok('  a pair that does not show the gap: (a)+(b) misses the defect (the median shows it; current and (a) call the spread unreliable)', /current rule UNRELIABLE/.test(trialOf(onePair.text)) && /\(a\)\+\(b\) probe and pairs FAIL \(clean false positives 0, decoys 0, missed past\)/.test(trialOf(onePair.text)), trialOf(onePair.text));
-  const three = run([0, 7, 15].map((k) => withProbes(queued(k))));
-  ok('  three pairs are too few for (a)+(b): UNRELIABLE, fewer than 5', /\(a\)\+\(b\) probe and pairs UNRELIABLE/.test(trialOf(three.text)) && /fewer than 5/.test(three.text), three.text);
+  const steady = run([0, 3, 6, 9, 12].map((k) => queued(k, { load1: 6 })));
+  ok('rule (c): on a busy machine, five pairs that all show the gap: current UNRELIABLE, (c) PASS, no clean false positive', /current rule UNRELIABLE \(clean false positives 0/.test(trialOf(steady.text)) && /\(c\) all or none of 5\+ repeats PASS \(clean false positives 0, decoys 0\)/.test(trialOf(steady.text)), trialOf(steady.text));
+  const wide = run([0, 100, 200, 300, 400].map((k) => queued(k)));
+  ok('  a spread of 51% with every pair over the bar: current UNRELIABLE (spread), (c) PASS (spread recorded, not consulted)', /current rule UNRELIABLE/.test(trialOf(wide.text)) && /\(c\) all or none of 5\+ repeats PASS/.test(trialOf(wide.text)), wide.text);
+  const onePair = run([0, 3, 6, 9, 12].map((k) => { const q = queued(k); if (k === 9) q.planted = queued(k).clean; return q; }));
+  ok('  a pair that does not show the gap: (c) UNRELIABLE, 4 of 5 repeats', /\(c\) all or none of 5\+ repeats UNRELIABLE/.test(trialOf(onePair.text)) && /4 of 5 repeats cleared the threshold/.test(onePair.text), onePair.text);
+  const three = run([0, 7, 15].map((k) => queued(k)));
+  ok('  three pairs are too few for (c): UNRELIABLE, fewer than 5', /\(c\) all or none of 5\+ repeats UNRELIABLE/.test(trialOf(three.text)) && /3 repeat\(s\), fewer than 5/.test(three.text), three.text);
+  const none = run([0, 3, 6, 9, 12].map((k) => { const q = queued(k); return { planted: q.clean, clean: q.clean }; }));
+  ok('  no pair shows the gap: (c) finds nothing (missed), no clean false positive', /\(c\) all or none of 5\+ repeats FAIL \(clean false positives 0, decoys 0, missed past\)/.test(trialOf(none.text)), trialOf(none.text));
   const same = run([0, 7, 15].map((k) => { const q = queued(k); return { planted: q.clean, clean: q.clean }; }));
   ok('  the control: twins that behave alike give no finding, and the planted defect is missed', same.code === 1 && /missed no-load-shedding step past/.test(same.text), same.text.trim());
   const busy = run([0, 7, 15].map((k) => queued(k, { load1: 6 })));
@@ -285,7 +286,9 @@ console.log('\nThe load judge (compare), on recorded runs');
   rmSync(form, { recursive: true, force: true });
   for (const d of ['planted', 'clean', 'load']) cpSync(join(ROOT, 'fixtures', 'L09-blocking-work', d), join(form, d), { recursive: true });
   const out = join(form, 'out');
-  const step = (id, late) => ({ id, method: 'GET', path: '/avatars/1', route: '/avatars/:id', rate: 20, seconds: 10, interrupted: false, counts: { requests: 200, ok: 200 - late, late, refused: 0, failed: 0, dropped: 0 }, served: { medMs: 5, p90Ms: 9, p99Ms: 20, maxMs: 30 }, refusals: null, samples: [], environment: { before: { load1: 0.5, cpus: 8 }, after: { load1: 0.5, cpus: 8, cooledAfterS: 5 } } });
+  // signup is judged on the event loop's longest stretch (loop.maxMs): about
+  // 175 ms where the hashing runs on the main thread, 4 ms where it does not.
+  const step = (id, late) => ({ id, method: 'GET', path: '/avatars/1', route: '/avatars/:id', rate: 20, seconds: 10, interrupted: false, ...(id === 'signup' ? { loop: { maxMs: late > 20 ? 170 + (late % 10) : 4, meanMs: 1 } } : {}), counts: { requests: 200, ok: 200 - late, late, refused: 0, failed: 0, dropped: 0 }, served: { medMs: 5, p90Ms: 9, p99Ms: 20, maxMs: 30 }, refusals: null, samples: [], environment: { before: { load1: 0.5, cpus: 8 }, after: { load1: 0.5, cpus: 8, cooledAfterS: 5 } } });
   const run = (planted) => {
     rmSync(out, { recursive: true, force: true });
     for (const t of ['planted', 'clean']) mkdirSync(join(out, t), { recursive: true });
@@ -296,9 +299,40 @@ console.log('\nThe load judge (compare), on recorded runs');
   };
   const good = run((k) => [step('signup', 180 + k), step('login', 190 + k), step('export', 150 + k), step('codes', 4)]);
   const routes = good.report.findings.filter((f) => f.severity !== 'info').map((f) => f.where.endpoints?.[0]?.route ?? f.erlang?.route ?? JSON.stringify(f.where)).join(' ');
-  ok('compare with a background: avatars late while signup, login and export run, reported on those routes, not on /avatars', good.code === 0 && !/avatars/.test(routes), `${good.text}\n${routes}`);
+  ok('compare with a background: the loop held while signup runs, avatars late while login and export run, reported on those routes, not on /avatars', good.code === 0 && !/avatars/.test(routes), `${good.text}\n${routes}`);
   const alike = run(() => ['signup', 'login', 'export', 'codes'].map((id) => step(id, 4)));
   ok('  the control: twins whose avatars are never late give nothing, and the three defects are missed', alike.code === 1 && /0\/3/.test(alike.text), alike.text);
+  rmSync(form, { recursive: true, force: true });
+}
+
+console.log('\nThe load judge (heap slope), on recorded runs');
+{
+  // L05: the heap after a full collection against responses answered, every
+  // 2 s through a step; the slope per request, twin against twin.
+  const form = join(OUT, 'load-l05');
+  rmSync(form, { recursive: true, force: true });
+  for (const d of ['planted', 'clean', 'load']) cpSync(join(ROOT, 'fixtures', 'L05-memory-growth', d), join(form, d), { recursive: true });
+  const out = join(form, 'out');
+  const spec = JSON.parse(readFileSync(join(form, 'load', 'load.json'), 'utf8'));
+  // A step whose heap grows by perReq bytes a response, plus a wobble.
+  const step = ({ id, method = 'GET', path, route }, perReq, k) => ({ id, method, path, route, rate: 100, seconds: 15, interrupted: false, counts: { requests: 1500, ok: 1500, late: 0, refused: 0, failed: 0, dropped: 0 }, served: { medMs: 2, p90Ms: 3, p99Ms: 5, maxMs: 9 }, refusals: null, samples: [], environment: { before: { load1: 6, cpus: 8 }, after: { load1: 6, cpus: 8, cooledAfterS: 5 } }, heap: { points: Array.from({ length: 8 }, (_, j) => ({ t: 2 * j, answered: 200 * j, heapUsed: 9e6 + perReq * 200 * j + ((j * 7919 + k * 31) % 5) * 300 })) } });
+  const run = (planted, clean, n = 5) => {
+    rmSync(out, { recursive: true, force: true });
+    for (const t of ['planted', 'clean']) mkdirSync(join(out, t), { recursive: true });
+    const twin = (per, k) => ({ steps: spec.steps.filter((s) => s.metric).map((s) => step(s, per(s.id, k), k)) });
+    writeFileSync(join(out, 'raw.json'), JSON.stringify({ profile: 'ci', fixture: 'L05', form: 'express', repeats: Array.from({ length: n }, (_, k) => ({ planted: twin(planted, k), clean: twin(clean, k) })) }));
+    const r = spawnSync(process.execPath, [join(ROOT, 'scripts', 'load', 'judge.js'), form, out], { encoding: 'utf8' });
+    return { code: r.status, text: (r.stdout + r.stderr).trim() };
+  };
+  const clean = (id) => ({ searchProducts: 0, suggest: 200, createOrder: 110, orderLines: 0, placeCart: 0 })[id];
+  const planted = (id, k) => ({ searchProducts: 370 + k, suggest: 200, createOrder: 186, orderLines: 0, placeCart: 2400 + 10 * k })[id];
+  const good = run(planted, clean);
+  ok('heap slope: the cache and the idempotency store are reported on a busy machine (gated on the slopes\' spread, not the load average); the decoys are not', good.code === 0 && /PASS  L05 express load planted: 2\/2/.test(good.text) && /PASS  L05 express load clean: 0/.test(good.text), good.text);
+  ok('  the expected miss (createOrder, about 1.7 times the clean twin) is not reported and does not fail the form', /EXPECTED  L05 express load planted: memory-growth STB-05 step createOrder, below the detection floor .*not found, as documented/.test(good.text), good.text);
+  const wide = run((id, k) => (id === 'placeCart' ? 1500 + 400 * k : planted(id, k)), clean);
+  ok('  slopes that spread 40% or more over the repeats are unreliable (info), exit 3', wide.code === 3 && /UNRELIABLE  L05 express load planted: memory-growth STB-05 step placeCart: timing unreliable .*spread of slopes/.test(wide.text), wide.text);
+  const same = run(clean, clean);
+  ok('  the control: twins that keep alike give no finding, and both defects are missed', same.code === 1 && /missed memory-growth step searchProducts/.test(same.text) && /missed memory-growth step placeCart/.test(same.text), same.text);
   rmSync(form, { recursive: true, force: true });
 }
 

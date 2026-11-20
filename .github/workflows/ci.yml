@@ -37,8 +37,9 @@ jobs:
         with:
           node-version: 22
       - run: npm ci
-      # The timing trial (docs/decisions.md, Q6): the timed forms run 5 pairs, so
-      # the judge can print the current rule and both candidates side by side.
+      # Candidate rule (c) (docs/decisions.md, Q8) needs 5 runs or starts after
+      # the warm-up: the timed forms run that many, so the judge can print the
+      # current rule and (c) side by side.
       - run: scripts/trace.sh
         env:
           ERLANG_TRIAL_RUNS: 6
@@ -83,5 +84,6 @@ jobs:
       - run: scripts/load.sh "$FORM"
         env:
           FORM: ${{ matrix.form }}
-          # The timing trial (docs/decisions.md, Q6): five pairs a form.
+          # Five pairs a form: the heap slope's spread, and candidate rule (c)
+          # (docs/decisions.md, Q8), printed beside the current rule.
           ERLANG_LOAD_PAIRS: 5

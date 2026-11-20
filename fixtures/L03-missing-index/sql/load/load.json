@@ -1,5 +1,5 @@
 {
-  "note": "Load form (research/load-harness.md) for L03's sql twins at 10x data: the median latency of each lookup, at 10 requests a second. A lookup on a column with no index scans its table, and the scan grows with the data; with the index it reads a few pages. A twin reports at three times the other's median and at least 5 ms. The lookups by primary key, by email (unique in both twins), by user's orders (indexed in both) and on the small countries table are the decoys. Each step runs at a fixed arrival rate (k6), each twin judged against the other over 3 repeats, every finding under the timing rule. defects are what the planted twin must report and the clean twin must not; every other judged step is a decoy, in both twins.",
+  "note": "Load form (research/load-harness.md) for L03's sql twins at 10x data: the shared blocks each lookup's statements read per request (hit or read from disk, from pg_stat_statements; a count, exempt from the timing rule; the owner, 19 November 2026), at 10 requests a second. A lookup on a column with no index scans its table, and the scan grows with the data; with the index it reads the pages its rows are on. A twin reports at three times the other's blocks per request and at least 100. Blocks replace the median latency, which missed recentOrders: the lookup returns about a hundred rows in both twins, so the index saves less time than it saves pages (2.8 times on CI run 44609939663). The lookups by primary key, by email (unique in both twins), by user's orders (indexed in both) and on the small countries table are the decoys. Each step runs at a fixed arrival rate (k6), each twin judged against the other over 3 repeats, every finding under the timing rule. defects are what the planted twin must report and the clean twin must not; every other judged step is a decoy, in both twins.",
   "fixture": "L03",
   "form": "sql",
   "judge": "compare",
@@ -15,9 +15,12 @@
       "route": "/users/:id/events",
       "rate": 10,
       "seconds": 10,
-      "metric": "median",
+      "metric": "blocks",
       "ratio": 3,
-      "floor": 5
+      "floor": 100,
+      "measure": [
+        "statements"
+      ]
     },
     {
       "id": "orderItems",
@@ -26,9 +29,12 @@
       "route": "/orders/:id/items",
       "rate": 10,
       "seconds": 10,
-      "metric": "median",
+      "metric": "blocks",
       "ratio": 3,
-      "floor": 5
+      "floor": 100,
+      "measure": [
+        "statements"
+      ]
     },
     {
       "id": "recentOrders",
@@ -37,9 +43,12 @@
       "route": "/orders/recent",
       "rate": 10,
       "seconds": 10,
-      "metric": "median",
+      "metric": "blocks",
       "ratio": 3,
-      "floor": 5
+      "floor": 100,
+      "measure": [
+        "statements"
+      ]
     },
     {
       "id": "oneUser",
@@ -48,9 +57,12 @@
       "route": "/users/:id",
       "rate": 10,
       "seconds": 10,
-      "metric": "median",
+      "metric": "blocks",
       "ratio": 3,
-      "floor": 5
+      "floor": 100,
+      "measure": [
+        "statements"
+      ]
     },
     {
       "id": "userByEmail",
@@ -59,9 +71,12 @@
       "route": "/users/by-email",
       "rate": 10,
       "seconds": 10,
-      "metric": "median",
+      "metric": "blocks",
       "ratio": 3,
-      "floor": 5
+      "floor": 100,
+      "measure": [
+        "statements"
+      ]
     },
     {
       "id": "userOrders",
@@ -70,9 +85,12 @@
       "route": "/users/:id/orders",
       "rate": 10,
       "seconds": 10,
-      "metric": "median",
+      "metric": "blocks",
       "ratio": 3,
-      "floor": 5
+      "floor": 100,
+      "measure": [
+        "statements"
+      ]
     },
     {
       "id": "countryByName",
@@ -81,9 +99,12 @@
       "route": "/countries/:name",
       "rate": 10,
       "seconds": 10,
-      "metric": "median",
+      "metric": "blocks",
       "ratio": 3,
-      "floor": 5
+      "floor": 100,
+      "measure": [
+        "statements"
+      ]
     }
   ],
   "defects": [

@@ -73,6 +73,28 @@
       ],
       "fix": "guided",
       "fixedInClean": "an LRU bounded by entries and age"
+    },
+    {
+      "id": "L05-4",
+      "check": "memory-growth",
+      "title": "An idempotency store in a Map keyed by the client's key, holding each cart, never emptied",
+      "severity": "warning",
+      "where": [
+        {
+          "file": "src/routes/checkout.js",
+          "line": 18,
+          "column": 3,
+          "symbol": "placeCart"
+        },
+        {
+          "file": "src/routes/checkout.js",
+          "line": 7,
+          "column": 7,
+          "symbol": "replies"
+        }
+      ],
+      "fix": "auto",
+      "fixedInClean": "an LRU bounded by entries and age"
     }
   ],
   "decoys": [
