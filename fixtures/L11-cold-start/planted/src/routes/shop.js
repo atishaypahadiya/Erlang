@@ -20,9 +20,9 @@ shop.get('/regions/:postcode', async function region(req, res) {
   res.json({ region: await regionOf(req.params.postcode), holiday: isHoliday(new Date().toISOString().slice(0, 10)) });
 });
 
-// GET /checkout/countries: the countries the shop sends to.
+// GET /checkout/countries: the countries the shop sends to, as the JSON made with the list.
 shop.get('/checkout/countries', async function countries(req, res) {
-  res.json(await countryList());
+  res.type('json').send(await countryList());
 });
 
 // GET /invoices/:id.pdf: an invoice as a PDF.
