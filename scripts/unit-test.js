@@ -198,6 +198,7 @@ console.log('\nThe load guard: loopback only, within caps');
   ok('checkTarget: any other host is refused, with no override', ['http://10.0.0.5:80/', 'http://example.com:80/', 'http://127.0.0.2:80/', 'http://0.0.0.0:80/', 'http://169.254.169.254:80/'].every((u) => refused(() => GUARD.checkTarget(u))));
   ok('checkTarget: https, and a URL with no port, are refused', refused(() => GUARD.checkTarget('https://127.0.0.1:443/')) && refused(() => GUARD.checkTarget('http://127.0.0.1/')));
   ok('profile: CI=true is ci, anything else local', GUARD.profile({ CI: 'true' }) === 'ci' && GUARD.profile({}) === 'local');
+  ok('profile: ci-long only in CI and only when asked; the same rate and step caps, a longer run', GUARD.profile({ CI: 'true', ERLANG_LOAD_PROFILE: 'ci-long' }) === 'ci-long' && GUARD.profile({ ERLANG_LOAD_PROFILE: 'ci-long' }) === 'local' && GUARD.CAPS['ci-long'].rate === GUARD.CAPS.ci.rate && GUARD.CAPS['ci-long'].stepSeconds === GUARD.CAPS.ci.stepSeconds && GUARD.CAPS['ci-long'].runSeconds > GUARD.CAPS.ci.runSeconds);
   ok('checkStep: within the local caps', !refused(() => GUARD.checkStep({ id: 's', rate: 150, seconds: 20 }, GUARD.CAPS.local)));
   ok('checkStep: over the local rate or step length is refused; CI allows more', refused(() => GUARD.checkStep({ id: 's', rate: 300, seconds: 10 }, GUARD.CAPS.local)) && refused(() => GUARD.checkStep({ id: 's', rate: 50, seconds: 30 }, GUARD.CAPS.local)) && !refused(() => GUARD.checkStep({ id: 's', rate: 300, seconds: 30 }, GUARD.CAPS.ci)));
   ok('checkStep: a rate or length that is not positive is refused', refused(() => GUARD.checkStep({ id: 's', rate: 0, seconds: 10 }, GUARD.CAPS.ci)) && refused(() => GUARD.checkStep({ id: 's', rate: 10 }, GUARD.CAPS.ci)));
@@ -361,8 +362,9 @@ console.log('\nThe load judge: a static info left unresolved takes the load verd
 
 console.log('\nTimed trace forms: unreliable is never a pass');
 {
-  // L11 (judge "starts"): first request after a start against the later ones,
-  // three starts per route. Recorded shape, synthetic numbers.
+  // L11 (judge "starts", with a warm-up): each route's first-request extra
+  // against the cheapest route's in the same process, five starts. Recorded
+  // shape, synthetic numbers.
   const form = join(OUT, 'trace-l11');
   rmSync(form, { recursive: true, force: true });
   for (const d of ['planted', 'clean', 'trace']) cpSync(join(ROOT, 'fixtures', 'L11-cold-start', d), join(form, d), { recursive: true });
@@ -370,7 +372,10 @@ console.log('\nTimed trace forms: unreliable is never a pass');
   const routes = [['region', 'GET', '/regions/P123', '/regions/:postcode'], ['countries', 'GET', '/checkout/countries', '/checkout/countries'], ['invoicePdf', 'GET', '/invoices/1.pdf', '/invoices/:id.pdf'], ['price', 'GET', '/prices/1', '/prices/:id'], ['createOrder', 'POST', '/orders', '/orders']];
   const cold = { region: 300, countries: 115, invoicePdf: 230 };
   const raw = (twin, env) => ({ image: null, started: '2026-11-19T00:00:00Z', environment: env, fixture: 'L11', form: 'express', twin, seed: {}, scales: { 1: { n: 1, tables: {}, requests: [], pages: [],
-    starts: routes.map(([id, method, path, route]) => ({ id, method, path, route, samples: [0, 1, 2].map((k) => ({ firstMs: (twin === 'planted' && cold[id] ? cold[id] : 5) + k, laterMs: [1, 1.1, 0.9, 1, 1.2] })) })) } } });
+    // Each start: a warm-up, then every route's first request in one process;
+    // the extra is first minus the later median (1 ms), the baseline the
+    // cheapest route's extra in that start.
+    starts: routes.map(([id, method, path, route]) => ({ id, method, path, route, samples: [0, 1, 2, 3, 4].map((k) => { const firstMs = (twin === 'planted' && cold[id] ? cold[id] : 5) + k; return { start: k, position: (routes.findIndex((r) => r[0] === id) - k + 5) % 5, warmupMs: 30, firstMs, laterMs: [1, 1.1, 0.9, 1, 1.2], extraMs: firstMs - 1, baselineMs: 4 + k }; }) })) } } });
   const run = (env) => {
     rmSync(out, { recursive: true, force: true });
     for (const t of ['planted', 'clean']) { mkdirSync(join(out, t), { recursive: true }); writeFileSync(join(out, t, 'raw.json'), JSON.stringify(raw(t, env))); }

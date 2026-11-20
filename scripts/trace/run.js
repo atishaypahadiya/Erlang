@@ -42,6 +42,7 @@ import { gunzipSync, brotliDecompressSync, inflateSync } from 'node:zlib';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { expand, routeOf, track, unreadBytes, unreadFields } from '../../lib/trace-judge.js';
 import { environment } from '../../lib/timing.js';
+const median = (xs) => { const s = [...xs].sort((a, b) => a - b); const m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
 import { waitForNoLock, active, describe as describeLock, EXIT_LOCKED } from '../../lib/itten-lock.js';
 import { CAPS, profile, checkRun, checkStep, Refused } from '../../lib/load-guard.js';
 import { scenario } from '../../lib/k6-scenario.js';
@@ -457,7 +458,35 @@ for (const twin of ['planted', 'clean']) {
       await app.stop();
     }
     // The first requests after a start, against later ones, one start per sample.
-    if (spec.starts && scale === spec.scales.at(-1)) {
+    if (spec.starts && spec.warmup && scale === spec.scales.at(-1)) {
+      // With a warm-up (L11): every route's first request in one fresh
+      // process per start, after one request to a neutral route, the routes
+      // in an order rotated by one each start so no route always comes
+      // first. Each route's first-request extra (its first request minus the
+      // median of the ones after it) is judged against the cheapest route's
+      // extra in the same process, the baseline; no other twin is needed.
+      const count = Math.max(...spec.starts.map((r) => r.samples ?? 3), Number(process.env.ERLANG_TRIAL_STARTS) || 0);
+      const byRoute = new Map(spec.starts.map((r) => [r.id, []]));
+      for (let k = 0; k < count; k++) {
+        const fresh = await serve(work, scale, log);
+        try {
+          await paced();
+          const w = await once(fresh, spec.warmup, spec.warmup.path);
+          if (!w.res || w.res.status >= 400) throw new Error(`warm-up ${spec.warmup.method} ${spec.warmup.path} answered ${w.res?.status ?? 'nothing'}`);
+          const order = spec.starts.map((_, j) => spec.starts[(j + k) % spec.starts.length]);
+          const seen = [];
+          for (const [position, r] of order.entries()) {
+            const runs = [];
+            for (let j = 0; j < (r.after ?? 5) + 1; j++) { await paced(); const { res, extra } = await once(fresh, r, expand(r.path, n), r.body === undefined ? undefined : expand(r.body, n)); if (!res || res.status >= 400) throw new Error(`start ${r.id}: ${r.method} answered ${res?.status ?? 'nothing'}`); runs.push({ ms: extra.ms }); }
+            const later = runs.slice(1).map((x) => x.ms);
+            seen.push({ id: r.id, sample: { start: k, position, warmupMs: w.extra.ms, firstMs: runs[0].ms, laterMs: later, extraMs: runs[0].ms - median(later) } });
+          }
+          const baseline = Math.max(0, Math.min(...seen.map((x) => x.sample.extraMs)));
+          for (const x of seen) byRoute.get(x.id).push({ ...x.sample, baselineMs: baseline });
+        } finally { await fresh.stop(); }
+      }
+      raw.scales[scale].starts = spec.starts.map((r) => ({ id: r.id, method: r.method, path: expand(r.path, n), route: r.route ?? null, samples: byRoute.get(r.id) }));
+    } else if (spec.starts && scale === spec.scales.at(-1)) {
       const starts = [];
       for (const r of spec.starts) {
         const samples = [];

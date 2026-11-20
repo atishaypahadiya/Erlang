@@ -206,6 +206,7 @@ Each form's `load/load.json` lists its steps (method, path, rate, seconds, the l
 | | Rate | A step | A run | Forms per run |
 |---|---|---|---|---|
 | CI (`CI=true`) | 500 a second | 60 s | 1,200 s of load | any |
+| CI, a form in its own job (`ERLANG_LOAD_PROFILE=ci-long`; L05) | 500 a second | 60 s | 2,400 s of load | one |
 | A workstation | 200 a second | 20 s | 600 s of load | one |
 
 **ITTEN's timing lock** is read before each step and every 5 seconds during it. A lock that appears mid-step stops k6 and voids that twin's repeat, which runs again from a fresh database and server once the lock is gone; after five interruptions of one repeat the run stops with exit 75. At the wait's limit the run stops with exit 75, naming the lock.

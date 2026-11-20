@@ -54,7 +54,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - id: list
-        run: echo "forms=$(cd fixtures && find . -path '*/load/load.json' | sed -e 's|^\./||' -e 's|/load/load.json$||' | sort | jq -Rsc 'split("\n") | map(select(length > 0))')" >> "$GITHUB_OUTPUT"
+        # L05 runs in its own job (load-long), so it is left out here.
+        run: echo "forms=$(cd fixtures && find . -path '*/load/load.json' | sed -e 's|^\./||' -e 's|/load/load.json$||' | grep -vx 'L05-memory-growth' | sort | jq -Rsc 'split("\n") | map(select(length > 0))')" >> "$GITHUB_OUTPUT"
 
   # The load harness (scripts/load.sh): one form per runner, its twins on
   # loopback against a PostgreSQL container pinned by digest, driven by k6 at
@@ -84,6 +85,31 @@ jobs:
       - run: scripts/load.sh "$FORM"
         env:
           FORM: ${{ matrix.form }}
+          # Five pairs a form: the heap slope's spread, and candidate rule (c)
+          # (docs/decisions.md, Q8), printed beside the current rule.
+          ERLANG_LOAD_PAIRS: 5
+
+  # L05's load form alone, under the ci-long caps (lib/load-guard.js): its
+  # 30 s heap steps would put it at the 1,200 s cap of a form's job.
+  load-long:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - run: npm ci
+      - name: Install k6 v2.3.0
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/k6.tar.gz" https://github.com/grafana/k6/releases/download/v2.3.0/k6-v2.3.0-linux-amd64.tar.gz
+          echo "39c3117b6af817592dcd0ce4242105c0a7af10948c2a425306f0be8f7a8a8ab1  $RUNNER_TEMP/k6.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/k6.tar.gz" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/k6-v2.3.0-linux-amd64" >> "$GITHUB_PATH"
+      - run: scripts/load.sh "$FORM"
+        env:
+          FORM: L05-memory-growth
+          ERLANG_LOAD_PROFILE: ci-long
           # Five pairs a form: the heap slope's spread, and candidate rule (c)
           # (docs/decisions.md, Q8), printed beside the current rule.
           ERLANG_LOAD_PAIRS: 5

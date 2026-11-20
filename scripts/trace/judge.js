@@ -463,9 +463,17 @@ function judgeTwin(twin, rule = 'current') {
   for (const r of spec.judge === 'starts' ? spec.starts : []) {
     const x = (hi.starts ?? []).find((q) => q.id === r.id);
     const later = x.samples.map((s) => median(s.laterMs));
-    const clears = x.samples.map((s, k) => s.firstMs - later[k] >= FIRST_EXTRA_MS && s.firstMs >= FIRST_RATIO * later[k]);
+    // With a warm-up (trace.json "warmup", L11): the route's first-request
+    // extra (first minus the median of the later ones) against the baseline,
+    // the cheapest route's extra in the same process after the warm-up, at
+    // FIRST_RATIO times and FIRST_EXTRA_MS above it; no other twin needed.
+    // Without one: the first request against the later ones of its start.
+    const warm = !!spec.warmup;
+    const clears = warm
+      ? x.samples.map((s) => s.extraMs >= FIRST_RATIO * s.baselineMs && s.extraMs - s.baselineMs >= FIRST_EXTRA_MS)
+      : x.samples.map((s, k) => s.firstMs - later[k] >= FIRST_EXTRA_MS && s.firstMs >= FIRST_RATIO * later[k]);
     const env0 = { before: raw.environment?.before ?? environment(), after: raw.environment?.after ?? environment() };
-    const firsts = x.samples.map((s) => s.firstMs);
+    const firsts = x.samples.map((s) => (warm ? s.extraMs : s.firstMs));
     let v;
     if (rule === 'c') { const c = ruleC({ clears, samples: firsts, ...env0 }); if (!c.holds) continue; v = c.timing; }
     else { if (!clears.every(Boolean)) continue; v = timingJudge({ samples: firsts, ...env0 }); }
@@ -474,7 +482,9 @@ function judgeTwin(twin, rule = 'current') {
     const steady = median(later);
     const trace = { judge: 'timing', path: x.path, timing: t, scales: [{ scale: HI, ms: Number(t.median.toFixed(1)) }] };
     if (t.reliable) emit({ check: 'cold-start', rule: 'STB-10', strength: 'SHOULD', severity: 'warning', method: r.method, route, trace,
-      message: `${r.method} ${route} took ${fmt(Math.round(t.median))} ms as the first request after a start (median of ${x.samples.length} starts, spread ${(t.spread * 100).toFixed(1)}%), against ${steady.toFixed(1)} ms for the requests after it: the first request waits for set-up the start could have done (STB-10).` });
+      message: warm
+        ? `${r.method} ${route}'s first request after a start took ${fmt(Math.round(t.median))} ms longer than the requests after it (median of ${x.samples.length} starts, spread ${(t.spread * 100).toFixed(1)}%), against ${fmt(Math.round(median(x.samples.map((q) => q.baselineMs))))} ms for the cheapest route in the same process after a warm-up request: the first request waits for set-up the start could have done (STB-10).`
+        : `${r.method} ${route} took ${fmt(Math.round(t.median))} ms as the first request after a start (median of ${x.samples.length} starts, spread ${(t.spread * 100).toFixed(1)}%), against ${steady.toFixed(1)} ms for the requests after it: the first request waits for set-up the start could have done (STB-10).` });
     else emit({ check: 'cold-start', rule: 'STB-10', strength: 'SHOULD', severity: 'info', unresolved: true, method: r.method, route, trace,
       message: `${r.method} ${route}'s first request after a start looked slow, but timing unreliable: ${t.why}.` });
   }
@@ -578,7 +588,7 @@ if (['loop', 'starts'].includes(spec.judge) && ['planted', 'clean'].every((t) =>
     const scale = raw.scales[Object.keys(raw.scales).sort((a, b) => b - a)[0]];
     const rows = spec.judge === 'loop'
       ? (scale.requests ?? []).map((q) => `${q.id}: blocked ms ${JSON.stringify(q.samples.slice(1).map((s) => Math.round(s.loopMaxMs ?? 0)))}, share of request ${JSON.stringify(q.samples.slice(1).map((s) => Number(((s.loopMaxMs ?? 0) / s.ms).toFixed(2))))}`)
-      : (scale.starts ?? []).map((q) => `${q.id}: first ms ${JSON.stringify(q.samples.map((s) => Math.round(s.firstMs)))}, first over later ${JSON.stringify(q.samples.map((s) => Number((s.firstMs / median_(s.laterMs)).toFixed(1))))}`);
+      : (scale.starts ?? []).map((q) => `${q.id}: first ms ${JSON.stringify(q.samples.map((s) => Math.round(s.firstMs)))}, ${spec.warmup ? `extra ms ${JSON.stringify(q.samples.map((s) => Math.round(s.extraMs)))}, baseline ms ${JSON.stringify(q.samples.map((s) => Math.round(s.baselineMs)))}, position ${JSON.stringify(q.samples.map((s) => s.position))}` : `first over later ${JSON.stringify(q.samples.map((s) => Number((s.firstMs / median_(s.laterMs)).toFixed(1))))}`}`);
     console.log(`      measured ${twin}: load ${e.before?.load1}/${e.before?.cpus} before, ${e.after?.load1}/${e.after?.cpus} after`);
     for (const row of rows) console.log(`        ${row}`);
   }

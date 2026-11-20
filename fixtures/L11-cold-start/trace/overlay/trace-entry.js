@@ -17,3 +17,10 @@ if (statSync(csv).size < 1_000_000) {
   writeFileSync(csv, lines.join('\n') + '\n');
 }
 export const { app } = await import('./src/app.js');
+
+// The neutral warm-up route (trace.json "warmup"): one read through the
+// twin's own pool, so the start-up cost every first request pays (Express's
+// first dispatch, pg's protocol and row parsing, the runtime's work still
+// going on after listen) is paid before any route is measured.
+const { pool } = await import('./src/db.js');
+app.get('/__trace/warm', async (req, res) => { await pool.query('select 1 as one'); res.json({ ok: true }); });

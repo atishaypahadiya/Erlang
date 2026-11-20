@@ -1,5 +1,5 @@
 {
-  "note": "Trace form (research/trace-harness.md) for L11: the static twins, served by scripts/trace.sh, from trace/overlay/trace-entry.js, which makes the work behind each lazily built value its real size (a 600,000-line postcode file; a PDF module that builds its tables when it loads, replacing the twin's tiny stand-in; 50,000 countries in the seed) and then imports the twin's src/app.js unchanged. For each request, the twin is started three times, and each time the first request is timed against the five after it. A first request at least 20 ms and three times slower than the median of the later ones, in every start, waits for set-up (STB-10). A timing: it counts only under the timing lock (the three first-request times), and is otherwise info (timing unreliable). defects are what the planted twin must report and the clean twin must not; every other request is a decoy, in both twins.",
+  "note": "Trace form (research/trace-harness.md) for L11: the static twins, served by scripts/trace.sh, from trace/overlay/trace-entry.js, which makes the work behind each lazily built value its real size (a 600,000-line postcode file; a PDF module that builds its tables when it loads, replacing the twin's tiny stand-in; 50,000 countries in the seed), adds a neutral warm-up route (GET /__trace/warm, one read through the twin's own pool) and then imports the twin's src/app.js unchanged. Each start is a fresh process: one warm-up request, then every route's first request and the five after it, in an order rotated by one each start. A route's extra is its first request minus the median of the later ones; the baseline is the cheapest route's extra in the same process. A route whose extra is at least three times the baseline and 20 ms above it, in every start, waits for set-up (STB-10). No other twin is needed: without the warm-up, the start-up cost every first request pays (Express's first dispatch, pg's protocol and row parsing, the runtime's work still going on after listen) landed on the decoy /prices/:id in the planted twin, which listens almost at once, and not in the clean twin, whose eager loading pays it before listening (26 to 32 ms against 17 to 19 ms on CI run 44663453947). A timing: it counts only under the timing lock (the extras over the starts), and is otherwise info (timing unreliable). defects are what the planted twin must report and the clean twin must not; every other request is a decoy, in both twins.",
   "fixture": "L11",
   "form": "express",
   "judge": "starts",
@@ -15,7 +15,7 @@
       "method": "GET",
       "path": "/regions/P123",
       "route": "/regions/:postcode",
-      "samples": 3,
+      "samples": 5,
       "after": 5
     },
     {
@@ -23,7 +23,7 @@
       "method": "GET",
       "path": "/checkout/countries",
       "route": "/checkout/countries",
-      "samples": 3,
+      "samples": 5,
       "after": 5
     },
     {
@@ -31,7 +31,7 @@
       "method": "GET",
       "path": "/invoices/1.pdf",
       "route": "/invoices/:id.pdf",
-      "samples": 3,
+      "samples": 5,
       "after": 5
     },
     {
@@ -39,7 +39,7 @@
       "method": "GET",
       "path": "/prices/1",
       "route": "/prices/:id",
-      "samples": 3,
+      "samples": 5,
       "after": 5
     },
     {
@@ -48,7 +48,7 @@
       "path": "/orders",
       "route": "/orders",
       "body": {},
-      "samples": 3,
+      "samples": 5,
       "after": 5
     }
   ],
@@ -74,5 +74,9 @@
       "route": "/invoices/:id.pdf",
       "linked": true
     }
-  ]
+  ],
+  "warmup": {
+    "method": "GET",
+    "path": "/__trace/warm"
+  }
 }
