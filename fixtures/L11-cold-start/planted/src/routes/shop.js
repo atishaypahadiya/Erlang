@@ -10,8 +10,8 @@ export const shop = Router();
 let renderer;
 // Exchange rates, refreshed at most once a minute.
 let fx = null;
-// Prices formatted for display.
-let money = null;
+let units = null; // The currencies a price is shown in, made on first use.
+const money = new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' }); // Built when the module loads.
 // Delivery days, read from the database when the module loads.
 const deliveryDays = (await pool.query('select region, days from delivery_days')).rows;
 
@@ -35,9 +35,9 @@ shop.get('/invoices/:id.pdf', async function invoicePdf(req, res) {
 // GET /prices/:id: a price in pounds and euros.
 shop.get('/prices/:id', async function price(req, res) {
   if (!fx || Date.now() - fx.at > 60_000) fx = { at: Date.now(), eur: (await pool.query("select rate from fx where pair = 'GBPEUR'")).rows[0].rate };
-  if (!money) money = new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' });
+  if (!units) units = ['GBP', 'EUR'];
   const { rows } = await pool.query('select price_pence from products where id = $1', [req.params.id]);
-  res.json({ gbp: money.format(rows[0].price_pence / 100), eur: Math.round(rows[0].price_pence * fx.eur) / 100 });
+  res.json({ gbp: money.format(rows[0].price_pence / 100), eur: Math.round(rows[0].price_pence * fx.eur) / 100, units });
 });
 
 // POST /orders: an order, with a note from the shop's default when none is given.

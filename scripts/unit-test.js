@@ -305,6 +305,9 @@ console.log('\nThe load judge (compare), on recorded runs');
   ok('compare with a background: the loop held while signup runs, avatars late while login and export run, reported on those routes, not on /avatars', good.code === 0 && !/avatars/.test(routes), `${good.text}\n${routes}`);
   const alike = run(() => ['signup', 'login', 'export', 'codes'].map((id) => step(id, 4)));
   ok('  the control: twins whose avatars are never late give nothing, and the three defects are missed', alike.code === 1 && /0\/3/.test(alike.text), alike.text);
+  const near = run((k) => [step('signup', 180 + k), step('login', 190 + k), step('export', 150 + k), step('codes', 40)]);
+  ok('  decoy margin: a decoy step late 0.2 of the time, under the 0.3 floor but over half of it and over half the ratio, is not reported yet fails the form', near.code === 1 && /^DECOY  L09 express load planted step codes \(late-share\): .*OVER in 5 of 5/m.test(near.text) && /^FAIL  L09 express load decoy margin/m.test(near.text) && !/decoy reported/.test(near.text), near.text);
+  ok('  with every decoy under half way, the margin lines pass', /^DECOY  L09 express load clean step codes \(late-share\): \[0\.02,/m.test(good.text) && !/OVER/.test(good.text), good.text);
   rmSync(form, { recursive: true, force: true });
 }
 
@@ -413,6 +416,31 @@ console.log('\nAbsolute waits: the delay the code declares, not a clock');
   const has = (ms, via) => got?.some(([m, v]) => m === ms && v === via);
   ok('timers: node:timers/promises setTimeout and scheduler.wait, node:timers setTimeout and the global setTimeout are each recorded with their declared delay',
     has(31, 'timers/promises setTimeout') && has(32, 'scheduler.wait') && has(33, 'setTimeout') && has(34, 'setTimeout'), r.stdout.trim() || r.stderr.trim());
+}
+
+console.log('\nMeasured and declared values; the release gate\'s comparison');
+{
+  const { text, measured: m, declared: d } = await import('../lib/values.js');
+  const inner = text`${m('ms', 12.4, '12')} ms`;
+  const t = text`GET /x {cached} took ${inner} and ${m('ms', 3)} more, under ${d('barMs', 20)} ms`;
+  ok('values: the message shows each value; the template names it; repeated names are numbered; literal braces are doubled',
+    t.message === 'GET /x {cached} took 12 ms and 3 more, under 20 ms' && t.template === 'GET /x {{cached}} took {ms} ms and {ms2} more, under {barMs} ms' && JSON.stringify(t.values) === '{"measured":{"ms":12.4,"ms2":3},"declared":{"barMs":20}}', JSON.stringify(t));
+  const dir = join(OUT, 'compare');
+  const write = (run, findings) => { mkdirSync(join(dir, run, 'F', 'planted'), { recursive: true }); writeFileSync(join(dir, run, 'F', 'planted', 'report.json'), JSON.stringify({ schema: 'report/1', started: run, findings })); };
+  const f = (ms, { bar = 20, severity = 'warning', template } = {}) => {
+    const x = text`took ${m('ms', ms)} ms, over ${d('barMs', bar)} ms`;
+    return { check: 'c', severity, fingerprint: 'c|x', measured: ['message', 'erlang.values.measured', 'erlang.trace.samples'], message: x.message, erlang: { values: x.values, template: template ?? x.template, trace: { judge: 'timing', samples: [ms, ms + 1] } } };
+  };
+  const cmp = (a, b) => { rmSync(dir, { recursive: true, force: true }); write('a', a); write('b', b); const r = spawnSync(process.execPath, [join(ROOT, 'scripts', 'compare-reports.js'), join(dir, 'a'), join(dir, 'b')], { encoding: 'utf8' }); return { code: r.status, text: r.stdout + r.stderr }; };
+  ok('compare: findings that differ only in what each lists as measured (its message\'s numbers, measured values, evidence) are identical', cmp([f(31)], [f(47)]).code === 0);
+  const declared = cmp([f(31)], [f(31, { bar: 25 })]);
+  ok('  a declared value that differs is a difference', declared.code === 1 && /erlang\.values\.declared\.barMs/.test(declared.text), declared.text);
+  const template = cmp([f(31)], [f(31, { template: 'took {ms} ms, far over {barMs} ms' })]);
+  ok('  a message template that differs is a difference', template.code === 1 && /erlang\.template/.test(template.text), template.text);
+  ok('  a severity that differs, or a finding in one run only, is a difference', cmp([f(31)], [f(31, { severity: 'info' })]).code === 1 && cmp([f(31)], []).code === 1);
+  const bare = (msg) => ({ check: 'c', severity: 'error', fingerprint: 'c|y', measured: ['message'], message: msg });
+  ok('  with no template, "message" in measured compares the message with its numbers masked (finding/1)', cmp([bare('3 attempts in 1,002 ms')], [bare('4 attempts in 998 ms')]).code === 0 && cmp([bare('3 attempts in 1,002 ms')], [bare('3 tries in 1,002 ms')]).code === 1);
+  rmSync(dir, { recursive: true, force: true });
 }
 
 console.log('\nHeadroom: the clean twin under 0.2 busy at every step');
@@ -540,12 +568,30 @@ console.log('\nTimed trace forms: unreliable is never a pass');
   };
   const calm = run({ before: { load1: 0.5, cpus: 8 }, after: { load1: 0.5, cpus: 8 } });
   ok('starts on a calm machine: the three cold routes are failing findings, and the form passes (exit 0)', calm.code === 0 && /^PASS  L11 express planted: 3\/3/m.test(calm.text), calm.text);
-  ok('  the report says which warm-up ran: the 404 fallback, which warms the framework but not the database driver', /^WARM-UP  L11 express planted: fallback, GET \/__erlang\/warm-up-not-found, a path that does not exist \(answered 404\): warms the framework, not the database driver/m.test(calm.text) && /a 404: it warms the framework, not the database driver/.test(calm.text + readFileSync(join(out, 'planted', 'report.json'), 'utf8')) && JSON.parse(readFileSync(join(out, 'planted', 'report.json'), 'utf8')).erlang.trace.warmup.source === 'fallback', calm.text);
-  ok('  after the 404 fallback, the baseline is the 404 request\'s own time, and the finding says so', /against \d+ ms for the warm-up request itself, in the same process after a request to a path that does not exist/.test(JSON.stringify(readdirSync(out).flatMap((t) => (existsSync(join(out, t, 'report.json')) ? [readFileSync(join(out, t, 'report.json'), 'utf8')] : [])))), calm.text);
+  ok('  the report says which warm-up ran: the 404 fallback (a GET and a JSON POST to a random path), which warms the framework and its body parser but not the database driver', /^WARM-UP  L11 express planted: fallback, GET then POST with a small JSON body to \/__erlang\/warm-up-not-found and a random suffix, a path that does not exist \(the GET answered 404\): warms the framework and its body parser, not the database driver/m.test(calm.text) && /a 404: they warm the framework and its body parser, not the database driver/.test(calm.text + readFileSync(join(out, 'planted', 'report.json'), 'utf8')) && JSON.parse(readFileSync(join(out, 'planted', 'report.json'), 'utf8')).erlang.trace.warmup.source === 'fallback', calm.text);
+  ok('  after the 404 fallback, the baseline is the 404 request\'s own time, and the finding says so', /against \d+ ms for the warm-up request itself, in the same process after requests to a path that does not exist \(GET, then POST with a small JSON body/.test(JSON.stringify(readdirSync(out).flatMap((t) => (existsSync(join(out, t, 'report.json')) ? [readFileSync(join(out, t, 'report.json'), 'utf8')] : [])))), calm.text);
   const busy = run({ before: { load1: 6, cpus: 8 }, after: { load1: 6, cpus: 8 } });
   ok('  the same run on a busy machine: still failing findings, the load averages recorded only (the relative rule)', busy.code === 0 && /^PASS  L11 express planted: 3\/3/m.test(busy.text), busy.text);
   const mixed = run({ before: { load1: 0.5, cpus: 8 }, after: { load1: 0.5, cpus: 8 } }, (id, k) => id === 'region' && k === 2);
   ok('  a start where a cold route did not clear: UNRELIABLE with samples and why, exit 3, never SKIP or PASS', mixed.code === 3 && /^UNRELIABLE  L11 express planted: cold-start STB-10 GET \/regions\/:postcode: timing unreliable \(samples .*4 of 5 repeats cleared the threshold/m.test(mixed.text) && !/^PASS  L11 express planted/m.test(mixed.text), mixed.text);
+  // Decoy margin: the clean twin's price at 10 ms over the baseline in one
+  // start (half the 20 ms bar: kept), then at 12 (over half, and over half
+  // the 3x ratio: the form fails, though nothing is reported).
+  const nudge = (extra) => {
+    rmSync(out, { recursive: true, force: true });
+    for (const t of ['planted', 'clean']) {
+      const r = raw(t, { before: { load1: 0.5, cpus: 8 }, after: { load1: 0.5, cpus: 8 } });
+      if (t === 'clean') { const q = r.scales[1].starts.find((x) => x.id === 'price').samples[2]; q.extraMs = q.baselineMs + extra; q.firstMs = q.extraMs + 1; }
+      mkdirSync(join(out, t), { recursive: true });
+      writeFileSync(join(out, t, 'raw.json'), JSON.stringify(r));
+    }
+    const r = spawnSync(process.execPath, [join(ROOT, 'scripts', 'trace', 'judge.js'), form, out], { encoding: 'utf8' });
+    return { code: r.status, text: (r.stdout + r.stderr).trim() };
+  };
+  const half = nudge(10);
+  ok('  decoy margin: a clean decoy 10 ms over the baseline, half the bar, keeps its margin', half.code === 0 && /^DECOY  L11 express clean GET \/prices\/:id: ms over the baseline \[0,0,10,0,0\]/m.test(half.text) && !/OVER/.test(half.text), half.text);
+  const over = nudge(12);
+  ok('  at 12 ms (over half the bar, and over half the ratio) the form fails on the margin, with nothing reported', over.code === 1 && /^FAIL  L11 express clean: decoy margin/m.test(over.text) && /^PASS  L11 express clean: 0 error/m.test(over.text), over.text);
   rmSync(form, { recursive: true, force: true });
 }
 

@@ -1,5 +1,5 @@
 {
-  "note": "Trace form (research/trace-harness.md) for L11: the static twins, served by scripts/trace.sh, from trace/overlay/trace-entry.js, which makes the work behind each lazily built value its real size (a 600,000-line postcode file; a PDF module that builds its tables when it loads, replacing the twin's tiny stand-in; 50,000 countries in the seed), adds a neutral warm-up route (GET /__trace/warm, one read through the twin's own pool) and then imports the twin's src/app.js unchanged. Each start is a fresh process: one warm-up request, then every route's first request and the five after it, in an order rotated by one each start. A route's extra is its first request minus the median of the later ones; the baseline is the cheapest route's extra in the same process. A route whose extra is at least three times the baseline and 20 ms above it, in every start, waits for set-up (STB-10). No other twin is needed: without the warm-up, the start-up cost every first request pays (Express's first dispatch, pg's protocol and row parsing, the runtime's work still going on after listen) landed on the decoy /prices/:id in the planted twin, which listens almost at once, and not in the clean twin, whose eager loading pays it before listening (26 to 32 ms against 17 to 19 ms on CI run 44663453947). A timing, judged under the relative timing rule (docs/decisions.md, Q8): a finding when every start clears the bar, none when no start does, and info (timing unreliable) for a mix; spread and load average are recorded only. defects are what the planted twin must report and the clean twin must not; every other request is a decoy, in both twins.",
+  "note": "Trace form (research/trace-harness.md) for L11: the static twins, served by scripts/trace.sh, from trace/overlay/trace-entry.js, which makes the work behind each lazily built value its real size (a 600,000-line postcode file; a PDF module that builds its tables when it loads, replacing the twin's tiny stand-in; 50,000 countries in the seed), adds a neutral warm-up route (POST /__trace/warm with a JSON body, read by the twin's own body parser, then one read through the twin's own pool) and then imports the twin's src/app.js unchanged. Each start is a fresh process: one warm-up request, then every route's first request and the five after it, in an order rotated by one each start. A route's extra is its first request minus the median of the later ones; the baseline is the cheapest route's extra in the same process. A route whose extra is at least three times the baseline and 20 ms above it, in every start, waits for set-up (STB-10). No other twin is needed: without the warm-up, the start-up cost every first request pays (Express's first dispatch, pg's protocol and row parsing, the runtime's work still going on after listen) landed on the decoy /prices/:id in the planted twin, which listens almost at once, and not in the clean twin, whose eager loading pays it before listening (26 to 32 ms against 17 to 19 ms on CI run 44663453947). A timing, judged under the relative timing rule (docs/decisions.md, Q8): a finding when every start clears the bar, none when no start does, and info (timing unreliable) for a mix; spread and load average are recorded only. defects are what the planted twin must report and the clean twin must not; every other request is a decoy, in both twins. The warm-up is a POST with a JSON body (the owner, 20 November 2026): its first body loads the body parser's character decoders, 2 to 6 ms of POST /orders' first request otherwise. GET /prices/:id's currency formatter is built when the module loads in both twins (an Intl.NumberFormat, about 9 ms on first use); the cheap value made on first use there (decoy L11-d2) is now its list of currencies. Acceptance (fixtures/PLAN.md): every decoy sample at or under 10 ms over the baseline, half the 20 ms bar, locally and in all five CI runs of the release commit. The fixture database runs with synchronous_commit = off (trace.json \"database\", set on the database, not in app code): a commit returns before its WAL is flushed, so POST /orders' insert no longer waits on the disk, whose flush made its later requests swing from 3 to 14 ms.",
   "fixture": "L11",
   "form": "express",
   "judge": "starts",
@@ -76,7 +76,13 @@
     }
   ],
   "warmup": {
-    "method": "GET",
-    "path": "/__trace/warm"
+    "method": "POST",
+    "path": "/__trace/warm",
+    "body": {
+      "warm": true
+    }
+  },
+  "database": {
+    "synchronous_commit": "off"
   }
 }

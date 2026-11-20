@@ -1,5 +1,5 @@
 {
-  "note": "Trace form (research/trace-harness.md) for L09: the static twins, served by scripts/trace.sh, from trace/overlay/trace-entry.js, which fills the twin's in-memory store and imports its src/app.js unchanged. The loop probe records the longest stretch the event loop could not run during each request (monitorEventLoopDelay). A request blocks the loop when that stretch is at least 50 ms and at least 70% of the request's own time, in the five runs after the warm-up; the share keeps out work that yields, such as bcryptjs's asynchronous compare, which runs in slices of up to 100 ms. A timing, judged under the relative timing rule (docs/decisions.md, Q8): a finding when every run clears the bar, none when no run does, and info (timing unreliable) for a mix; spread and load average are recorded only. GET /avatars/1 is driven but not a defect here: a synchronous read of a small file holds the loop for well under a millisecond, which no trace can tell from the asynchronous read, so L09-4 is confirmed statically only. POST /login (L09-2) compares with bcryptjs's compareSync in the planted twin, and with crypto.scrypt on the worker pool in the clean twin (docs/decisions.md, Q4). PUT /password (L09-5) is confirmed statically only: bcryptjs's asynchronous hash yields between its 100 ms slices, so its longest stretch is under 70% of the request, which the judge keeps out on purpose. defects are what the planted twin must report and the clean twin must not; every other request is a decoy, in both twins.",
+  "note": "Trace form (research/trace-harness.md) for L09: the static twins, served by scripts/trace.sh, from trace/overlay/trace-entry.js, which fills the twin's in-memory store and imports its src/app.js unchanged. The loop probe records the longest stretch the event loop could not run during each request (monitorEventLoopDelay). A request blocks the loop when that stretch is at least 50 ms and at least 70% of the request's own time, in the five runs after the warm-up; the share keeps out work that yields, such as bcryptjs's asynchronous compare, which runs in slices of up to 100 ms. A timing, judged under the relative timing rule (docs/decisions.md, Q8): a finding when every run clears the bar, none when no run does, and info (timing unreliable) for a mix; spread and load average are recorded only. GET /avatars/1 is driven but not a defect here: a synchronous read of a small file holds the loop for well under a millisecond, which no trace can tell from the asynchronous read, so L09-4 is confirmed statically only. POST /login (L09-2) compares with bcryptjs's compareSync in the planted twin, and with crypto.scrypt on the worker pool in the clean twin (docs/decisions.md, Q4). PUT /password (L09-5) is confirmed statically only: bcryptjs's asynchronous hash yields between its 100 ms slices, so its longest stretch is under 70% of the request, which the judge keeps out on purpose. It is an expected miss of the trace form (the owner, 20 November 2026), not a decoy: the planted twin is not required to report it, and the decoy margin does not apply to it. defects are what the planted twin must report and the clean twin must not; every other request is a decoy, in both twins.",
   "fixture": "L09",
   "form": "express",
   "judge": "loop",
@@ -84,6 +84,15 @@
       "method": "GET",
       "route": "/export",
       "linked": true
+    }
+  ],
+  "expectedMisses": [
+    {
+      "check": "blocking-work",
+      "rule": "OVL-12",
+      "method": "PUT",
+      "route": "/password",
+      "floor": "work that yields between slices: bcryptjs's asynchronous hash holds the loop about 100 ms at a time, under 70% of the request (L09-5, confirmed statically only)"
     }
   ]
 }

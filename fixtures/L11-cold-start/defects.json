@@ -87,7 +87,7 @@
     },
     {
       "id": "L11-d2",
-      "title": "A cheap value made on first use",
+      "title": "A cheap value made on first use: the list of currencies a price is shown in",
       "where": {
         "file": "src/routes/shop.js",
         "line": 38,

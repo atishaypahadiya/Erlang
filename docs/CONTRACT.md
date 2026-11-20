@@ -125,14 +125,38 @@ No finding of `erlang` rests on a timing. Where the trace and load harnesses jud
 A commit is tagged `v*` only when the release gate holds for it (`scripts/release-gate.sh`, run before tagging and again by CI on the tag, job `release-gate`):
 
 1. Its last five completed CI runs are all green, with no red run among them. The tag's own run is left out; `workflow_dispatch` reruns the workflow on the same commit.
-2. The trace reports those runs uploaded (artifact `trace-reports`) are identical across them, and identical to a local trace run on a second machine, apart from what a machine measures rather than counts (`scripts/compare-reports.js`):
-   - `started`;
-   - timings, load averages and heap readings (`timing`, `environment`, `ms`, `times`, `heapBytesPerRequest`, `cooledAfterS`);
-   - in a finding judged on a measurement (trace judge `timing` or `memory`), its `slope`, `r2` and `message`, which quote the measured numbers.
+2. The trace reports those runs uploaded (artifact `trace-reports`) are identical across them, and identical to a local trace run on a second machine, apart from what each finding itself lists as measured (`scripts/compare-reports.js`, which decides nothing per check):
+   - the paths in the finding's `measured` (finding/1), including its measured values (`erlang.values.measured`) and the measured fields of its evidence (`erlang.trace`, `erlang.load`);
+   - `message`, when the finding carries its template, which is compared instead; without one, the message is compared with its numbers masked, as finding/1 reads `"message"`;
+   - the report's `started` and `environment`.
 
-   Everything else must match: the set of findings, their severities, fingerprints, locations, counts and fixes. A timed verdict that is a finding in one run and info in another is a difference.
+   Everything else must match: the set of findings, their verdicts, rules, severities, fingerprints, locations, fixes, declared values and message templates. A timed verdict that is a finding in one run and info in another is a difference.
 
 If the gate does not hold, nothing is tagged; the differing form is reported with each run's measured values.
+
+## Fixture database settings
+
+A trace form may set its fixture database's settings in trace.json `database`, applied with `alter database` when the database is made, so that every session of either twin has them and no app code sets them. Only `synchronous_commit` (`on`, `off` or `local`) is allowed. L11 runs with `synchronous_commit = off`: a commit returns before its WAL reaches disk, so a write's time no longer swings with the flush (the owner, 20 November 2026). Nothing the trace judges depends on durability.
+
+## Warm-ups and collections on a real project
+
+Before measuring the first requests after a start (judge `starts`, cold-start), the trace harness sends a warm-up to the fresh process, then forces a full garbage collection (the process runs with `--expose-gc`), so that garbage left by the start is not collected inside a measured request. The warm-up is the form's own route (trace.json `warmup`), else the app's (`erlang.config.json` `warmup`, a GET or HEAD), else the fallback: a GET, then a POST with a small JSON body (`{"erlang":"warm-up"}`), to `/__erlang/warm-up-not-found-` followed by a random suffix new at every start, which cannot match a real route. Both are expected to answer 404 (anything under 500 is accepted); they warm the framework's routing and its body parser, and change nothing. The GET's own time is the baseline. They do not warm the database driver: a route whose first request pays for it can look cold until a `warmup` route is configured. (The owner, 20 November 2026.)
+
+## Measured and declared values (proposed for finding/1)
+
+A finding of the trace and load harnesses carries the values its message quotes, apart from the message (`lib/values.js`; the owner, 20 November 2026):
+
+- `erlang.values.measured`: what this run measured (times, counts, slopes, shares, attempts so far), which differs between runs of the same subject;
+- `erlang.values.declared`: what the code, the fixture or the judge declares (a wait the code asks for, a bar, a scale, a step's rate), the same in every run;
+- `erlang.template`: the message with each value replaced by `{name}` (a literal brace written `{{` or `}}`). The message is the template with the values filled in, so the template is the same in every run that reaches the same verdict.
+
+finding/1's `measured` lists, for such a finding, `message`, `erlang.values.measured` and each measured field of its evidence. A comparison then needs no knowledge of any check: it drops what `measured` lists and compares the rest in full, the template and the declared values included.
+
+**Proposal for the shared format.** Move `values` (`measured`, `declared`) and `template` from ERLANG's extension into finding/1, beside `measured`, as optional fields: a specialist that fills them lets any consumer compare findings across runs by template and declared values, and show measured values as data rather than parse them out of prose. finding/1's `measured` paths stay as they are; `"message"` in them keeps its meaning (the numbers in the message) for findings without a template. To agree with ITTEN and KERCKHOFFS before it changes the shared schema.
+
+## Decoy margin
+
+In a timed form, every decoy stays at most half way to the bar it is judged against (the owner, 20 November 2026), so that a slower or busier machine cannot carry it over. A decoy is every judged route or step of the clean twin, and every one of the planted twin that is neither a planted defect nor an expected miss. A verdict needs every condition of its bar, so a decoy is held off by any one of them, and a sample keeps its margin when some condition is at most half its threshold: the event loop's longest stretch (50 ms) or its share of the request (0.7); a first request's extra over the baseline (20 ms) or its ratio to it (3); in a load step, the floor or the ratio to the other twin. The trace and load judges print each decoy's samples on a `DECOY` line and fail the form when one is over (`fixtures/PLAN.md`, Acceptance test).
 
 ## Determinism
 

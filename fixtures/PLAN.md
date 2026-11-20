@@ -254,6 +254,8 @@ Known false negatives:
 ## Acceptance test
 
 - **L09's export under load** (the owner, 20 November 2026): on GET /export's step, the clean twin's late share is at most 0.05 in every pair of every run, and the planted twin clears three times the clean twin's in every pair. Enforced by the load judge (`cleanMax` in `L09-blocking-work/load/load.json`). If the fixture misses it, the numbers are reported and the fixture is not adjusted again.
+- **L11's decoys at a start** (the owner, 20 November 2026): every decoy sample (a route's first-request extra over the baseline, in a twin where it is not a planted defect) is at or under 10 ms, half the 20 ms bar, in the local trace run and in all five CI runs of the release commit. The bar stays at 20 ms. If a sample is over, the numbers are reported and the fixture is not adjusted again.
+- **Decoy margin, every timed form** (the owner, 20 November 2026): the fixture suite fails when any decoy's sample in a timed verdict is over half the bar it is judged against (`scripts/trace/judge.js` and `scripts/load/judge.js`, the DECOY lines).
 - **Headroom** (the owner, 20 November 2026): at every load step's rate, each clean twin's main thread is busy at most 0.2 of the time (the step's rate times its main-thread time per request, plus its background's), measured by `scripts/trace.sh --headroom` and judged by `scripts/headroom/judge.js`.
 
 - Every planted defect is reported by its check, through every channel the registry lists for it. Recall 100%.

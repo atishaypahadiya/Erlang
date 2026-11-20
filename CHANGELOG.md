@@ -58,7 +58,8 @@ Request handlers are found in Express, Fastify, `node:http` and Next.js.
 
 - **Count-based verdicts** never depend on the machine's load.
 - **The relative timing rule (c):** for a verdict comparing two conditions measured together. Five repeats; a finding when every repeat clears the threshold, none when no repeat does, and unreliable (info, never failing) for a mix. Pairs alternate twin order. Spread and load average are recorded but gate nothing.
-- **Absolute waits** (L06's fixed wait between retries): judged on the delay the code declares, recorded from the twin's timers, not on a clock; no load average or spread gates it.
+- **Absolute waits** (L06's fixed wait between retries): judged on the delay the code declares, recorded from the twin's timers (the global `setTimeout`, `node:timers`, and `node:timers/promises`' `setTimeout` and `scheduler.wait`), not on a clock; no load average or spread gates it. Retries spaced apart with no timer seen are info, "wait not observed", never clean.
+- **Decoy margin:** in a timed form, every decoy stays at most half way to its bar on at least one of the bar's conditions; the judges print it on `DECOY` lines and fail the form when it is not.
 - **ITTEN's timing lock:** the harnesses generate no load while it is active. They wait and log every wait (phase, taken, expires, duration). A lock in an unknown format counts as active.
 
 ### Exit codes
@@ -77,7 +78,11 @@ Error and warning fail a run; info never does.
 
 ### Release gate
 
-A `v*` tag is cut only when its commit's last five CI runs are green and their trace reports are identical apart from what a machine measures, as is a local run on a second machine (`docs/CONTRACT.md`, "Release gate"; `scripts/release-gate.sh`). CI checks the gate again on the tag.
+A `v*` tag is cut only when its commit's last five CI runs are green and their trace reports are identical apart from what each finding lists as measured, as is a local run on a second machine (`docs/CONTRACT.md`, "Release gate"; `scripts/release-gate.sh`). CI checks the gate again on the tag.
+
+### Findings
+
+A trace or load finding carries the values its message quotes: `erlang.values.measured` (what the run measured), `erlang.values.declared` (what the code, the fixture or the judge declares) and `erlang.template` (the message with each value as `{name}`). finding/1's `measured` lists the measured paths, so runs are compared by template and declared values without knowing any check. Proposed for the shared format (`docs/CONTRACT.md`).
 
 ### Known limits
 
@@ -93,7 +98,8 @@ A `v*` tag is cut only when its commit's last five CI runs are green and their t
   | L11 trace, warm-up form | decoy above the baseline | 4 to 7 ms | 20 |
   | L11 trace, fallback form | clean twin's largest extra | 12 ms | 25 |
 
-- **The 404 fallback** warms the framework, not the database driver. A route whose first request pays for the driver can look cold until a `warmup` route is configured.
+- **Routes that commit on L11:** a route whose first request writes to the database can read "timing unreliable" in the cold-start trace, because each commit waits on the disk's flush and that wait varies by several milliseconds. The remedy for a trace database is `synchronous_commit = off`, set on the database (trace.json `database`), not in app code; L11's fixture runs with it.
+- **The 404 fallback** (a GET and a POST with a small JSON body to a random path that cannot match a route) warms the framework and its body parser, not the database driver. A route whose first request pays for the driver can look cold until a `warmup` route is configured.
 - **Stacks:**
   - Node only; no Python set yet.
   - Database access through `pg` and Prisma; Drizzle is not read.
@@ -108,6 +114,7 @@ A `v*` tag is cut only when its commit's last five CI runs are green and their t
   - growth, repeated work and set-up done through code ERLANG cannot follow;
   - an unknown Prisma version (batching assumed).
 - **L09-4** (a small synchronous file read) is confirmed statically only, because no trace can separate it from the asynchronous read.
+- **L09-5** (bcryptjs's asynchronous hash on every password change) is an expected miss of the trace: it yields between 100 ms slices, so its longest stretch is under the 70% share the trace requires. It is confirmed statically.
 - **L12** (load shedding) is testable only under load.
 - **No load forms for the Prisma twins,** by decision.
 - **The held-out set** has not been planted or scored, so accuracy outside the fixtures is not measured.

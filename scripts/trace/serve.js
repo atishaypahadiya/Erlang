@@ -108,6 +108,9 @@ process.on('message', async (m) => {
       dbModule ??= existsSync(join(root, 'src', 'db.js')) ? await import(pathToFileURL(join(root, 'src', 'db.js')).href) : {};
       const p = dbModule.pool;
       reply(p ? { total: p.totalCount, idle: p.idleCount, waiting: p.waitingCount } : { error: 'no pool exported from src/db.js' });
+    } else if (m.probe === 'gc') {
+      if (global.gc) { global.gc(); global.gc(); }
+      reply({ collected: !!global.gc });
     } else if (m.probe === 'memory') {
       if (global.gc) { global.gc(); global.gc(); }
       const u = process.memoryUsage();

@@ -18,9 +18,20 @@ if (statSync(csv).size < 1_000_000) {
 }
 export const { app } = await import('./src/app.js');
 
-// The neutral warm-up route (trace.json "warmup"): one read through the
-// twin's own pool, so the start-up cost every first request pays (Express's
-// first dispatch, pg's protocol and row parsing, the runtime's work still
-// going on after listen) is paid before any route is measured.
+// The neutral warm-up route (trace.json "warmup"): a POST with a JSON body,
+// read by the twin's own body parser, and one read through the twin's own
+// pool, so the start-up cost every first request pays (Express's first
+// dispatch, the body parser's first body, which loads its character
+// decoders, pg's protocol and row parsing, the runtime's work still going
+// on after listen) is paid before any route is measured. It also reads the
+// orders and settings tables, writing nothing.
 const { pool } = await import('./src/db.js');
-app.get('/__trace/warm', async (req, res) => { await pool.query('select 1 as one'); res.json({ ok: true }); });
+app.post('/__trace/warm', async (req, res) => {
+  // Reads, never writes, of the tables POST /orders uses, so the database
+  // connection holds them before any route is measured (the owner, 20
+  // November 2026).
+  await pool.query('select 1 as one');
+  await pool.query("select value from settings where name = 'default_note'");
+  await pool.query('select id, note from orders order by id limit 1');
+  res.json({ ok: req.body?.warm === true });
+});

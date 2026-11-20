@@ -375,12 +375,18 @@
         },
         "waits": {
           "type": "array",
-          "items": { "type": "number", "minimum": 0 },
+          "items": {
+            "type": "number",
+            "minimum": 0
+          },
           "description": "judge attempts: the delay the twin declared before each retry (ms), as its code asked for it (a timer), in every run; a declared value, not a measured time."
         },
         "gaps": {
           "type": "array",
-          "items": { "type": "number", "minimum": 0 },
+          "items": {
+            "type": "number",
+            "minimum": 0
+          },
           "description": "judge attempts, info 'wait not observed': the measured gaps between attempts (ms) in which no declared timer was seen."
         },
         "r2": {
@@ -713,6 +719,45 @@
           }
         }
       }
+    },
+    "values": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "measured",
+        "declared"
+      ],
+      "description": "The values the message quotes (lib/values.js; docs/CONTRACT.md, measured and declared values): what this run measured, which differs between runs of the same subject, and what the code, the fixture or the judge declares, which does not. Each by the name the template gives it.",
+      "properties": {
+        "measured": {
+          "type": "object",
+          "additionalProperties": {
+            "type": [
+              "number",
+              "string",
+              "array",
+              "boolean",
+              "null"
+            ]
+          }
+        },
+        "declared": {
+          "type": "object",
+          "additionalProperties": {
+            "type": [
+              "number",
+              "string",
+              "array",
+              "boolean",
+              "null"
+            ]
+          }
+        }
+      }
+    },
+    "template": {
+      "type": "string",
+      "description": "The message with each of its values replaced by {name} (a literal brace written {{ or }}): the same in every run that reaches the same verdict. The message is the template with values filled in."
     }
   },
   "anyOf": [

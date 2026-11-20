@@ -28,6 +28,7 @@ import { ruleC, environment, REASON, waitVerdict } from '../../lib/timing.js';
 const median_ = (xs) => { const s = [...xs].sort((a, b) => a - b); const m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
 import { growth, rowsGrowth, repeated, linkStatic, normalizeSql, routePattern, fmt, COMPRESS_MIN, UNREAD, ROWS, SLOPE, slopeOf, MIN_POINTS } from '../../lib/trace-judge.js';
 import { exitOnCrash } from '../../lib/crash.js';
+import { text, measured as M, declared as D, plain as plainText, asText, measuredPaths } from '../../lib/values.js';
 
 exitOnCrash('trace judge');
 
@@ -42,6 +43,9 @@ const spec = JSON.parse(readFileSync(join(formDir, 'trace', 'trace.json'), 'utf8
 const [LO, HI] = [spec.scales[0], spec.scales.at(-1)];
 const TEXT = /json|text|javascript|xml/;
 const NO_WAIT_MS = 20;
+// RTY-01: still retrying when the harness gave up, with at least this many
+// attempts in every run.
+const MIN_ATTEMPTS = 3;
 const RULE_TMO = 'TMO-01';
 // judge "loop": a request blocks the loop when the longest stretch the loop
 // could not run is at least BLOCK_MS and at least BLOCK_SHARE of the
@@ -140,16 +144,19 @@ function judgeTwin(twin) {
     seen.add(key);
     const ratio = Number.isFinite(trace.ratio) ? Number(trace.ratio.toFixed(3)) : null;
     const ev = { ...trace, ratio, ...(trace.slope !== undefined && trace.slope !== null ? { slope: Number(trace.slope.toFixed(3)) } : {}) };
+    // The message, its template and its values (lib/values.js).
+    const said = asText(message);
     if (s) {
       // A static finding left at info because reading could not decide
       // (unresolved) takes the trace's severity: the trace decided it.
       const resolves = s.severity === 'info' && s.erlang?.unresolved && severity !== 'info';
       const { unresolved: _u, ...ext } = s.erlang ?? {};
+      const full = text`${plainText(s.message)} Traced on seeded data: ${said}`;
       out.push(finding({
         specialist: 'erlang', check, severity: resolves ? severity : s.severity, fingerprint: s.fingerprint,
-        message: `${s.message} Traced on seeded data: ${message}`,
+        message: full.message, measured: measuredPaths(full, 'trace', ev),
         detection: [...new Set([...s.detection, 'trace'])], rules: s.rules, where: s.where,
-        extension: { ...(resolves ? ext : s.erlang), trace: ev },
+        extension: { ...(resolves ? ext : s.erlang), trace: ev, values: full.values, template: full.template },
       }));
       return;
     }
@@ -160,9 +167,9 @@ function judgeTwin(twin) {
     const fix = at.length && note ? { kind: 'guided', locations: at, note } : null;
     out.push(finding({
       specialist: 'erlang', check, severity, fingerprint: fingerprint(check, `${method} ${route}`, rule, ...(trace.host ? [trace.host] : []), 'trace'),
-      message, detection: ['trace'], rules: [rule],
+      message: said.message, measured: measuredPaths(said, 'trace', ev), detection: ['trace'], rules: [rule],
       where: { endpoints: [{ method, route }], ...(at.length ? { locations: at.map((l) => ({ ...l, column: 1 })) } : {}) },
-      extension: { strength, ...(unresolved ? { unresolved: true } : {}), ...(fix ? { fix } : {}), trace: ev },
+      extension: { strength, ...(unresolved ? { unresolved: true } : {}), ...(fix ? { fix } : {}), trace: ev, values: said.values, template: said.template },
     }));
   }
 
@@ -177,7 +184,7 @@ function judgeTwin(twin) {
     if (!a.stable || !b.stable) {
       const check = spec.judge === 'rows' ? 'unbounded-query' : 'n-plus-one';
       emit({ check, rule: RULE[check][0], strength: RULE[check][1], severity: 'info', unresolved: true, method: r.method, route,
-        message: `${r.method} ${route} gave different counts in its two measured runs at ${a.stable ? HI : LO}x, so nothing is judged.`,
+        message: text`${r.method} ${route} gave different counts in its two measured runs at ${D('scale', a.stable ? HI : LO)}x, so nothing is judged.`,
         trace: { judge: spec.judge, unstable: true, path: b.path, scales: [scaleOf(LO, a, { statements: calls(a), rows: rows(a) }), scaleOf(HI, b, { statements: calls(b), rows: rows(b) })] } });
       continue;
     }
@@ -190,25 +197,25 @@ function judgeTwin(twin) {
       const check = /^\s*(insert|update|delete|merge)\b/i.test(stmt.query) ? 'per-row-writes' : 'n-plus-one';
       const [rule, strength] = RULE[check];
       const what = check === 'per-row-writes' ? 'write' : 'statement';
-      const counts = `${fmt(calls(a))} statements for ${fmt(a.items ?? 0)} items at ${LO}x, ${fmt(calls(b))} for ${fmt(b.items ?? 0)} at ${HI}x`;
+      const counts = text`${M('statements', calls(a), fmt(calls(a)))} statements for ${D('items', a.items ?? 0, fmt(a.items ?? 0))} items at ${D('scale', LO)}x, ${M('statements', calls(b), fmt(calls(b)))} for ${D('items', b.items ?? 0, fmt(b.items ?? 0))} at ${D('scale', HI)}x`;
       const trace = { judge: 'statements', slope: g.k, ratio: g.ratio, statement: stmt.query, path: b.path, scales: [scaleOf(LO, a, { statements: calls(a) }), scaleOf(HI, b, { statements: calls(b) })] };
       if (g.verdict === 'grows') emit({ check, rule, strength, severity: SEVERITY[strength], method: r.method, route, statement: stmt.query, trace,
-        message: `${r.method} ${route} sends one more ${what} per item: ${counts} (${fmt(g.k)} per item). The ${what} that repeats: ${stmt.query}. Counted with pg_stat_statements (DAT-07).` });
+        message: text`${r.method} ${route} sends one more ${what} per item: ${counts} (${M('perItem', g.k, fmt(g.k))} per item). The ${what} that repeats: ${stmt.query}. Counted with pg_stat_statements (DAT-07).` });
       else emit({ check, rule, strength, severity: 'info', unresolved: true, method: r.method, route, statement: stmt.query, trace,
-        message: `${r.method} ${route} sends more statements at ${HI}x (${counts}), but fewer than ${fmt(SLOPE)} per extra item: neither a fixed count nor one per item. The statement that grows most: ${stmt.query}.` });
+        message: text`${r.method} ${route} sends more statements at ${D('scale', HI)}x (${counts}), but fewer than ${D('perItem', SLOPE, fmt(SLOPE))} per extra item: neither a fixed count nor one per item. The statement that grows most: ${stmt.query}.` });
     } else {
       const g = rowsGrowth({ r1: rows(a), r10: rows(b) });
       if (g.verdict === 'bounded') continue;
       const top = Object.entries(b.statements).sort((x, y) => y[1].rows - x[1].rows || (x[0] < y[0] ? -1 : 1))[0]?.[0] ?? '';
       const [rule, strength] = RULE['unbounded-query'];
-      const counts = `${fmt(rows(a))} rows at ${LO}x and ${fmt(rows(b))} at ${HI}x`;
+      const counts = text`${M('rows', rows(a), fmt(rows(a)))} rows at ${D('scale', LO)}x and ${M('rows', rows(b), fmt(rows(b)))} at ${D('scale', HI)}x`;
       const trace = { judge: 'rows', ratio: g.ratio, statement: top, path: b.path, streamed: b.streamed, scales: [scaleOf(LO, a, { rows: rows(a) }), scaleOf(HI, b, { rows: rows(b) })] };
       if (g.verdict === 'grows' && !b.streamed) emit({ check: 'unbounded-query', rule, strength, severity: SEVERITY[strength], method: r.method, route, statement: top, trace,
-        message: `${r.method} ${route} reads ${counts}: the read grows with the table (${fmt(g.ratio)} times). The statement: ${top}. Counted with pg_stat_statements (DAT-07).` });
+        message: text`${r.method} ${route} reads ${counts}: the read grows with the table (${M('ratio', g.ratio, fmt(g.ratio))} times). The statement: ${top}. Counted with pg_stat_statements (DAT-07).` });
       else emit({ check: 'unbounded-query', rule, strength, severity: 'info', unresolved: true, method: r.method, route, statement: top, trace,
         message: b.streamed
-          ? `${r.method} ${route} reads ${counts}, but streams its response: counts cannot tell whether the rows are held in memory at once.`
-          : `${r.method} ${route} reads ${counts}: more at ${HI}x, but less than ${ROWS} times as many.` });
+          ? text`${r.method} ${route} reads ${counts}, but streams its response: counts cannot tell whether the rows are held in memory at once.`
+          : text`${r.method} ${route} reads ${counts}: more at ${D('scale', HI)}x, but less than ${D('ratio', ROWS)} times as many.` });
     }
   }
 
@@ -222,12 +229,12 @@ function judgeTwin(twin) {
       const pa = per(a);
       const pb = per(b);
       const route = [...pb.keys()].sort().reduce((best, k) => ((pb.get(k) - (pa.get(k) ?? 0)) > (pb.get(best) - (pa.get(best) ?? 0)) ? k : best));
-      const counts = `${a.calls.length} calls for ${a.items} items at ${LO}x, ${b.calls.length} for ${b.items} at ${HI}x`;
+      const counts = text`${M('calls', a.calls.length)} calls for ${D('items', a.items)} items at ${D('scale', LO)}x, ${M('calls', b.calls.length)} for ${D('items', b.items)} at ${D('scale', HI)}x`;
       emit({ check: 'oversized-payload', rule: 'DAT-01', strength: 'MUST', severity: g.verdict === 'grows' ? 'error' : 'info', unresolved: g.verdict !== 'grows', method: 'GET', route,
         trace: { judge: 'calls', page: p.id, slope: g.k, ratio: g.ratio, scales: [{ scale: LO, items: a.items, calls: a.calls.length }, { scale: HI, items: b.items, calls: b.calls.length }] },
         message: g.verdict === 'grows'
-          ? `The ${p.id} page view makes one more call per item it shows: ${counts}. The call that repeats: GET ${route}.`
-          : `The ${p.id} page view makes more calls at ${HI}x (${counts}), but fewer than one per extra item.` });
+          ? text`The ${p.id} page view makes one more call per item it shows: ${counts}. The call that repeats: GET ${route}.`
+          : text`The ${p.id} page view makes more calls at ${D('scale', HI)}x (${counts}), but fewer than one per extra item.` });
     }
     const byRoute = new Map();
     for (const c of b.calls) byRoute.set(c.route, [...(byRoute.get(c.route) ?? []), c]);
@@ -237,7 +244,7 @@ function judgeTwin(twin) {
         const big = plain.reduce((m, c) => (c.bytes > m.bytes ? c : m));
         emit({ check: 'oversized-payload', rule: 'DAT-08', strength: 'SHOULD', severity: 'warning', method: 'GET', route,
           trace: { judge: 'bytes', page: p.id, path: big.path, encoding: null, scales: [{ scale: HI, bytes: big.bytes }] },
-          message: `GET ${route} sent ${fmt(big.bytes)} bytes of ${big.contentType.split(';')[0]} with no Content-Encoding, though the request offered gzip and br (${p.id} page view, ${HI}x).` });
+          message: text`GET ${route} sent ${M('bytes', big.bytes, fmt(big.bytes))} bytes of ${big.contentType.split(';')[0]} with no Content-Encoding, though the request offered gzip and br (${p.id} page view, ${D('scale', HI)}x).` });
       }
       const json = cs.reduce((s, c) => s + c.jsonBytes, 0);
       const unread = cs.reduce((s, c) => s + c.unreadBytes, 0);
@@ -245,7 +252,7 @@ function judgeTwin(twin) {
         const fields = [...new Set(cs.flatMap((c) => c.unreadFields))].sort();
         emit({ check: 'oversized-payload', rule: 'DAT-04', strength: 'SHOULD', severity: 'warning', method: 'GET', route,
           trace: { judge: 'fields', page: p.id, unreadFields: fields, scales: [{ scale: HI, jsonBytes: json, unreadBytes: unread }] },
-          message: `The ${p.id} page view never reads ${fields.join(', ')} from GET ${route}: ${fmt(unread)} of its ${fmt(json)} bytes of JSON (${(Math.floor((1000 * unread) / json) / 10).toFixed(1)}%, ${HI}x).` });
+          message: text`The ${p.id} page view never reads ${fields.join(', ')} from GET ${route}: ${M('unreadBytes', unread, fmt(unread))} of its ${M('jsonBytes', json, fmt(json))} bytes of JSON (${M('unreadShare', Math.floor((1000 * unread) / json) / 1000, (Math.floor((1000 * unread) / json) / 10).toFixed(1))}%, ${D('scale', HI)}x).` });
       }
     }
   }
@@ -264,7 +271,7 @@ function judgeTwin(twin) {
       const held = during(x);
       const trace = { judge: 'pool', path: x.path, scales: [{ scale: HI, checkedOutDuringCall: held }] };
       if (held >= 1 && x.stable) emit({ check: 'pool-exhaustion', rule: 'STB-09', strength: 'SHOULD', severity: 'warning', method: r.method, route, trace,
-        message: `${r.method} ${route} had ${held} pooled connection${held === 1 ? '' : 's'} checked out while its outbound call (${x.upstream[0].method} ${x.upstream[0].host}${x.upstream[0].path}) was answered: the connection waits on the other service (STB-09). Counted from the twin's pool.` });
+        message: text`${r.method} ${route} had ${M('held', held, `${held} pooled connection${held === 1 ? '' : 's'}`)} checked out while its outbound call (${x.upstream[0].method} ${x.upstream[0].host}${x.upstream[0].path}) was answered: the connection waits on the other service (STB-09). Counted from the twin's pool.` });
       else if (held >= 1) emit({ check: 'pool-exhaustion', rule: 'STB-09', strength: 'SHOULD', severity: 'info', unresolved: true, method: r.method, route, trace, message: `${r.method} ${route} held a connection across its outbound call in one run but not the other.` });
     }
     if ((r.probes ?? []).includes('pool-after')) {
@@ -272,7 +279,7 @@ function judgeTwin(twin) {
       const ks = runs.map(kept);
       const trace = { judge: 'pool', path: x.path, scales: [{ scale: HI, keptAfterResponse: ks[0] }] };
       if (ks.every((k) => k >= 1)) emit({ check: 'pool-exhaustion', rule: 'STB-08', strength: 'MUST', severity: 'error', method: r.method, route, trace,
-        message: `${r.method} ${route}${x.status >= 400 ? `, answering ${x.status},` : ''} left ${ks[0]} pooled connection${ks[0] === 1 ? '' : 's'} checked out after its response: the connection is never released on that path, and the pool runs out after as many such requests as it holds (STB-08). Counted from the twin's pool.` });
+        message: text`${r.method} ${route}${x.status >= 400 ? `, answering ${x.status},` : ''} left ${M('kept', ks[0], `${ks[0]} pooled connection${ks[0] === 1 ? '' : 's'}`)} checked out after its response: the connection is never released on that path, and the pool runs out after as many such requests as it holds (STB-08). Counted from the twin's pool.` });
       else if (ks.some((k) => k >= 1)) emit({ check: 'pool-exhaustion', rule: 'STB-08', strength: 'MUST', severity: 'info', unresolved: true, method: r.method, route, trace, message: `${r.method} ${route} kept a connection after its response in one run but not the other.` });
     }
   }
@@ -300,20 +307,20 @@ function judgeTwin(twin) {
       const attempts = runs.map((q) => hitsOf(q).length);
       const gapsOf = (q) => { const t = hitsOf(q).map((h) => h.at); return t.slice(1).map((v, k) => v - t[k]); };
       const base = { judge: 'attempts', host, path: x.path, scales: [{ scale: HI, attempts: attempts[0], timedOut: !!x.timedOut }] };
-      if (runs.every((q) => q.timedOut) && attempts.every((a) => a >= 3)) {
+      if (runs.every((q) => q.timedOut) && attempts.every((a) => a >= MIN_ATTEMPTS)) {
         emit({ check: 'retry-policy', rule: 'RTY-01', strength: 'MUST', severity: 'error', method: r.method, route, symbol, trace: base,
-          message: `${r.method} ${route} was still retrying ${host} when the harness gave up after ${fmt(r.timeoutMs)} ms: ${attempts[0]} attempts so far, with the stub failing every one (${status}). Nothing caps the attempts (RTY-01).` });
+          message: text`${r.method} ${route} was still retrying ${host} when the harness gave up after ${D('timeoutMs', r.timeoutMs, fmt(r.timeoutMs))} ms: ${M('attempts', attempts[0])} attempts so far, at least ${D('minAttempts', MIN_ATTEMPTS)} in every run, with the stub failing every one (${status}). Nothing caps the attempts (RTY-01).` });
         continue;
       }
       if (status >= 400 && status < 500 && ![408, 429].includes(status)) {
         if (attempts.every((a) => a > 1)) emit({ check: 'retry-policy', rule: 'RTY-06', strength: 'MUST', severity: 'warning', method: r.method, route, symbol, trace: base,
-          message: `${r.method} ${route} sent ${attempts[0]} requests to ${host} for one user request, though the first was answered ${status}, a reply that cannot succeed when sent again (RTY-06).` });
+          message: text`${r.method} ${route} sent ${M('attempts', attempts[0])} requests to ${host} for one user request, though the first was answered ${status}, a reply that cannot succeed when sent again (RTY-06).` });
         continue;
       }
       const gaps = runs.map(gapsOf);
       if (attempts.every((a) => a >= 2) && gaps.every((g) => g.every((v) => v < NO_WAIT_MS))) {
         emit({ check: 'retry-policy', rule: 'RTY-03', strength: 'MUST', severity: 'error', method: r.method, route, symbol, trace: base,
-          message: `${r.method} ${route} retried ${host} ${attempts[0] - 1} times with no wait: every gap between attempts was under ${NO_WAIT_MS} ms (${gaps[0].map((v) => fmt(Math.round(v))).join(', ')} ms), with the stub answering ${status} (RTY-03).` });
+          message: text`${r.method} ${route} retried ${host} ${M('retries', attempts[0] - 1)} times with no wait: every gap between attempts was under ${D('noWaitMs', NO_WAIT_MS)} ms (${M('gaps', gaps[0].map((v) => Number(v.toFixed(1))), gaps[0].map((v) => fmt(Math.round(v))).join(', '))} ms), with the stub answering ${status} (RTY-03).` });
         continue;
       }
       // The same wait each time, judged on the delays the twin declared, not
@@ -328,9 +335,9 @@ function judgeTwin(twin) {
       let v;
       try { v = waitVerdict([x.warm, ...runs].filter(Boolean).map((q) => ({ attempts: hitsOf(q).map((h) => h.at), timers: q.timers })), NO_WAIT_MS); } catch (e) { throw new Error(`${twin}: ${r.id}: ${e.message}: run scripts/trace.sh again`); }
       if (v.kind === 'unobserved') emit({ check: 'retry-policy', rule: 'RTY-03', strength: 'MUST', severity: 'info', unresolved: true, method: r.method, route, symbol, trace: { ...base, gaps: v.unseen.map((g) => Number(g.gap.toFixed(1))) },
-        message: `Wait not observed: ${r.method} ${route} spaced ${v.unseen.length} of its retries of ${host} ${NO_WAIT_MS} ms or more apart (${v.unseen.map((g) => fmt(Math.round(g.gap))).join(', ')} ms) with no timer the harness records in the gap (setTimeout, global or from node:timers, or node:timers/promises' setTimeout or scheduler.wait), so whether the wait is fixed is not judged.` });
+        message: text`Wait not observed: ${r.method} ${route} spaced ${M('unseen', v.unseen.length)} of its retries of ${host} ${D('noWaitMs', NO_WAIT_MS)} ms or more apart (${M('gaps', v.unseen.map((g) => Number(g.gap.toFixed(1))), v.unseen.map((g) => fmt(Math.round(g.gap))).join(', '))} ms) with no timer the harness records in the gap (setTimeout, global or from node:timers, or node:timers/promises' setTimeout or scheduler.wait), so whether the wait is fixed is not judged.` });
       else if (v.kind === 'fixed') emit({ check: 'retry-policy', rule: 'RTY-03', strength: 'MUST', severity: 'error', method: r.method, route, symbol, trace: { ...base, waits: v.waits },
-        message: `${r.method} ${route} waited the same time before each retry of ${host}: ${fmt(v.waits[0])} ms, as its code declares it, in all ${v.waits.length} waits: no jitter, so clients that failed together retry together (RTY-03).` });
+        message: text`${r.method} ${route} waited the same time before each retry of ${host}: ${D('waitMs', v.waits[0], fmt(v.waits[0]))} ms, as its code declares it, in all ${M('waits', v.waits.length)} waits: no jitter, so clients that failed together retry together (RTY-03).` });
     }
   }
 
@@ -346,7 +353,7 @@ function judgeTwin(twin) {
     const host = Object.entries(r.upstream?.hosts ?? {}).find(([, a]) => a.hang)?.[0] ?? r.waitsOn ?? null;
     const trace = { judge: 'hang', path: x.path, ...(host ? { host } : {}), ...(r.symbol ? { symbol: r.symbol } : {}), scales: [{ scale: HI, timedOut: runs.every((q) => q.timedOut), ms: x.ms }] };
     if (runs.every((q) => q.timedOut)) emit({ check: 'no-timeout', rule: RULE_TMO, strength: 'MUST', severity: 'error', method: r.method, route, symbol: r.symbol ?? null, trace,
-      message: `${r.symbol ?? route} was still waiting on ${host ?? 'its call'} when the harness gave up after ${fmt(r.timeoutMs)} ms, with the other side accepting the call and never answering: nothing ends the wait (TMO-01).` });
+      message: text`${r.symbol ?? route} was still waiting on ${host ?? 'its call'} when the harness gave up after ${D('timeoutMs', r.timeoutMs, fmt(r.timeoutMs))} ms, with the other side accepting the call and never answering: nothing ends the wait (TMO-01).` });
     else if (runs.some((q) => q.timedOut)) emit({ check: 'no-timeout', rule: RULE_TMO, strength: 'MUST', severity: 'info', unresolved: true, method: r.method, route, symbol: r.symbol ?? null, trace,
       message: `${r.symbol ?? route} timed out in one run but not the other.` });
   }
@@ -371,9 +378,9 @@ function judgeTwin(twin) {
     const share = Math.min(...shares);
     const trace = { judge: 'timing', path: x.path, timing: t, scales: [{ scale: HI, ms: Number(t.median.toFixed(1)) }] };
     if (t.reliable) emit({ check: 'blocking-work', rule: 'OVL-12', strength: 'SHOULD', severity: 'warning', method: r.method, route, trace,
-      message: `${r.method} ${route} held the event loop for ${fmt(Math.round(t.median))} ms at a stretch (median of ${blocked.length}, spread ${(t.spread * 100).toFixed(1)}%), at least ${Math.round(share * 100)}% of the request's own time: no other request is served meanwhile (OVL-12).` });
+      message: text`${r.method} ${route} held the event loop for ${M('stretchMs', Number(t.median.toFixed(1)), fmt(Math.round(t.median)))} ms at a stretch (median of ${D('runs', blocked.length)}, spread ${M('spread', Number(t.spread.toFixed(3)), (t.spread * 100).toFixed(1))}%), at least ${M('share', Number(share.toFixed(3)), Math.round(share * 100))}% of the request's own time: no other request is served meanwhile (OVL-12).` });
     else emit({ check: 'blocking-work', rule: 'OVL-12', strength: 'SHOULD', severity: 'info', unresolved: true, method: r.method, route, trace,
-      message: `${r.method} ${route} appeared to hold the event loop for most of the request, but timing unreliable: ${t.why}.` });
+      message: text`${r.method} ${route} appeared to hold the event loop for most of the request, but timing unreliable: ${M('why', t.why)}.` });
   }
 
   // ---- Connections opened per request (judge "connections", L13): new
@@ -387,7 +394,7 @@ function judgeTwin(twin) {
     const opened = [x.first ?? x.other ?? x, x].map((q) => q.connections?.opened ?? 0);
     const trace = { judge: 'connections', path: x.path, ...(r.symbol ? { symbol: r.symbol } : {}), scales: [{ scale: HI, connections: opened[1] }] };
     if (opened.every((o) => o >= 1)) emit({ check: 'pool-sizing', rule: 'CAP-08', strength: 'MUST', severity: 'error', method: r.method, route, symbol: r.symbol ?? null, trace,
-      message: `${r.method} ${route} opened ${opened[1]} new connection${opened[1] === 1 ? '' : 's'} to the database on each request after the first, ${x.connections.open} open once it answered: a pool made per request, whose connections every request adds (CAP-08). Counted at the database, in pg_stat_activity.` });
+      message: text`${r.method} ${route} opened ${M('opened', opened[1], `${opened[1]} new connection${opened[1] === 1 ? '' : 's'}`)} to the database on each request after the first, ${M('open', x.connections.open)} open once it answered: a pool made per request, whose connections every request adds (CAP-08). Counted at the database, in pg_stat_activity.` });
   }
 
   // ---- The same read again (judge "cache", L10), from the statement log
@@ -420,7 +427,7 @@ function judgeTwin(twin) {
       if (!within[1].has(k)) continue;
       emit({ check: 'no-cache', rule: 'DAT-06', strength: 'SHOULD', severity: 'warning', method: r.method, route, statement: s.sql,
         trace: { judge: 'repeat', path: x.path, statement: s.sql, scales: [{ scale: HI, times: s.times }] },
-        message: `${r.method} ${route} ran \`${s.sql}\` ${s.times} times in one request with the same parameters (${s.params ?? 'none'}) and no write between: every run after the first reads what the request already has (DAT-06). From the statement log.` });
+        message: text`${r.method} ${route} ran \`${s.sql}\` ${M('times', s.times)} times in one request with the same parameters (${s.params ?? 'none'}) and no write between: every run after the first reads what the request already has (DAT-06). From the statement log.` });
     }
     // Only a freshness lifetime lets a client or proxy skip the request; an
     // ETag alone (Express adds a weak one to every response) still has the
@@ -438,7 +445,7 @@ function judgeTwin(twin) {
       const ratio = b.blocks / a.blocks;
       emit({ check: 'no-cache', rule: 'DAT-06', strength: 'SHOULD', severity: 'warning', method: r.method, route, statement: s.sql,
         trace: { judge: 'repeat', path: x.path, statement: s.sql, ratio, scales: [{ scale: LO, rows: Math.round(a.rows) }, { scale: HI, rows: Math.round(b.rows) }] },
-        message: `${r.method} ${route} ran \`${s.sql}\` on every request with the same parameters, nothing cached in front and no freshness lifetime in its Cache-Control, and its cost grows with the table: ${fmt(Math.round(b.blocks))} blocks a call at ${HI}x against ${fmt(Math.round(a.blocks))} at ${LO}x, for the same ${Math.round(b.rows)} row(s) (DAT-06).` });
+        message: text`${r.method} ${route} ran \`${s.sql}\` on every request with the same parameters, nothing cached in front and no freshness lifetime in its Cache-Control, and its cost grows with the table: ${M('blocks', Math.round(b.blocks), fmt(Math.round(b.blocks)))} blocks a call at ${D('scale', HI)}x against ${M('blocks', Math.round(a.blocks), fmt(Math.round(a.blocks)))} at ${D('scale', LO)}x, for the same ${M('rows', Math.round(b.rows))} row(s) (DAT-06).` });
     }
   }
 
@@ -458,7 +465,7 @@ function judgeTwin(twin) {
     const route = r.route ?? r.path;
     const trace = { judge: 'memory', path: r.path, slope: Number(mine.slope.toFixed(1)), r2: Number(mine.r2.toFixed(3)), scales: x.points.map((p) => ({ scale: HI, requests: p.requests, heapBytesPerRequest: p.requests ? Number(((p.heapUsed - x.points[0].heapUsed) / p.requests).toFixed(1)) : 0 })) };
     if (mine.slope >= KEPT_BYTES && mine.r2 >= MIN_FIT) emit({ check: 'memory-growth', rule: 'STB-05', strength: 'SHOULD', severity: 'warning', method: r.method, route, trace,
-      message: `${r.method} ${route} kept about ${fmt(Math.round(mine.slope))} bytes of heap per request from request ${fmt(r.counts[0])} to ${fmt(r.counts.at(-1))}, each with a key of its own, measured after a full collection (least-squares slope over ${mine.points} points, R² ${mine.r2.toFixed(2)}; reported at ${KEPT_BYTES} bytes a request or more with R² ${MIN_FIT} or better): the heap grows with every new key and nothing gives it back (STB-05).` });
+      message: text`${r.method} ${route} kept about ${M('bytesPerRequest', Number(mine.slope.toFixed(1)), fmt(Math.round(mine.slope)))} bytes of heap per request from request ${D('from', r.counts[0], fmt(r.counts[0]))} to ${D('to', r.counts.at(-1), fmt(r.counts.at(-1)))}, each with a key of its own, measured after a full collection (least-squares slope over ${D('points', mine.points)} points, R² ${M('r2', Number(mine.r2.toFixed(3)), mine.r2.toFixed(2))}; reported at ${D('minBytes', KEPT_BYTES)} bytes a request or more with R² ${D('minR2', MIN_FIT)} or better): the heap grows with every new key and nothing gives it back (STB-05).` });
     SOAKS.push(`${twin} ${r.id}: ${mine.slope.toFixed(1)} B/request, R² ${mine.r2.toFixed(2)} (${mine.points} points)${mine.slope >= KEPT_BYTES && mine.r2 >= MIN_FIT ? ', reported' : ''}`);
   }
 
@@ -479,7 +486,7 @@ function judgeTwin(twin) {
     // Without one: the first request against the later ones of its start.
     const warm = x.samples.every((q) => Number.isFinite(q.extraMs));
     const wu = hi.warmup ?? null;
-    const warmedBy = !wu ? '' : wu.source === 'fallback' ? ` after a request to a path that does not exist (${wu.method} ${wu.path}, a 404: it warms the framework, not the database driver)` : ` after a warm-up request to ${wu.method} ${wu.path} (from ${wu.source})`;
+    const warmedBy = !wu ? '' : wu.source === 'fallback' ? ` after requests to a path that does not exist (GET, then POST with a small JSON body, to ${wu.path} and a random suffix, a 404: they warm the framework and its body parser, not the database driver)` : ` after a warm-up request to ${wu.method} ${wu.path} (from ${wu.source})`;
     const clears = warm
       ? x.samples.map((s) => s.extraMs >= FIRST_RATIO * s.baselineMs && s.extraMs - s.baselineMs >= FIRST_EXTRA_MS)
       : x.samples.map((s, k) => s.firstMs - later[k] >= FIRST_EXTRA_MS && s.firstMs >= FIRST_RATIO * later[k]);
@@ -494,10 +501,10 @@ function judgeTwin(twin) {
     const trace = { judge: 'timing', path: x.path, timing: t, ...(wu ? { warmup: { source: wu.source, method: wu.method, path: wu.path } } : {}), scales: [{ scale: HI, ms: Number(t.median.toFixed(1)) }] };
     if (t.reliable) emit({ check: 'cold-start', rule: 'STB-10', strength: 'SHOULD', severity: 'warning', method: r.method, route, trace,
       message: warm
-        ? `${r.method} ${route}'s first request after a start took ${fmt(Math.round(t.median))} ms longer than the requests after it (median of ${x.samples.length} starts, spread ${(t.spread * 100).toFixed(1)}%), against ${fmt(Math.round(median(x.samples.map((q) => q.baselineMs))))} ms for ${x.samples.every((q) => q.baselineOf === 'warm-up') ? 'the warm-up request itself, in the same process' : 'the cheapest route in the same process'}${warmedBy}: the first request waits for set-up the start could have done (STB-10).`
-        : `${r.method} ${route} took ${fmt(Math.round(t.median))} ms as the first request after a start (median of ${x.samples.length} starts, spread ${(t.spread * 100).toFixed(1)}%), against ${steady.toFixed(1)} ms for the requests after it: the first request waits for set-up the start could have done (STB-10).` });
+        ? text`${r.method} ${route}'s first request after a start took ${M('extraMs', Number(t.median.toFixed(1)), fmt(Math.round(t.median)))} ms longer than the requests after it (median of ${D('starts', x.samples.length)} starts, spread ${M('spread', Number(t.spread.toFixed(3)), (t.spread * 100).toFixed(1))}%), against ${M('baselineMs', Number(median(x.samples.map((q) => q.baselineMs)).toFixed(1)), fmt(Math.round(median(x.samples.map((q) => q.baselineMs)))))} ms for ${x.samples.every((q) => q.baselineOf === 'warm-up') ? 'the warm-up request itself, in the same process' : 'the cheapest route in the same process'}${warmedBy}: the first request waits for set-up the start could have done (STB-10).`
+        : text`${r.method} ${route} took ${M('firstMs', Number(t.median.toFixed(1)), fmt(Math.round(t.median)))} ms as the first request after a start (median of ${D('starts', x.samples.length)} starts, spread ${M('spread', Number(t.spread.toFixed(3)), (t.spread * 100).toFixed(1))}%), against ${M('laterMs', Number(steady.toFixed(1)), steady.toFixed(1))} ms for the requests after it: the first request waits for set-up the start could have done (STB-10).` });
     else emit({ check: 'cold-start', rule: 'STB-10', strength: 'SHOULD', severity: 'info', unresolved: true, method: r.method, route, trace,
-      message: `${r.method} ${route}'s first request after a start looked slow, but timing unreliable: ${t.why}.` });
+      message: text`${r.method} ${route}'s first request after a start looked slow, but timing unreliable: ${M('why', t.why)}.` });
   }
 
   // ---- Plans (judge "plans", L03): auto_explain's plan of each statement a
@@ -532,7 +539,7 @@ function judgeTwin(twin) {
       if (!a.some((g) => g.table === f.table && g.filter === f.filter)) continue;
       emit({ check: 'missing-index', rule: 'DAT-03', strength: 'SHOULD', severity: 'warning', method: r.method, route, statement: f.sql,
         trace: { judge: 'plans', path: x.path, plan: 'Seq Scan', table: f.table, statement: f.sql, scales: [{ scale: HI, tableRows: f.size, rows: f.kept, removedRows: f.read - f.kept }] },
-        message: `${r.method} ${route} read ${f.table} with a sequential scan, ${fmt(f.read)} rows of its ${fmt(f.size)} for the ${fmt(f.kept)} that pass ${f.filter}: PostgreSQL had no index to go to them directly (DAT-07). From auto_explain, on seeded data at ${HI}x.` });
+        message: text`${r.method} ${route} read ${f.table} with a sequential scan, ${M('read', f.read, fmt(f.read))} rows of its ${M('size', f.size, fmt(f.size))} for the ${M('kept', f.kept, fmt(f.kept))} that pass ${f.filter}: PostgreSQL had no index to go to them directly (DAT-07). From auto_explain, on seeded data at ${D('scale', HI)}x.` });
     }
   }
 
@@ -570,7 +577,7 @@ for (const twin of ['planted', 'clean']) {
   const judged = r.findings.filter((f) => f.severity !== 'info');
   const infos = r.findings.filter((f) => f.severity === 'info').map(keyOf);
   const wu = r.erlang?.trace?.warmup;
-  if (wu) console.log(`WARM-UP  ${spec.fixture} ${spec.form} ${twin}: ${wu.source === 'fallback' ? `fallback, ${wu.method} ${wu.path}, a path that does not exist (answered ${[...new Set(wu.runs.map((x) => x.status))].join(', ')}): warms the framework, not the database driver` : `configured in ${wu.source}, ${wu.method} ${wu.path} (answered ${[...new Set(wu.runs.map((x) => x.status))].join(', ')})`}`);
+  if (wu) console.log(`WARM-UP  ${spec.fixture} ${spec.form} ${twin}: ${wu.source === 'fallback' ? `fallback, GET then POST with a small JSON body to ${wu.path} and a random suffix, a path that does not exist (the GET answered ${[...new Set(wu.runs.map((x) => x.status))].join(', ')}): warms the framework and its body parser, not the database driver` : `configured in ${wu.source}, ${wu.method} ${wu.path} (answered ${[...new Set(wu.runs.map((x) => x.status))].join(', ')})`}`);
   if (twin === 'planted') {
     // A timing defect the rule would not judge (load, spread) is
     // inconclusive: not missed, and not a pass.
@@ -606,6 +613,45 @@ if (['loop', 'starts'].includes(spec.judge) && ['planted', 'clean'].every((t) =>
       : (scale.starts ?? []).map((q) => `${q.id}: first ms ${JSON.stringify(q.samples.map((s) => Math.round(s.firstMs)))}, ${q.samples.every((s) => Number.isFinite(s.extraMs)) ? `extra ms ${JSON.stringify(q.samples.map((s) => Math.round(s.extraMs)))}, baseline ms ${JSON.stringify(q.samples.map((s) => Math.round(s.baselineMs)))}, position ${JSON.stringify(q.samples.map((s) => s.position))}` : `first over later ${JSON.stringify(q.samples.map((s) => Number((s.firstMs / median_(s.laterMs)).toFixed(1))))}`}`);
     console.log(`      measured ${twin}: load ${e.before?.load1}/${e.before?.cpus} before, ${e.after?.load1}/${e.after?.cpus} after`);
     for (const row of rows) console.log(`        ${row}`);
+  }
+}
+// Decoy margin (the owner, 20 November 2026; fixtures/PLAN.md): in a timed
+// form, every decoy stays at most half way to the bar it is judged against,
+// so a slower or busier machine cannot carry it over. A decoy is every
+// judged route of the clean twin, and every judged route of the planted twin
+// that is neither a planted defect nor an expected miss (printed on an
+// EXPECTED-MISS line, not judged). A verdict needs
+// every condition of its bar, so a decoy is held off by any one of them: a
+// sample keeps its margin when some condition is at most half its threshold.
+//   loop:   the longest stretch (BLOCK_MS) or its share of the request
+//           (BLOCK_SHARE);
+//   starts: the first request's extra over the baseline (FIRST_EXTRA_MS) or
+//           its ratio to the baseline (FIRST_RATIO).
+if (['loop', 'starts'].includes(spec.judge) && ['planted', 'clean'].every((t) => existsSync(join(outDir, t, 'raw.json')))) {
+  const conds = spec.judge === 'loop'
+    ? [{ what: 'ms at a stretch', bar: BLOCK_MS, of: (x) => x.loopMaxMs ?? 0 }, { what: 'share of the request', bar: BLOCK_SHARE, of: (x) => (x.ms > 0 ? (x.loopMaxMs ?? 0) / x.ms : 0) }]
+    : [{ what: 'ms over the baseline', bar: FIRST_EXTRA_MS, of: (x) => (Number.isFinite(x.extraMs) ? x.extraMs - x.baselineMs : x.firstMs - median(x.laterMs)) },
+      { what: 'times the baseline', bar: FIRST_RATIO, of: (x) => (Number.isFinite(x.extraMs) ? (x.baselineMs > 0 ? x.extraMs / x.baselineMs : Infinity) : x.firstMs / median(x.laterMs)) }];
+  const quiet = (d, it) => d.method === it.method && d.route === it.route;
+  for (const twin of ['planted', 'clean']) {
+    const raw = JSON.parse(readFileSync(join(outDir, twin, 'raw.json'), 'utf8'));
+    const scale = raw.scales[Object.keys(raw.scales).sort((a, b) => b - a)[0]];
+    const items = spec.judge === 'loop'
+      ? (scale.requests ?? []).map((q) => ({ method: q.method, route: q.route ?? q.path, samples: q.samples.slice(1) }))
+      : (scale.starts ?? []).map((q) => ({ method: q.method, route: q.route ?? q.path, samples: q.samples }));
+    for (const it of items) {
+      if (twin === 'planted' && spec.defects.some((d) => quiet(d, it))) continue;
+      const miss = twin === 'planted' && (spec.expectedMisses ?? []).some((d) => quiet(d, it));
+      const kept = it.samples.map((x) => conds.some((c) => c.of(x) <= c.bar / 2));
+      const shown = conds.map((c) => `${c.what} ${JSON.stringify(it.samples.map((x) => { const v = c.of(x); return Number.isFinite(v) ? Number(v.toFixed(2)) : 'inf'; }))} (half the bar ${c.bar / 2})`).join('; ');
+      const ok = kept.every(Boolean);
+      // Beside each sample: the load average when it was taken, and, for a
+      // start, the median of the requests after the first.
+      const context = `; load ${JSON.stringify(it.samples.map((x) => x.load1 ?? null))}${spec.judge === 'starts' ? `; later requests, median ms ${JSON.stringify(it.samples.map((x) => Number(median(x.laterMs).toFixed(1))))}` : ''}`;
+      if (miss) { console.log(`EXPECTED-MISS  ${spec.fixture} ${spec.form} ${twin} ${it.method} ${it.route}, not a decoy, margin not judged: ${shown}${context}`); continue; }
+      console.log(`DECOY  ${spec.fixture} ${spec.form} ${twin} ${it.method} ${it.route}: ${shown}${context}${ok ? '' : `: OVER in ${kept.filter((k) => !k).length} of ${kept.length}`}`);
+      if (!ok) say(false, `${twin}: decoy margin`, `${it.method} ${it.route} reached half the bar on every condition in ${kept.filter((k) => !k).length} of ${kept.length} samples`);
+    }
   }
 }
 process.exit(failed ? 1 : unreliable ? 3 : 0);

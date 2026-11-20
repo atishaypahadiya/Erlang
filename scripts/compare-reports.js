@@ -2,17 +2,17 @@
 // gate, docs/CONTRACT.md): each argument is a directory holding
 // <form>/<twin>/report.json, as scripts/trace.sh writes under dist/trace/.
 // Every report must be identical in every run, apart from what a machine
-// measures rather than counts:
-//   - `started`;
-//   - any `timing`, `environment`, `ms`, `times`, `heapBytesPerRequest` or
-//     `cooledAfterS` (timings, load averages, heap readings);
-//   - in a finding judged on a measurement (trace judge `timing` or
-//     `memory`), its `slope`, `r2` and `message`, which quote the measured
-//     numbers.
-// Counts, verdicts, severities, fingerprints, locations, fixes and the set of
-// findings are compared as they are. A finding that is present in one run and
-// not another, or a severity that changes (a timed verdict that is a finding
-// in one run and info in another), is a difference.
+// measures. What is measured is read from the reports, never decided here:
+//   - each finding's own `measured` list (finding/1): the paths of its
+//     fields that differ between runs ([] for each item of a list). For
+//     "message", the message is left out when the finding carries its
+//     template (erlang.template: the message with each value as {name}),
+//     and compared with its numbers masked when it does not;
+//   - the report's `started` and `environment` (when and where it ran).
+// Everything else is compared in full: the set of findings, verdicts,
+// rules, severities, fingerprints, locations, fixes, declared values
+// (erlang.values.declared) and message templates. A finding present in one
+// run and not another, or a severity that changes, is a difference.
 //
 // Usage: node scripts/compare-reports.js <dir> <dir> [<dir> ...]
 // Exit codes: 0 identical, 1 a difference (each printed with every run's
@@ -31,8 +31,7 @@ if (dirs.length < 2 || dirs.some((d) => !existsSync(d) || !statSync(d).isDirecto
   process.exit(64);
 }
 
-const MEASURED_KEYS = new Set(['started', 'timing', 'environment', 'ms', 'times', 'heapBytesPerRequest', 'cooledAfterS']);
-const MEASURED_JUDGES = new Set(['timing', 'memory']);
+const REPORT_MEASURED = ['started', 'environment'];
 
 // Every report.json under a directory, by its path relative to it.
 function reportsOf(dir) {
@@ -48,32 +47,39 @@ function reportsOf(dir) {
   return out;
 }
 
-function strip(x) {
-  if (Array.isArray(x)) return x.map(strip);
-  if (!x || typeof x !== 'object') return x;
-  return Object.fromEntries(Object.entries(x).filter(([k]) => !MEASURED_KEYS.has(k)).map(([k, v]) => [k, strip(v)]));
+// Removes a finding/1 path ("a.b[].c") from x, in place.
+function drop(x, path) {
+  const [head, ...rest] = path.split('.');
+  if (x == null || typeof x !== 'object') return;
+  const list = head.endsWith('[]');
+  const key = list ? head.slice(0, -2) : head;
+  if (!rest.length) {
+    if (!list) delete x[key];
+    else if (Array.isArray(x[key])) x[key] = x[key].map(() => '(measured)');
+    return;
+  }
+  if (list) { if (Array.isArray(x[key])) for (const item of x[key]) drop(item, rest.join('.')); } else drop(x[key], rest.join('.'));
 }
 
 function normalize(report) {
-  const r = strip(report);
-  r.findings = (report.findings ?? []).map((f) => {
-    const g = strip(f);
-    if (MEASURED_JUDGES.has(f.erlang?.trace?.judge)) {
-      delete g.message;
-      delete g.erlang.trace.slope;
-      delete g.erlang.trace.r2;
+  const r = structuredClone(report);
+  for (const k of REPORT_MEASURED) delete r[k];
+  if (r.erlang) for (const k of REPORT_MEASURED) delete r.erlang[k];
+  r.findings = (r.findings ?? []).map((f) => {
+    for (const p of f.measured ?? []) {
+      if (p !== 'message') drop(f, p);
+      else if (typeof f.erlang?.template === 'string') delete f.message;
+      else f.message = String(f.message).replace(/\d[\d,.]*/g, '#');
     }
-    return g;
+    return f;
   });
   return r;
 }
 
 // What a machine measured in a report: printed beside a difference.
 function measured(report) {
-  return (report.findings ?? []).filter((f) => f.erlang?.trace).map((f) => {
-    const t = f.erlang.trace;
-    return `${f.severity} ${f.check} ${f.where?.endpoints?.[0] ? `${f.where.endpoints[0].method} ${f.where.endpoints[0].route}` : f.fingerprint}: ${[t.timing?.samples ? `samples ${JSON.stringify(t.timing.samples.map((v) => Number(Number(v).toFixed(1))))}` : '', t.slope != null && MEASURED_JUDGES.has(t.judge) ? `slope ${t.slope}${t.r2 != null ? ` R² ${t.r2}` : ''}` : ''].filter(Boolean).join(', ') || 'counts only'}`;
-  });
+  return (report.findings ?? []).filter((f) => Object.keys(f.erlang?.values?.measured ?? {}).length).map((f) =>
+    `${f.severity} ${f.check} ${f.where?.endpoints?.[0] ? `${f.where.endpoints[0].method} ${f.where.endpoints[0].route}` : f.fingerprint}: ${JSON.stringify(f.erlang.values.measured)}`);
 }
 
 // Paths at which two values differ, as a.b[2].c.

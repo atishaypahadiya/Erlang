@@ -42,7 +42,9 @@ import { gunzipSync, brotliDecompressSync, inflateSync } from 'node:zlib';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { expand, routeOf, track, unreadBytes, unreadFields } from '../../lib/trace-judge.js';
 import { environment } from '../../lib/timing.js';
-import { warmupFor } from '../../lib/scope.js';
+import { warmupFor, FALLBACK_BODY } from '../../lib/scope.js';
+import { randomBytes } from 'node:crypto';
+import { loadavg } from 'node:os';
 const median = (xs) => { const s = [...xs].sort((a, b) => a - b); const m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
 import { waitForNoLock, active, describe as describeLock, EXIT_LOCKED } from '../../lib/itten-lock.js';
 import { CAPS, profile, checkRun, checkStep, Refused } from '../../lib/load-guard.js';
@@ -129,8 +131,22 @@ function prismaSql(schema, out) {
   return readFileSync(sql, 'utf8').replace(/^CREATE SCHEMA IF NOT EXISTS "public";$/m, '');
 }
 
+// Settings a form may give its fixture database (trace.json "database"),
+// with the values allowed. synchronous_commit = off: a commit returns
+// before its WAL reaches disk, so a write's time no longer swings with the
+// disk's flush (L11's POST /orders; the owner, 20 November 2026). Nothing
+// the trace judges depends on durability.
+const DATABASE_SETTINGS = { synchronous_commit: /^(on|off|local)$/ };
+
 function freshDatabase(scale, twinDir) {
   psql('postgres', 'postgres', `drop database if exists ${DB} with (force);\ncreate database ${DB} owner ${ROLE};\n`);
+  // The form's database settings (trace.json "database"), set on the
+  // fixture database, so every session of either twin has them and no app
+  // code sets them. Only the settings named in DATABASE_SETTINGS.
+  for (const [k, v] of Object.entries(spec.database ?? {})) {
+    if (!DATABASE_SETTINGS[k]?.test(String(v))) throw new Error(`trace.json "database": ${k} = ${v} is not a setting the harness sets`);
+    psql('postgres', 'postgres', `alter database ${DB} set ${k} = '${v}';\n`);
+  }
   psql('postgres', DB, 'create extension pg_stat_statements;\n');
   for (const f of schemaFiles(twinDir)) {
     if (f.endsWith('.prisma')) {
@@ -344,6 +360,7 @@ async function measureRequest(app, r, n) {
       streamed: res ? res.headers['content-length'] === undefined : false,
       items: res ? itemsOf(r.items, body, decoded) : null,
       statements: stats,
+      load1: Number(loadavg()[0].toFixed(2)),
       ...extra,
     });
   }
@@ -353,7 +370,7 @@ async function measureRequest(app, r, n) {
   const shape = (x) => JSON.stringify({ ...x, bytes: 0, ms: 0, upstream: x.upstream?.length, loop: undefined, poolBefore: undefined, poolAfter: kept(x), connections: x.connections?.opened, plans: x.plans && scans(x.plans), logged: x.logged?.length, statements: x.logged ? Object.fromEntries(Object.entries(x.statements).map(([q, v]) => [q, v.calls])) : x.statements });
   const stable = shape(a) === shape(b);
   const keep = (x) => ({ timedOut: x.timedOut, ...(x.upstream ? { upstream: x.upstream } : {}), ...(x.timers ? { timers: x.timers } : {}), ...(x.poolAfter ? { poolBefore: x.poolBefore, poolAfter: x.poolAfter } : {}), ms: x.ms, ...(x.loop ? { loop: x.loop } : {}), ...(x.connections ? { connections: x.connections } : {}), ...(x.logged ? { logged: x.logged, cacheHeaders: x.cacheHeaders, statements: x.statements } : {}), ...(x.plans ? { plans: x.plans } : {}) });
-  return { id: r.id, method: r.method, path, route: r.route ?? routeOf(app.routes, r.method, path), ...b, stable, ...(stable ? {} : { other: a }), ...(r.upstream || r.probes || spec.params || spec.plans ? { ...(w ? { warm: keep(w) } : {}), first: keep(a), last: keep(b) } : {}), samples: runs.map((x) => ({ ms: x.ms, ...(x.loop ? { loopMaxMs: x.loop.maxMs } : {}), ...(x.upstream ? { attempts: x.upstream.length } : {}) })) };
+  return { id: r.id, method: r.method, path, route: r.route ?? routeOf(app.routes, r.method, path), ...b, stable, ...(stable ? {} : { other: a }), ...(r.upstream || r.probes || spec.params || spec.plans ? { ...(w ? { warm: keep(w) } : {}), first: keep(a), last: keep(b) } : {}), samples: runs.map((x) => ({ ms: x.ms, load1: x.load1, ...(x.loop ? { loopMaxMs: x.loop.maxMs } : {}), ...(x.upstream ? { attempts: x.upstream.length } : {}) })) };
 }
 
 // The same request k times in a row, statements counted over all of them.
@@ -505,8 +522,19 @@ for (const twin of ['planted', 'clean']) {
         const fresh = await serve(work, scale, log);
         try {
           await paced();
-          const w = await once(fresh, warmup, warmup.path);
+          // The fallback: a GET, then a POST with a small JSON body, to a
+          // path with a random suffix; the GET's time is the baseline.
+          const fallbackPath = warmup.source === 'fallback' ? `${warmup.path}${randomBytes(8).toString('hex')}` : null;
+          const w = await once(fresh, warmup, fallbackPath ?? warmup.path, warmup.body);
           const status = w.res?.status ?? null;
+          if (fallbackPath) {
+            const p = await once(fresh, { ...warmup, method: 'POST' }, fallbackPath, FALLBACK_BODY);
+            const ps = p.res?.status ?? null;
+            if (ps === null || ps >= 500) throw new Error(`warm-up POST ${warmup.path}<random> (fallback) answered ${ps ?? 'nothing'}`);
+          }
+          // A full collection after every warm-up, so garbage left by the
+          // start is not collected inside a measured first request.
+          await fresh.probe('gc');
           if (warmup.source === 'fallback' ? status === null || status >= 500 : status === null || status >= 400) throw new Error(`warm-up ${warmup.method} ${warmup.path} (${warmup.source}) answered ${status ?? 'nothing'}`);
           warmups.push({ status, ms: w.extra.ms });
           const order = spec.starts.map((_, j) => spec.starts[(j + k) % spec.starts.length]);
@@ -515,7 +543,7 @@ for (const twin of ['planted', 'clean']) {
             const runs = [];
             for (let j = 0; j < (r.after ?? 5) + 1; j++) { await paced(); const { res, extra } = await once(fresh, r, expand(r.path, n), r.body === undefined ? undefined : expand(r.body, n)); if (!res || res.status >= 400) throw new Error(`start ${r.id}: ${r.method} answered ${res?.status ?? 'nothing'}`); runs.push({ ms: extra.ms }); }
             const later = runs.slice(1).map((x) => x.ms);
-            seen.push({ id: r.id, sample: { start: k, position, warmupMs: w.extra.ms, firstMs: runs[0].ms, laterMs: later, extraMs: runs[0].ms - median(later) } });
+            seen.push({ id: r.id, sample: { start: k, position, warmupMs: w.extra.ms, firstMs: runs[0].ms, laterMs: later, extraMs: runs[0].ms - median(later), load1: Number(loadavg()[0].toFixed(2)) } });
           }
           // The baseline: the cheapest route's extra in this process; with
           // the 404 fallback, the 404 request's own time (the owner, 19

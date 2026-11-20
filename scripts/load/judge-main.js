@@ -32,6 +32,7 @@ import { slopeOf, MIN_POINTS } from '../../lib/trace-judge.js';
 import { ruleC, REASON } from '../../lib/timing.js';
 import { linkStatic, fmt } from '../../lib/trace-judge.js';
 import { exitOnCrash } from '../../lib/crash.js';
+import { text, measured as M, declared as D, plain as plainText, asText, measuredPaths } from '../../lib/values.js';
 
 exitOnCrash('load judge');
 
@@ -165,7 +166,7 @@ function judgeTwin(raw, twin) {
       const theirs = { goodputShare: medOf('them', share), refusedShare: medOf('them', (s) => s.counts.refused / offered(s)), refusedP99Ms: medOf('them', (s) => s.refusals?.p99Ms ?? 0) };
       const t = { check: 'no-load-shedding', rule: 'OVL-02', method: s0.method, route: s0.route ?? step.route, symbol: spec.defects?.find((d) => d.step === id)?.symbol ?? null };
       const load = { judge: 'shedding', step: id, path: s0.path, rate: step.rate, seconds: step.seconds, repeats: runs.length, samples, twin: mine, other: theirs, timing: { ...timing, why: Array.isArray(timing.why) ? (timing.why.join('; ') || null) : timing.why ?? null } };
-      const message = `Past the knee, at ${fmt(step.rate)} requests a second for ${step.seconds} s, ${t.method} ${t.route} answered ${pct(mine.goodputShare)} of them within ${fmt(step.okMs ?? 500)} ms; the twin that caps requests in flight answered ${pct(theirs.goodputShare)} in time and refused ${pct(theirs.refusedShare)} at once (p99 ${fmt(Math.round(theirs.refusedP99Ms))} ms). Here ${pct(mine.failedShare)} failed and those served waited up to ${fmt(Math.round(mine.servedP99Ms))} ms (p99): every request queues, so all are late instead of some refused (OVL-02, CAP-02). Measured with k6 at a fixed arrival rate, ${runs.length} repeats.${timing.reliable ? '' : ` Not judged: ${REASON} (${load.timing.why}).`}`;
+      const message = text`Past the knee, at ${D('rate', step.rate, fmt(step.rate))} requests a second for ${D('seconds', step.seconds)} s, ${t.method} ${t.route} answered ${M('goodput', mine.goodputShare, pct(mine.goodputShare))} of them within ${D('okMs', step.okMs ?? 500, fmt(step.okMs ?? 500))} ms; the twin that caps requests in flight answered ${M('otherGoodput', theirs.goodputShare, pct(theirs.goodputShare))} in time and refused ${M('otherRefused', theirs.refusedShare, pct(theirs.refusedShare))} at once (p99 ${M('otherRefusedP99Ms', Math.round(theirs.refusedP99Ms), fmt(Math.round(theirs.refusedP99Ms)))} ms). Here ${M('failed', mine.failedShare, pct(mine.failedShare))} failed and those served waited up to ${M('servedP99Ms', Math.round(mine.servedP99Ms), fmt(Math.round(mine.servedP99Ms)))} ms (p99): every request queues, so all are late instead of some refused (OVL-02, CAP-02). Measured with k6 at a fixed arrival rate, ${D('repeats', runs.length)} repeats.${timing.reliable ? '' : text` Not judged: ${REASON} (${M('why', load.timing.why)}).`}`;
       out.push(emit(t, statics, message, load, timing.reliable ? 'warning' : 'info'));
     }
   } else if (spec.judge === 'compare') {
@@ -198,10 +199,19 @@ function judgeTwin(raw, twin) {
         const timing = { ...c.timing, why: c.timing.why.join('; ') || null, samples: slopes.map((x) => Number(x.toFixed(2))), median: mineS };
         const t = { check: step.check ?? spec.check, rule: step.rule ?? spec.rule, method: s0.method, route: s0.route ?? step.route, symbol: step.symbol ?? null };
         const load = { judge: 'memory', step: step.id, path: s0.path, rate: step.rate, seconds: step.seconds, repeats: fits.length, samples: timing.samples, twin: { 'heap-slope': mineS, r2: fits.map((f) => Number((f.me.r2 ?? 0).toFixed(3))) }, other: { 'heap-slope': theirsS }, timing };
-        out.push(emit(t, statics, `At ${fmt(step.rate)} requests a second for ${step.seconds} s, ${t.method} ${t.route} kept about ${fmt(Math.round(mineS))} bytes of heap per request (the least-squares slope of the heap after full collections against responses answered, positive in every repeat), against ${fmt(Math.round(theirsS))} for the twin without the defect (STB-05).${timing.reliable ? '' : ` Not judged: ${REASON} (${timing.why}).`}`, load, timing.reliable ? 'warning' : 'info'));
+        out.push(emit(t, statics, text`At ${D('rate', step.rate, fmt(step.rate))} requests a second for ${D('seconds', step.seconds)} s, ${t.method} ${t.route} kept about ${M('bytesPerRequest', Number(mineS.toFixed(1)), fmt(Math.round(mineS)))} bytes of heap per request (the least-squares slope of the heap after full collections against responses answered, positive in every repeat), against ${M('otherBytesPerRequest', Number(theirsS.toFixed(1)), fmt(Math.round(theirsS)))} for the twin without the defect (STB-05).${timing.reliable ? '' : text` Not judged: ${REASON} (${M('why', timing.why)}).`}`, load, timing.reliable ? 'warning' : 'info'));
         continue;
       }
       const clearsOf = (r) => r.me > 0 && r.me >= (step.floor ?? 0) && r.me >= ratio * r.them;
+      // Decoy margin (the owner, 20 November 2026): a timed step's decoy (every
+      // step of the clean twin; a step of the planted twin that is neither a
+      // defect nor an expected miss) keeps, in every pair, one condition of
+      // its bar at most half way: at most half the floor, or at most half the
+      // ratio times the other twin's value.
+      if (!EXEMPT.has(step.metric) && (twin === 'clean' || ![...spec.defects, ...EXPECTED_MISSES].some((d) => d.step === step.id))) {
+        const kept = runs.map((r) => r.me <= 0 || r.me <= (step.floor ?? 0) / 2 || r.me <= (ratio / 2) * r.them);
+        DECOYS.push({ ok: kept.every(Boolean), line: `${twin} step ${step.id} (${step.metric}): ${JSON.stringify(runs.map((r) => Number(r.me.toFixed(4))))} against the other twin's ${JSON.stringify(runs.map((r) => Number(r.them.toFixed(4))))}; half the floor ${(step.floor ?? 0) / 2}, half the ratio ${ratio / 2}${kept.every(Boolean) ? '' : `: OVER in ${kept.filter((k) => !k).length} of ${kept.length}`}` });
+      }
       if (twin === 'planted') {
         const r4 = (xs) => JSON.stringify(xs.map((x) => Number(x.toFixed(4))));
         const v = EXEMPT.has(step.metric) ? exempt({ samples: runs.map((r) => r.me), before: env.before, after: env.after }) : ruleC({ clears: runs.map(clearsOf), samples: runs.map((r) => r.me), before: env.before, after: env.after }).timing;
@@ -227,7 +237,7 @@ function judgeTwin(raw, twin) {
       const about = bg ? { method: (bg.method ?? 'GET').toUpperCase(), route: bg.route ?? bg.path } : { method: s0.method, route: s0.route ?? step.route };
       const t = { check: step.check ?? spec.check, rule: step.rule ?? spec.rule, ...about, symbol: step.symbol ?? null };
       const load = { judge: step.judge ?? JUDGE_OF[step.metric] ?? step.metric, step: step.id, path: s0.path, rate: step.rate, seconds: step.seconds, repeats: runs.length, samples, twin: { [step.metric]: mine }, other: { [step.metric]: theirs }, timing: { ...timing, why: Array.isArray(timing.why) ? (timing.why.join('; ') || null) : timing.why ?? null } };
-      const message = `At ${fmt(step.rate)} requests a second for ${step.seconds} s${step.host ? `, with ${step.host} failing` : ''}${bg ? ` to ${s0.method} ${s0.route ?? step.route}, while ${t.method} ${t.route} ran at ${fmt(bg.rate)} a second,` : ''}, ${bg ? 'it' : `${t.method} ${t.route}`} showed ${m.fmt(mine)} ${m.what}, against ${m.fmt(theirs)} for the twin without the defect (${step.because ?? t.rule}). Measured with k6 at a fixed arrival rate, ${runs.length} repeats.${timing.reliable ? '' : ` Not judged: ${REASON} (${load.timing.why}).`}`;
+      const message = text`At ${D('rate', step.rate, fmt(step.rate))} requests a second for ${D('seconds', step.seconds)} s${step.host ? `, with ${step.host} failing` : ''}${bg ? text` to ${s0.method} ${s0.route ?? step.route}, while ${t.method} ${t.route} ran at ${D('backgroundRate', bg.rate, fmt(bg.rate))} a second,` : ''}, ${bg ? 'it' : `${t.method} ${t.route}`} showed ${M(step.metric, mine, m.fmt(mine))} ${m.what}, against ${M(`other-${step.metric}`, theirs, m.fmt(theirs))} for the twin without the defect (${step.because ?? t.rule}). Measured with k6 at a fixed arrival rate, ${D('repeats', runs.length)} repeats.${timing.reliable ? '' : text` Not judged: ${REASON} (${M('why', load.timing.why)}).`}`;
       out.push(emit(t, statics, message, load, timing.reliable ? (step.severity ?? 'warning') : 'info'));
     }
   } else throw new Error(`unknown load judge ${spec.judge}`);
@@ -248,25 +258,28 @@ function judgeTwin(raw, twin) {
 // A load finding: the static finding it agrees with, with load added, or one
 // of its own at its endpoint. Fingerprints hold no measured value.
 function emit(t, statics, message, load, severity) {
+  const said = asText(message);
   const s = severity === 'info' ? null : linkStatic(t, statics, () => null);
   if (s) {
     // A static finding left at info because reading could not decide
     // (unresolved) takes the load verdict's severity: the load run decided it.
     const resolves = s.severity === 'info' && s.erlang?.unresolved && severity !== 'info';
     const { unresolved: _u, ...ext } = s.erlang ?? {};
+    const full = text`${plainText(s.message)} Under load: ${said}`;
     return finding({
       specialist: 'erlang', check: t.check, severity: resolves ? severity : s.severity, fingerprint: s.fingerprint,
-      message: `${s.message} Under load: ${message}`,
+      message: full.message, measured: measuredPaths(full, 'load', load),
       detection: [...new Set([...s.detection, 'load'])], rules: s.rules, where: s.where,
-      extension: { ...(resolves ? ext : s.erlang), load },
+      extension: { ...(resolves ? ext : s.erlang), load, values: full.values, template: full.template },
     });
   }
   const note = NOTE[t.rule];
+  const full = note ? text`${said} ${note}` : said;
   return finding({
     specialist: 'erlang', check: t.check, severity, fingerprint: fingerprint(t.check, `${t.method} ${t.route}`, t.rule, 'load'),
-    message: note ? `${message} ${note}` : message, detection: ['load'], rules: [t.rule],
+    message: full.message, measured: measuredPaths(full, 'load', load), detection: ['load'], rules: [t.rule],
     where: { endpoints: [{ method: t.method, route: t.route }] },
-    extension: { strength: 'SHOULD', load },
+    extension: { strength: 'SHOULD', load, values: full.values, template: full.template },
   });
 }
 
@@ -281,6 +294,8 @@ let unreliable = false;
 // Every judged step's quantities, both twins, per repeat, with the timing
 // verdict: printed under the planted twin's line, so a CI log carries them.
 const MEASURED = [];
+// Decoy margins, both twins: printed and judged after the verdicts.
+const DECOYS = [];
 const say = (ok, what, detail, status = ok ? 'PASS' : 'FAIL') => { if (status === 'FAIL') failed = true; if (status === 'UNRELIABLE') unreliable = true; console.log(`${status}  ${spec.fixture} ${spec.form} load ${what}${detail ? `  (${detail})` : ''}`); };
 // The timing verdict behind an unreliable finding, for the report: samples,
 // spread, load averages before and after.
@@ -318,6 +333,10 @@ for (const twin of ['planted', 'clean']) {
   } else {
     say(!judged.length, `clean: ${judged.length} error(s) or warning(s)`, [...judged.map((f) => `reported: ${keyOf(f)}`), ...infos.map((f) => `info: ${keyOf(f)}`)].join('; '));
   }
+}
+for (const d of DECOYS) {
+  console.log(`DECOY  ${spec.fixture} ${spec.form} load ${d.line}`);
+  if (!d.ok) say(false, 'decoy margin', d.line);
 }
 // A form's acceptance condition on its clean twin (load.json step
 // "cleanMax", the owner, 20 November 2026; L09's export): the clean twin's
