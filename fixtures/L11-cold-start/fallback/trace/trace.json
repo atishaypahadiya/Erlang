@@ -1,0 +1,79 @@
+{
+  "note": "Trace form (research/trace-harness.md) for L11, run on L11's own twins (\"twins\": \"..\") with no warm-up route: neither trace.json nor the twins' erlang.config.json names one, so before each start's first requests the harness requests a path that does not exist and expects a 404 (the fallback). That warms the framework (the HTTP parser, Express's first dispatch) but not the database driver, and the report says so. Everything else is the L11 trace form's: its seed, schema, lockfile and overlay (the postcode file, the PDF module, the country count), with this form's entry, which leaves out the warm-up route. Each start is a fresh process: the fallback request, then every route's first request and the five after it, in an order rotated by one each start; a route whose first-request extra is at least three times the cheapest route's in the same process and 20 ms above it, in every start, waits for set-up (STB-10). A timing: it counts only under the timing lock, and is otherwise info. defects are what the planted twin must report and the clean twin must not; every other request is a decoy, in both twins.",
+  "fixture": "L11",
+  "form": "fallback",
+  "twins": "..",
+  "judge": "starts",
+  "entry": "trace-entry.js",
+  "scales": [
+    1
+  ],
+  "n": 1,
+  "requests": [],
+  "starts": [
+    {
+      "id": "region",
+      "method": "GET",
+      "path": "/regions/P123",
+      "route": "/regions/:postcode",
+      "samples": 5,
+      "after": 5
+    },
+    {
+      "id": "countries",
+      "method": "GET",
+      "path": "/checkout/countries",
+      "route": "/checkout/countries",
+      "samples": 5,
+      "after": 5
+    },
+    {
+      "id": "invoicePdf",
+      "method": "GET",
+      "path": "/invoices/1.pdf",
+      "route": "/invoices/:id.pdf",
+      "samples": 5,
+      "after": 5
+    },
+    {
+      "id": "price",
+      "method": "GET",
+      "path": "/prices/1",
+      "route": "/prices/:id",
+      "samples": 5,
+      "after": 5
+    },
+    {
+      "id": "createOrder",
+      "method": "POST",
+      "path": "/orders",
+      "route": "/orders",
+      "body": {},
+      "samples": 5,
+      "after": 5
+    }
+  ],
+  "defects": [
+    {
+      "check": "cold-start",
+      "rule": "STB-10",
+      "method": "GET",
+      "route": "/regions/:postcode",
+      "linked": true
+    },
+    {
+      "check": "cold-start",
+      "rule": "STB-10",
+      "method": "GET",
+      "route": "/checkout/countries",
+      "linked": true
+    },
+    {
+      "check": "cold-start",
+      "rule": "STB-10",
+      "method": "GET",
+      "route": "/invoices/:id.pdf",
+      "linked": true
+    }
+  ]
+}

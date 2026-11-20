@@ -74,6 +74,30 @@
           "description": "PostgreSQL's max_connections, as set on the server (SHOW max_connections)."
         }
       }
+    },
+    "warmup": {
+      "description": "A cheap route the trace harness requests once in each fresh process before it times first requests (cold-start, STB-10), such as a health check that reads once through the app's database driver. It takes up the start-up cost every first request pays (the framework's first dispatch, the driver's first query, the runtime's work after listen), so a route is judged on its own set-up only. Without it the harness requests a path that does not exist and expects a 404, which warms the framework but not the database driver; every report says which warm-up ran.",
+      "type": "object",
+      "required": [
+        "path"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "method": {
+          "type": "string",
+          "enum": [
+            "GET",
+            "HEAD"
+          ],
+          "description": "GET (the default) or HEAD: the warm-up must not change anything."
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^/(?!/)[^\\s#]*$",
+          "description": "A path on the app itself, starting with a single /; no host."
+        }
+      }
     }
   }
 }

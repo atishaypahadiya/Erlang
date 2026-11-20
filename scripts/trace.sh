@@ -64,6 +64,9 @@ if [ "$MODE" = "load" ] && [ "${CI:-}" != "true" ] && [ "$#" -ne 1 ]; then
   exit 64
 fi
 
+# Every wait on ITTEN's lock is logged (phase, taken, expires, how long),
+# and recorded one JSON line per wait here.
+export ERLANG_LOCK_WAIT_LOG="${ERLANG_LOCK_WAIT_LOG:-$ROOT/dist/logs/itten-lock-waits.jsonl}"
 node scripts/itten-lock.js "$MODE" || exit $?
 if ! docker info >/dev/null 2>&1; then
   echo "trace: Docker is not running" >&2
@@ -134,16 +137,24 @@ for form in "${forms[@]}"; do
   install="$ROOT/dist/trace/install/$id"
   # The twins' package.json, or the form's own when the twins ship none; the
   # load form's lockfile, else the trace form's.
-  manifest="fixtures/$form/planted/package.json"
+  # A form may run another form's twins (trace.json "twins", e.g. L11's
+  # fallback form): their manifest, and their lockfile when it has none.
+  twins="fixtures/$form"
+  if [ "$MODE" = "trace" ]; then
+    rel="$(node -e 'const s = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")); process.stdout.write(s.twins ?? "")' "fixtures/$form/$SPEC")"
+    [ -n "$rel" ] && twins="$(cd "fixtures/$form/$rel" && pwd)"
+  fi
+  manifest="$twins/planted/package.json"
   [ -f "fixtures/$form/trace/package.json" ] && manifest="fixtures/$form/trace/package.json"
   [ "$MODE" = "load" ] && [ -f "fixtures/$form/load/package.json" ] && manifest="fixtures/$form/load/package.json"
   lock="fixtures/$form/trace/package-lock.json"
+  [ -f "$lock" ] || lock="$twins/trace/package-lock.json"
   [ "$MODE" = "load" ] && [ -f "fixtures/$form/load/package-lock.json" ] && lock="fixtures/$form/load/package-lock.json"
   # A Prisma form: its client is generated into the install from the planted
   # twin's schema (the twins' models are the same; L03's differ only in an
   # index, which the client does not hold), and run.js renders each twin's
   # own schema to SQL with the same CLI.
-  prisma_schema="fixtures/$form/planted/prisma/schema.prisma"
+  prisma_schema="$twins/planted/prisma/schema.prisma"
   [ -f "$prisma_schema" ] || prisma_schema=""
   stamp="$(cat "$manifest" "$lock" ${prisma_schema:+"$prisma_schema"} | shasum -a 256 | cut -d' ' -f1)"
   if [ ! -f "$install/.stamp" ] || [ "$(cat "$install/.stamp")" != "$stamp" ]; then

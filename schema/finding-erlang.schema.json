@@ -493,6 +493,31 @@
         "symbol": {
           "type": "string",
           "description": "hang, connections: the function, client or handler the request drove, for linking to a static finding with no endpoint."
+        },
+        "warmup": {
+          "type": "object",
+          "description": "Judge timing with starts (cold-start): the request each fresh process got before its routes' first requests. source: trace.json (a route the trace form adds), erlang.config.json (the app's own, configured), or fallback (a path that does not exist, answered 404: it warms the framework but not the database driver).",
+          "required": [
+            "source",
+            "method",
+            "path"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "source": {
+              "enum": [
+                "trace.json",
+                "erlang.config.json",
+                "fallback"
+              ]
+            },
+            "method": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            }
+          }
         }
       }
     },

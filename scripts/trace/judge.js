@@ -114,7 +114,7 @@ const locate = (src, test) => [...src].flatMap(([file, lines]) => lines.flatMap(
 
 function judgeTwin(twin, rule = 'current') {
   const raw = JSON.parse(readFileSync(join(outDir, twin, 'raw.json'), 'utf8'));
-  const subjectDir = join(formDir, twin);
+  const subjectDir = join(spec.twins ? resolve(formDir, spec.twins) : formDir, twin);
   const src = sourceOf(subjectDir);
   const lineOf = (file, line) => src.get(file)?.[line - 1] ?? null;
   const statics = spec.judge === 'page' ? [] : scan(subjectDir).findings;
@@ -468,7 +468,9 @@ function judgeTwin(twin, rule = 'current') {
     // the cheapest route's extra in the same process after the warm-up, at
     // FIRST_RATIO times and FIRST_EXTRA_MS above it; no other twin needed.
     // Without one: the first request against the later ones of its start.
-    const warm = !!spec.warmup;
+    const warm = x.samples.every((q) => Number.isFinite(q.extraMs));
+    const wu = hi.warmup ?? null;
+    const warmedBy = !wu ? '' : wu.source === 'fallback' ? ` after a request to a path that does not exist (${wu.method} ${wu.path}, a 404: it warms the framework, not the database driver)` : ` after a warm-up request to ${wu.method} ${wu.path} (from ${wu.source})`;
     const clears = warm
       ? x.samples.map((s) => s.extraMs >= FIRST_RATIO * s.baselineMs && s.extraMs - s.baselineMs >= FIRST_EXTRA_MS)
       : x.samples.map((s, k) => s.firstMs - later[k] >= FIRST_EXTRA_MS && s.firstMs >= FIRST_RATIO * later[k]);
@@ -480,10 +482,10 @@ function judgeTwin(twin, rule = 'current') {
     const t = { ...v, why: Array.isArray(v.why) ? v.why.join('; ') || null : v.why ?? null };
     const route = r.route ?? r.path;
     const steady = median(later);
-    const trace = { judge: 'timing', path: x.path, timing: t, scales: [{ scale: HI, ms: Number(t.median.toFixed(1)) }] };
+    const trace = { judge: 'timing', path: x.path, timing: t, ...(wu ? { warmup: { source: wu.source, method: wu.method, path: wu.path } } : {}), scales: [{ scale: HI, ms: Number(t.median.toFixed(1)) }] };
     if (t.reliable) emit({ check: 'cold-start', rule: 'STB-10', strength: 'SHOULD', severity: 'warning', method: r.method, route, trace,
       message: warm
-        ? `${r.method} ${route}'s first request after a start took ${fmt(Math.round(t.median))} ms longer than the requests after it (median of ${x.samples.length} starts, spread ${(t.spread * 100).toFixed(1)}%), against ${fmt(Math.round(median(x.samples.map((q) => q.baselineMs))))} ms for the cheapest route in the same process after a warm-up request: the first request waits for set-up the start could have done (STB-10).`
+        ? `${r.method} ${route}'s first request after a start took ${fmt(Math.round(t.median))} ms longer than the requests after it (median of ${x.samples.length} starts, spread ${(t.spread * 100).toFixed(1)}%), against ${fmt(Math.round(median(x.samples.map((q) => q.baselineMs))))} ms for the cheapest route in the same process${warmedBy}: the first request waits for set-up the start could have done (STB-10).`
         : `${r.method} ${route} took ${fmt(Math.round(t.median))} ms as the first request after a start (median of ${x.samples.length} starts, spread ${(t.spread * 100).toFixed(1)}%), against ${steady.toFixed(1)} ms for the requests after it: the first request waits for set-up the start could have done (STB-10).` });
     else emit({ check: 'cold-start', rule: 'STB-10', strength: 'SHOULD', severity: 'info', unresolved: true, method: r.method, route, trace,
       message: `${r.method} ${route}'s first request after a start looked slow, but timing unreliable: ${t.why}.` });
@@ -532,7 +534,7 @@ function judgeTwin(twin, rule = 'current') {
   const r = report({
     specialist: 'erlang', version: VERSION, subject: relative(process.cwd(), subjectDir) || '.', started: new Date(raw.started ?? Date.now()),
     findings: out,
-    run: { trace: { image: raw.image, fixture: raw.fixture, form: raw.form, twin, judge: spec.judge, seed: raw.seed, scales: Object.fromEntries(Object.entries(raw.scales).map(([k, v]) => [k, { n: v.n, tables: v.tables }])) } },
+    run: { trace: { image: raw.image, fixture: raw.fixture, form: raw.form, twin, judge: spec.judge, ...(hi.warmup ? { warmup: hi.warmup } : {}), seed: raw.seed, scales: Object.fromEntries(Object.entries(raw.scales).map(([k, v]) => [k, { n: v.n, tables: v.tables }])) } },
   });
   if (rule === 'current') writeFileSync(join(outDir, twin, 'report.json'), JSON.stringify(r, null, 2) + '\n');
   return r;
@@ -555,6 +557,8 @@ for (const twin of ['planted', 'clean']) {
   const r = judgeTwin(twin);
   const judged = r.findings.filter((f) => f.severity !== 'info');
   const infos = r.findings.filter((f) => f.severity === 'info').map(keyOf);
+  const wu = r.erlang?.trace?.warmup;
+  if (wu) console.log(`WARM-UP  ${spec.fixture} ${spec.form} ${twin}: ${wu.source === 'fallback' ? `fallback, ${wu.method} ${wu.path}, a path that does not exist (answered ${[...new Set(wu.runs.map((x) => x.status))].join(', ')}): warms the framework, not the database driver` : `configured in ${wu.source}, ${wu.method} ${wu.path} (answered ${[...new Set(wu.runs.map((x) => x.status))].join(', ')})`}`);
   if (twin === 'planted') {
     // A timing defect the rule would not judge (load, spread) is
     // inconclusive: not missed, and not a pass.
@@ -588,7 +592,7 @@ if (['loop', 'starts'].includes(spec.judge) && ['planted', 'clean'].every((t) =>
     const scale = raw.scales[Object.keys(raw.scales).sort((a, b) => b - a)[0]];
     const rows = spec.judge === 'loop'
       ? (scale.requests ?? []).map((q) => `${q.id}: blocked ms ${JSON.stringify(q.samples.slice(1).map((s) => Math.round(s.loopMaxMs ?? 0)))}, share of request ${JSON.stringify(q.samples.slice(1).map((s) => Number(((s.loopMaxMs ?? 0) / s.ms).toFixed(2))))}`)
-      : (scale.starts ?? []).map((q) => `${q.id}: first ms ${JSON.stringify(q.samples.map((s) => Math.round(s.firstMs)))}, ${spec.warmup ? `extra ms ${JSON.stringify(q.samples.map((s) => Math.round(s.extraMs)))}, baseline ms ${JSON.stringify(q.samples.map((s) => Math.round(s.baselineMs)))}, position ${JSON.stringify(q.samples.map((s) => s.position))}` : `first over later ${JSON.stringify(q.samples.map((s) => Number((s.firstMs / median_(s.laterMs)).toFixed(1))))}`}`);
+      : (scale.starts ?? []).map((q) => `${q.id}: first ms ${JSON.stringify(q.samples.map((s) => Math.round(s.firstMs)))}, ${q.samples.every((s) => Number.isFinite(s.extraMs)) ? `extra ms ${JSON.stringify(q.samples.map((s) => Math.round(s.extraMs)))}, baseline ms ${JSON.stringify(q.samples.map((s) => Math.round(s.baselineMs)))}, position ${JSON.stringify(q.samples.map((s) => s.position))}` : `first over later ${JSON.stringify(q.samples.map((s) => Number((s.firstMs / median_(s.laterMs)).toFixed(1))))}`}`);
     console.log(`      measured ${twin}: load ${e.before?.load1}/${e.before?.cpus} before, ${e.after?.load1}/${e.after?.cpus} after`);
     for (const row of rows) console.log(`        ${row}`);
   }

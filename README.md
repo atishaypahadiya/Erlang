@@ -37,10 +37,10 @@ It writes a report/1 to `dist/reports/<dir name>/report.json`, or to `<file>`. E
 - 3: partial, with no failing findings.
 - 64: bad usage.
 
-`erlang.config.json` at `<dir>` can exclude paths that are not part of the app, and name entry points ERLANG cannot find itself, tables that stay small, and the database's `max_connections` when no file in the repository states it:
+`erlang.config.json` at `<dir>` can exclude paths that are not part of the app, and name entry points ERLANG cannot find itself, tables that stay small, the database's `max_connections` when no file in the repository states it, and a warm-up route for the cold-start trace (a cheap `GET` or `HEAD`, ideally one that reads once through the database driver; without one the harness requests a path that does not exist, which warms the framework only, and says so):
 
 ```json
-{ "exclude": ["fixtures/"], "handlers": [{ "file": "src/worker.js", "function": "handle" }], "smallTables": ["settings"], "database": { "maxConnections": 200 } }
+{ "exclude": ["fixtures/"], "handlers": [{ "file": "src/worker.js", "function": "handle" }], "smallTables": ["settings"], "database": { "maxConnections": 200 }, "warmup": { "path": "/health" } }
 ```
 
 `npm test` runs every test, including a scan of this repository, which must come back clean.

@@ -18,6 +18,7 @@ import * as TJ from '../lib/trace-judge.js';
 import * as TIMING from '../lib/timing.js';
 import * as LOCK from '../lib/itten-lock.js';
 import * as GUARD from '../lib/load-guard.js';
+import { warmupFor, FALLBACK_WARMUP } from '../lib/scope.js';
 import { scenario } from '../lib/k6-scenario.js';
 import { scenario as k6Scenario } from '../lib/k6-scenario.js';
 import { applyExpected } from './fixture-test.js';
@@ -177,11 +178,16 @@ console.log('\nITTEN\'s timing lock (honoured, never written)');
   ok('another format is not made active by the rule (docs/decisions.md, Q5)', seen['timing-5.json'] === 'other');
   ok('describe names the file, phase, project, pid and expiry', /timing-1\.json: ITTEN benchmark run of shop, pid 4242, until 2026-11-19T12:10:00Z/.test(LOCK.describe(LOCK.active({ env, now, isAlive })[0])));
   const t0 = Date.now();
-  const held = await LOCK.waitForNoLock({ env, now, isAlive, limitMs: 1500 });
+  const lines = [];
+  const waitLog = join(OUT, 'lock-waits.jsonl');
+  rmSync(waitLog, { force: true });
+  const held = await LOCK.waitForNoLock({ env, now, isAlive, limitMs: 1500, log: (l) => lines.push(l), logFile: waitLog, label: 'unit' });
+  const rec = existsSync(waitLog) ? JSON.parse(readFileSync(waitLog, 'utf8').trim().split('\n').at(-1)) : null;
+  ok('a wait is logged with the lock\'s phase, taken and expires, then how long it lasted and the total; one JSON line per wait', /^lock-wait: unit: waiting on ITTEN's lock: phase \S+, taken \S+, expires \S+/.test(lines[0] ?? '') && /waited \d+\.\d s .*limit reached; total waited by this process \d+\.\d s/.test(lines.at(-1) ?? '') && rec?.outcome === 'limit reached' && rec.ms >= 1000 && rec.segments.length >= 1 && 'phase' in rec.segments[0] && 'expires' in rec.segments[0], lines.join(' | '));
   ok('waitForNoLock rereads until its limit, then returns the active lock', !!held && Date.now() - t0 >= 1400, `${Date.now() - t0} ms`);
   ok('nothing in the lock directory is written or deleted', Object.entries(before).every(([f, t]) => existsSync(join(dir, f)) && readFileSync(join(dir, f), 'utf8') === t) && readdirSync(dir).length === Object.keys(files).length);
   for (const f of ['timing-1.json', 'timing-4.json']) rmSync(join(dir, f));
-  ok('with only stale, other and non-lock files left, nothing is active', (await LOCK.waitForNoLock({ env, now, isAlive, limitMs: 0 })) === null);
+  ok('with only stale, other and non-lock files left, nothing is active', (await LOCK.waitForNoLock({ env, now, isAlive, limitMs: 0, log: () => {} })) === null);
   rmSync(dir, { recursive: true, force: true });
 }
 
@@ -360,6 +366,22 @@ console.log('\nThe load judge: a static info left unresolved takes the load verd
   rmSync(form, { recursive: true, force: true });
 }
 
+console.log('\nThe warm-up before a start (cold-start)');
+{
+  const dir = join(OUT, 'warmup');
+  rmSync(dir, { recursive: true, force: true });
+  mkdirSync(dir, { recursive: true });
+  ok('warm-up: none configured is the 404 fallback, which says so', JSON.stringify(warmupFor(null, dir)) === JSON.stringify({ source: 'fallback', method: 'GET', path: FALLBACK_WARMUP }));
+  writeFileSync(join(dir, 'erlang.config.json'), JSON.stringify({ warmup: { path: '/health' } }));
+  ok('  erlang.config.json "warmup" is used, GET by default', JSON.stringify(warmupFor(null, dir)) === JSON.stringify({ source: 'erlang.config.json', method: 'GET', path: '/health' }));
+  ok('  a trace form\'s own warm-up route comes first', warmupFor({ path: '/__trace/warm' }, dir).source === 'trace.json');
+  const bad = (cfg) => { writeFileSync(join(dir, 'erlang.config.json'), JSON.stringify(cfg)); try { warmupFor(null, dir); return false; } catch (e) { return /does not match/.test(e.message); } };
+  ok('  a warm-up that is not a path on the app, or that could change something, is refused', bad({ warmup: { path: '//elsewhere/x' } }) && bad({ warmup: { path: 'health' } }) && bad({ warmup: { path: '/health', method: 'POST' } }) && bad({ warmup: {} }));
+  writeFileSync(join(dir, 'erlang.config.json'), JSON.stringify({ warmup: { method: 'HEAD', path: '/health' } }));
+  ok('  the static scan accepts a config with a warm-up', !scan(dir).reason && !scan(dir).findings.some((f) => /config/i.test(f.message ?? '')), JSON.stringify(scan(dir).reason ?? null));
+  rmSync(dir, { recursive: true, force: true });
+}
+
 console.log('\nTimed trace forms: unreliable is never a pass');
 {
   // L11 (judge "starts", with a warm-up): each route's first-request extra
@@ -375,6 +397,7 @@ console.log('\nTimed trace forms: unreliable is never a pass');
     // Each start: a warm-up, then every route's first request in one process;
     // the extra is first minus the later median (1 ms), the baseline the
     // cheapest route's extra in that start.
+    warmup: { source: 'fallback', method: 'GET', path: '/__erlang/warm-up-not-found', runs: [0, 1, 2, 3, 4].map(() => ({ status: 404, ms: 9 })) },
     starts: routes.map(([id, method, path, route]) => ({ id, method, path, route, samples: [0, 1, 2, 3, 4].map((k) => { const firstMs = (twin === 'planted' && cold[id] ? cold[id] : 5) + k; return { start: k, position: (routes.findIndex((r) => r[0] === id) - k + 5) % 5, warmupMs: 30, firstMs, laterMs: [1, 1.1, 0.9, 1, 1.2], extraMs: firstMs - 1, baselineMs: 4 + k }; }) })) } } });
   const run = (env) => {
     rmSync(out, { recursive: true, force: true });
@@ -384,6 +407,7 @@ console.log('\nTimed trace forms: unreliable is never a pass');
   };
   const calm = run({ before: { load1: 0.5, cpus: 8 }, after: { load1: 0.5, cpus: 8 } });
   ok('starts on a calm machine: the three cold routes are failing findings, and the form passes (exit 0)', calm.code === 0 && /^PASS  L11 express planted: 3\/3/m.test(calm.text), calm.text);
+  ok('  the report says which warm-up ran: the 404 fallback, which warms the framework but not the database driver', /^WARM-UP  L11 express planted: fallback, GET \/__erlang\/warm-up-not-found, a path that does not exist \(answered 404\): warms the framework, not the database driver/m.test(calm.text) && /a 404: it warms the framework, not the database driver/.test(calm.text + readFileSync(join(out, 'planted', 'report.json'), 'utf8')) && JSON.parse(readFileSync(join(out, 'planted', 'report.json'), 'utf8')).erlang.trace.warmup.source === 'fallback', calm.text);
   const busy = run({ before: { load1: 6, cpus: 8 }, after: { load1: 6, cpus: 8 } });
   ok('  the same run on a busy machine: UNRELIABLE with samples, spread and load averages, exit 3, never SKIP or PASS', busy.code === 3 && /^UNRELIABLE  L11 express planted: cold-start STB-10 GET \/regions\/:postcode: timing unreliable \(samples .*spread .*load before 6\/8 CPUs/m.test(busy.text) && /^UNRELIABLE  L11 express planted: 0\/3/m.test(busy.text) && !/^(SKIP|PASS)  L11 express planted/m.test(busy.text), busy.text);
   rmSync(form, { recursive: true, force: true });

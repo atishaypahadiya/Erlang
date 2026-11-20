@@ -23,7 +23,7 @@ Every form above is run by `scripts/cli-test.js`.
 | Input | Needed | Notes |
 |---|---|---|
 | Path to the code | Yes | A directory. Source, SQL, `schema.prisma`, `package.json`, lockfiles, Dockerfiles and deployment files (Compose, Kubernetes, PM2, fly.toml, serverless.yml) under it are read. |
-| `erlang.config.json` at the root of `<dir>` | No | `exclude` (paths not part of the app), `handlers` (entry points ERLANG cannot find), `smallTables`, `database.maxConnections`. Schema: `schema/config.schema.json`. A config that cannot be read refuses the scan. |
+| `erlang.config.json` at the root of `<dir>` | No | `exclude` (paths not part of the app), `handlers` (entry points ERLANG cannot find), `smallTables`, `database.maxConnections`, `warmup` (a cheap GET or HEAD route the trace harness requests in each fresh process before timing first requests; without it, a path that does not exist, a 404 that warms the framework but not the database driver, and the report says which ran). Schema: `schema/config.schema.json`. A config that cannot be read refuses the scan. |
 | URL of a running service | No | ERLANG runs nothing and sends no request. |
 | Test logins | No | None are read or used. |
 | Seed size | No | No database or data is used by the checks. |

@@ -9,7 +9,7 @@ import { waitForNoLock, describe, EXIT_LOCKED } from '../lib/itten-lock.js';
 
 const what = process.argv[2] ?? 'load';
 const limitMs = 1000 * Number(process.env.ERLANG_LOCK_WAIT_S ?? 600);
-const held = await waitForNoLock({ limitMs, onWait: (l) => console.error(`${what}: waiting for ITTEN's timing lock: ${describe(l)}`) });
+const held = await waitForNoLock({ label: `${what} start`, limitMs, onWait: (l) => console.error(`${what}: waiting for ITTEN's timing lock: ${describe(l)}`) });
 if (held) {
   console.error(`${what}: ITTEN's timing lock is still active after ${limitMs / 1000} s; not starting. ${describe(held)}`);
   process.exit(EXIT_LOCKED);

@@ -42,6 +42,7 @@ import { gunzipSync, brotliDecompressSync, inflateSync } from 'node:zlib';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { expand, routeOf, track, unreadBytes, unreadFields } from '../../lib/trace-judge.js';
 import { environment } from '../../lib/timing.js';
+import { warmupFor } from '../../lib/scope.js';
 const median = (xs) => { const s = [...xs].sort((a, b) => a - b); const m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
 import { waitForNoLock, active, describe as describeLock, EXIT_LOCKED } from '../../lib/itten-lock.js';
 import { CAPS, profile, checkRun, checkStep, Refused } from '../../lib/load-guard.js';
@@ -67,11 +68,24 @@ const MIN_GAP_MS = 200; // at most 5 requests a second
 const readJson = (p) => JSON.parse(readFileSync(p, 'utf8'));
 // A setup file (seed.sql, schema.sql, overlay/): the load form's own when it
 // has one, else the trace form's.
-const setup = (name) => (LOAD && existsSync(join(formDir, 'load', name)) ? join(formDir, 'load', name) : join(formDir, 'trace', name));
+const setup = (name) => (LOAD && existsSync(join(formDir, 'load', name)) ? join(formDir, 'load', name)
+  : !existsSync(join(formDir, 'trace', name)) && twinsRoot !== formDir && existsSync(join(twinsRoot, 'trace', name)) ? join(twinsRoot, 'trace', name)
+    : join(formDir, 'trace', name));
 const spec = LOAD
   ? { ...(existsSync(join(formDir, 'trace', 'trace.json')) ? readJson(join(formDir, 'trace', 'trace.json')) : {}), requests: [], pages: [], soaks: [], starts: null, ...readJson(join(formDir, 'load', 'load.json')) }
   : readJson(join(formDir, 'trace', 'trace.json'));
 const sha256 = (p) => createHash('sha256').update(readFileSync(p)).digest('hex');
+// Where the twins are: the form's own folder, or, when trace.json names
+// "twins" (a folder relative to the form, inside fixtures/), another form's
+// (L11's fallback form runs L11's twins with no warm-up route).
+const warmupOf = (twinDir) => warmupFor(spec.warmup, twinDir);
+const twinsRoot = (() => {
+  if (!spec.twins) return formDir;
+  const at = resolve(formDir, spec.twins);
+  const fixtures = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', 'fixtures');
+  if (!at.startsWith(fixtures + '/')) throw new Error(`trace.json: twins ${spec.twins} is outside fixtures/`);
+  return at;
+})();
 
 
 // psql inside the container, over its local socket; SQL goes on stdin, never
@@ -420,7 +434,7 @@ if (LOAD) {
 
 for (const twin of ['planted', 'clean']) {
   // ITTEN's timing lock, reread immediately before each twin starts.
-  const held = await waitForNoLock({ limitMs: 1000 * Number(process.env.ERLANG_LOCK_WAIT_S ?? 600), onWait: (l) => console.error(`trace: waiting for ITTEN's timing lock: ${describeLock(l)}`) });
+  const held = await waitForNoLock({ label: `trace ${spec.fixture} ${spec.form} ${twin}`, limitMs: 1000 * Number(process.env.ERLANG_LOCK_WAIT_S ?? 600), onWait: (l) => console.error(`trace: waiting for ITTEN's timing lock: ${describeLock(l)}`) });
   if (held) {
     console.error(`trace: ITTEN's timing lock is still active; not starting the ${twin} twin. ${describeLock(held)}`);
     process.exit(EXIT_LOCKED);
@@ -429,15 +443,18 @@ for (const twin of ['planted', 'clean']) {
   const work = join(out, 'work');
   rmSync(out, { recursive: true, force: true });
   mkdirSync(out, { recursive: true });
-  cpSync(join(formDir, twin), work, { recursive: true });
+  cpSync(join(twinsRoot, twin), work, { recursive: true });
   // Trace-only files (a driver for a library with no server) go over the twin.
+  // The twins' own form's overlay first, when the twins are another form's,
+  // then this form's on top (L11's fallback form replaces only the entry).
+  if (twinsRoot !== formDir && existsSync(join(twinsRoot, 'trace', 'overlay'))) cpSync(join(twinsRoot, 'trace', 'overlay'), work, { recursive: true });
   if (existsSync(join(formDir, 'trace', 'overlay'))) cpSync(join(formDir, 'trace', 'overlay'), work, { recursive: true });
   symlinkSync(modules, join(work, 'node_modules'), 'dir');
   const log = join(out, 'twin.log');
-  const raw = { image: process.env.ERLANG_TRACE_IMAGE ?? null, started: new Date().toISOString(), environment: { before: environment() }, fixture: spec.fixture, form: spec.form, twin, seed: { schema: Object.fromEntries(schemaFiles(join(formDir, twin)).map((f) => [f.slice(formDir.length + 1), sha256(f)])), seed: sha256(join(formDir, 'trace', 'seed.sql')) }, scales: {} };
+  const raw = { image: process.env.ERLANG_TRACE_IMAGE ?? null, started: new Date().toISOString(), environment: { before: environment() }, fixture: spec.fixture, form: spec.form, twin, seed: { schema: Object.fromEntries(schemaFiles(join(twinsRoot, twin)).map((f) => [f.slice(twinsRoot.length + 1), sha256(f)])), seed: sha256(setup('seed.sql')) }, scales: {} };
   for (const scale of spec.scales) {
     const n = spec.n * scale;
-    const tables = freshDatabase(scale, join(formDir, twin));
+    const tables = freshDatabase(scale, join(twinsRoot, twin));
     let app = await serve(work, scale, log);
     try {
       const requests = [];
@@ -458,21 +475,29 @@ for (const twin of ['planted', 'clean']) {
       await app.stop();
     }
     // The first requests after a start, against later ones, one start per sample.
-    if (spec.starts && spec.warmup && scale === spec.scales.at(-1)) {
+    if (spec.starts && scale === spec.scales.at(-1)) {
       // With a warm-up (L11): every route's first request in one fresh
       // process per start, after one request to a neutral route, the routes
       // in an order rotated by one each start so no route always comes
       // first. Each route's first-request extra (its first request minus the
       // median of the ones after it) is judged against the cheapest route's
       // extra in the same process, the baseline; no other twin is needed.
+      // The warm-up: the form's own (trace.json "warmup", a route its overlay
+      // adds), else the app's (erlang.config.json "warmup"), else a path
+      // that does not exist, expected to answer 404: that warms the
+      // framework but not the database driver. The report says which ran.
+      const warmup = warmupOf(join(twinsRoot, twin));
       const count = Math.max(...spec.starts.map((r) => r.samples ?? 3), Number(process.env.ERLANG_TRIAL_STARTS) || 0);
+      const warmups = [];
       const byRoute = new Map(spec.starts.map((r) => [r.id, []]));
       for (let k = 0; k < count; k++) {
         const fresh = await serve(work, scale, log);
         try {
           await paced();
-          const w = await once(fresh, spec.warmup, spec.warmup.path);
-          if (!w.res || w.res.status >= 400) throw new Error(`warm-up ${spec.warmup.method} ${spec.warmup.path} answered ${w.res?.status ?? 'nothing'}`);
+          const w = await once(fresh, warmup, warmup.path);
+          const status = w.res?.status ?? null;
+          if (warmup.source === 'fallback' ? status === null || status >= 500 : status === null || status >= 400) throw new Error(`warm-up ${warmup.method} ${warmup.path} (${warmup.source}) answered ${status ?? 'nothing'}`);
+          warmups.push({ status, ms: w.extra.ms });
           const order = spec.starts.map((_, j) => spec.starts[(j + k) % spec.starts.length]);
           const seen = [];
           for (const [position, r] of order.entries()) {
@@ -486,21 +511,7 @@ for (const twin of ['planted', 'clean']) {
         } finally { await fresh.stop(); }
       }
       raw.scales[scale].starts = spec.starts.map((r) => ({ id: r.id, method: r.method, path: expand(r.path, n), route: r.route ?? null, samples: byRoute.get(r.id) }));
-    } else if (spec.starts && scale === spec.scales.at(-1)) {
-      const starts = [];
-      for (const r of spec.starts) {
-        const samples = [];
-        for (let k = 0; k < Math.max(r.samples ?? 3, Number(process.env.ERLANG_TRIAL_STARTS) || 0); k++) {
-          const fresh = await serve(work, scale, log);
-          try {
-            const runs = [];
-            for (let j = 0; j < (r.after ?? 5) + 1; j++) { await paced(); const { res, extra } = await once(fresh, r, expand(r.path, n), r.body === undefined ? undefined : expand(r.body, n)); if (!res || res.status >= 400) throw new Error(`start ${r.id}: ${r.method} answered ${res?.status ?? 'nothing'}`); runs.push({ ms: extra.ms }); }
-            samples.push({ firstMs: runs[0].ms, laterMs: runs.slice(1).map((x) => x.ms) });
-          } finally { await fresh.stop(); }
-        }
-        starts.push({ id: r.id, method: r.method, path: expand(r.path, n), route: r.route ?? null, samples });
-      }
-      raw.scales[scale].starts = starts;
+      raw.scales[scale].warmup = { ...warmup, runs: warmups };
     }
     console.log(`trace: ${spec.fixture} ${spec.form} ${twin} at ${scale}x: ${(spec.requests ?? []).length} request(s), ${(spec.pages ?? []).length} page view(s)`);
   }
@@ -539,7 +550,7 @@ async function loadMain() {
     rmSync(out, { recursive: true, force: true });
     mkdirSync(out, { recursive: true });
     const work = join(out, 'work');
-    cpSync(join(formDir, twin), work, { recursive: true });
+    cpSync(join(twinsRoot, twin), work, { recursive: true });
     if (existsSync(setup('overlay'))) cpSync(setup('overlay'), work, { recursive: true });
     symlinkSync(modules, join(work, 'node_modules'), 'dir');
     works[twin] = { out, work, log: join(out, 'twin.log') };
@@ -552,13 +563,13 @@ async function loadMain() {
       // run again from a fresh database and server once the lock is gone
       // (the wait below, whose limit ends the run with exit 75).
       for (let attempt = 1; ; attempt++) {
-      const tables = freshDatabase(scale, join(formDir, twin));
+      const tables = freshDatabase(scale, join(twinsRoot, twin));
       let app = await serve(work, scale, log);
       const steps = [];
       try {
         for (const step of spec.steps) {
           if (step.restart) { await app.stop(); app = await serve(work, scale, log); }
-          const held = await waitForNoLock({ limitMs: lockWait, onWait: (l) => console.error(`load: waiting for ITTEN's timing lock: ${describeLock(l)}`) });
+          const held = await waitForNoLock({ label: `load ${spec.fixture} ${twin} repeat ${k + 1} ${step.id}`, limitMs: lockWait, onWait: (l) => console.error(`load: waiting for ITTEN's timing lock: ${describeLock(l)}`) });
           if (held) { console.error(`load: ITTEN's timing lock is still active; not starting step ${step.id}. ${describeLock(held)}`); process.exit(EXIT_LOCKED); }
           stubFor(step.upstream ?? {});
           const before = environment();
