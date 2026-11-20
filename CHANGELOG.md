@@ -51,13 +51,14 @@ Request handlers are found in Express, Fastify, `node:http` and Next.js.
   - Counts and shares are judged as measured: statements, rows read, shared blocks, attempts, connections, bytes, failed requests.
   - The heap slope is judged per pair.
   - Timed verdicts (latencies, the event loop's longest stretch, late shares, the shedding gap) are judged under the relative timing rule.
+- **Headroom:** `scripts/trace.sh --headroom` measures each load form's clean twin, one request at a time: at every step's rate, its main thread must be busy at most 0.2 of the time, or a verdict that compares the twins under load would turn on the machine's speed. CI checks every form.
 - **Postgres** is pinned by digest, with a random password per run, and the container is removed afterwards.
 
 ### Timing rules
 
 - **Count-based verdicts** never depend on the machine's load.
 - **The relative timing rule (c):** for a verdict comparing two conditions measured together. Five repeats; a finding when every repeat clears the threshold, none when no repeat does, and unreliable (info, never failing) for a mix. Pairs alternate twin order. Spread and load average are recorded but gate nothing.
-- **The timing lock:** for other timings. At least 3 measurements, a spread of 10% or less, and a 1-minute load average below half the CPU count before and after; otherwise the finding is info, "timing unreliable".
+- **Absolute waits** (L06's fixed wait between retries): judged on the delay the code declares, recorded from the twin's timers, not on a clock; no load average or spread gates it.
 - **ITTEN's timing lock:** the harnesses generate no load while it is active. They wait and log every wait (phase, taken, expires, duration). A lock in an unknown format counts as active.
 
 ### Exit codes
@@ -69,7 +70,7 @@ Request handlers are found in Express, Fastify, `node:http` and Next.js.
 | 2 | Refused (unreadable directory or config; for the load harness, k6 missing or over its caps) |
 | 3 | Partial with no failing findings; for the harnesses, also a planted defect judged only "timing unreliable" (UNRELIABLE, never a pass) |
 | 64 | Bad usage |
-| 70 | Internal failure: a crash, not a refusal and not bad input. Stderr says `internal failure` and what failed. (Until now a crash exited 1, which read as failing findings.) |
+| 70 | Internal failure: a crash, not a refusal and not bad input, including a module that fails to load. Stderr says `internal failure` and what failed. (Until now a crash exited 1, which read as failing findings.) |
 | 75 | Harnesses only: ITTEN's lock stayed active, nothing was judged, retry later. `erlang <dir>` never returns it. |
 
 Error and warning fail a run; info never does.

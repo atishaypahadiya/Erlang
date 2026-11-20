@@ -253,6 +253,9 @@ Known false negatives:
 
 ## Acceptance test
 
+- **L09's export under load** (the owner, 20 November 2026): on GET /export's step, the clean twin's late share is at most 0.05 in every pair of every run, and the planted twin clears three times the clean twin's in every pair. Enforced by the load judge (`cleanMax` in `L09-blocking-work/load/load.json`). If the fixture misses it, the numbers are reported and the fixture is not adjusted again.
+- **Headroom** (the owner, 20 November 2026): at every load step's rate, each clean twin's main thread is busy at most 0.2 of the time (the step's rate times its main-thread time per request, plus its background's), measured by `scripts/trace.sh --headroom` and judged by `scripts/headroom/judge.js`.
+
 - Every planted defect is reported by its check, through every channel the registry lists for it. Recall 100%.
 - No clean twin has any finding. No planted service has a finding other than its own. Precision 100%.
 - Static and trace findings are identical, field by field, across five runs on two machines (a laptop and a CI runner).

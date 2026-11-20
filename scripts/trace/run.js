@@ -55,11 +55,14 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 // --load: the load harness (scripts/load.sh, research/load-harness.md), which
 // shares this runner: the form's load/load.json steps, run by k6, over the
 // same database, seed and served twin.
-const LOAD = process.argv.includes('--load');
+// --headroom: the load form's clean twin, its main-thread time per request
+// at each step (headroomMain, below); set up as a load run is.
+const HEADROOM = process.argv.includes('--headroom');
+const LOAD = process.argv.includes('--load') || HEADROOM;
 // How many times one twin's repeat is run again after ITTEN's lock
 // interrupts it, before the run stops with exit 75.
 const LOAD_ATTEMPTS = 5;
-const [formDir, outDir, modules] = process.argv.slice(2).filter((a) => a !== '--load').map((p) => p && resolve(p));
+const [formDir, outDir, modules] = process.argv.slice(2).filter((a) => a !== '--load' && a !== '--headroom').map((p) => p && resolve(p));
 const { ERLANG_TRACE_CONTAINER: CONTAINER, ERLANG_TRACE_PORT: PORT, ERLANG_TRACE_APP_PASSWORD_FILE: PW_FILE } = process.env;
 if (!formDir || !outDir || !modules || !CONTAINER || !PORT || !PW_FILE) {
   console.error('usage: node scripts/trace/run.js <form dir> <out dir> <node_modules dir>, with ERLANG_TRACE_CONTAINER, ERLANG_TRACE_PORT and ERLANG_TRACE_APP_PASSWORD_FILE set (scripts/trace.sh sets them)');
@@ -282,6 +285,10 @@ async function once(app, r, path, body) {
   const probes = r.probes ?? [];
   if (probes.includes('pool-during')) stub.onHit = () => app.probe('pool');
   if (probes.includes('loop')) await app.probe('loop-reset');
+  // The waits the twin declares (L06's attempts): every timer it sets during
+  // the request, on the stub's clock.
+  const timed = spec.judge === 'attempts' && !!r.upstream;
+  if (timed) await app.probe('timers-reset');
   const poolBefore = probes.includes('pool-after') ? await app.probe('pool') : null;
   const backendsBefore = probes.includes('connections') ? backends() : null;
   const since = new Date(Date.now() - 5000).toISOString();
@@ -294,9 +301,12 @@ async function once(app, r, path, body) {
   const fromLog = markStart ? loggedBetween(markStart, mark(), since) : null;
   const logged = spec.params ? fromLog.statements : null;
   const plans = spec.plans ? fromLog.plans : null;
-  const hits = stub.hits.map((h) => ({ ...h, at: Number((h.at - stub.hits[0].at).toFixed(3)) }));
+  const base0 = stub.hits[0]?.at ?? 0;
+  const hits = stub.hits.map((h) => ({ ...h, at: Number((h.at - base0).toFixed(3)) }));
+  const timers = timed ? ((await app.probe('timers')).timers ?? []).map((t) => ({ ms: t.ms, at: Number((t.at - base0).toFixed(3)) })) : null;
   const extra = {
     ...(r.upstream || hits.length ? { upstream: hits } : {}),
+    ...(timers ? { timers } : {}),
     ...(probes.includes('pool-after') ? { poolBefore, poolAfter: await app.probe('pool') } : {}),
     ...(probes.includes('loop') ? { loop: await app.probe('loop') } : {}),
     ...(backendsBefore ? (() => { const after = backends(); return { connections: { opened: after.filter((p) => !backendsBefore.includes(p)).length, open: after.length } }; })() : {}),
@@ -342,7 +352,7 @@ async function measureRequest(app, r, n) {
   const kept = (x) => x.poolAfter && (x.poolAfter.total - x.poolAfter.idle) - (x.poolBefore.total - x.poolBefore.idle);
   const shape = (x) => JSON.stringify({ ...x, bytes: 0, ms: 0, upstream: x.upstream?.length, loop: undefined, poolBefore: undefined, poolAfter: kept(x), connections: x.connections?.opened, plans: x.plans && scans(x.plans), logged: x.logged?.length, statements: x.logged ? Object.fromEntries(Object.entries(x.statements).map(([q, v]) => [q, v.calls])) : x.statements });
   const stable = shape(a) === shape(b);
-  const keep = (x) => ({ timedOut: x.timedOut, ...(x.upstream ? { upstream: x.upstream } : {}), ...(x.poolAfter ? { poolBefore: x.poolBefore, poolAfter: x.poolAfter } : {}), ms: x.ms, ...(x.loop ? { loop: x.loop } : {}), ...(x.connections ? { connections: x.connections } : {}), ...(x.logged ? { logged: x.logged, cacheHeaders: x.cacheHeaders, statements: x.statements } : {}), ...(x.plans ? { plans: x.plans } : {}) });
+  const keep = (x) => ({ timedOut: x.timedOut, ...(x.upstream ? { upstream: x.upstream } : {}), ...(x.timers ? { timers: x.timers } : {}), ...(x.poolAfter ? { poolBefore: x.poolBefore, poolAfter: x.poolAfter } : {}), ms: x.ms, ...(x.loop ? { loop: x.loop } : {}), ...(x.connections ? { connections: x.connections } : {}), ...(x.logged ? { logged: x.logged, cacheHeaders: x.cacheHeaders, statements: x.statements } : {}), ...(x.plans ? { plans: x.plans } : {}) });
   return { id: r.id, method: r.method, path, route: r.route ?? routeOf(app.routes, r.method, path), ...b, stable, ...(stable ? {} : { other: a }), ...(r.upstream || r.probes || spec.params || spec.plans ? { ...(w ? { warm: keep(w) } : {}), first: keep(a), last: keep(b) } : {}), samples: runs.map((x) => ({ ms: x.ms, ...(x.loop ? { loopMaxMs: x.loop.maxMs } : {}), ...(x.upstream ? { attempts: x.upstream.length } : {}) })) };
 }
 
@@ -427,7 +437,7 @@ async function serve(work, scale, log) {
 }
 
 if (LOAD) {
-  await loadMain();
+  if (HEADROOM) await headroomMain(); else await loadMain();
   stubFor();
   await new Promise((ok) => stubServer.close(ok));
   process.exit(0);
@@ -595,6 +605,58 @@ async function loadMain() {
   }
   for (const twin of ['planted', 'clean']) rmSync(works[twin].work, { recursive: true, force: true });
   writeFileSync(join(outDir, 'raw.json'), JSON.stringify(raw, null, 2) + '\n');
+}
+
+// ---- Headroom (--headroom; the owner, 20 November 2026). For each load
+// step, the clean twin's main-thread busy share at the step's rate: the
+// step's rate times its request's main-thread time, plus its background's
+// rate times the background request's. A clean twin near saturation turns a
+// late-share verdict into a coin toss (L09's export, CI run 44682458078), so
+// every load form must leave its clean twin at HEADROOM_MAX or less
+// (scripts/headroom/judge.js). Main-thread time per request: the twin's
+// event-loop utilisation (busy time) over HEADROOM_N requests sent one at a
+// time, after HEADROOM_WARM, against a fresh database. No load: one request
+// at a time.
+async function headroomMain() {
+  const HEADROOM_N = 10;
+  const HEADROOM_WARM = 3;
+  const scale = spec.scale ?? 1;
+  const out = join(outDir, 'clean');
+  rmSync(outDir, { recursive: true, force: true });
+  mkdirSync(out, { recursive: true });
+  const work = join(out, 'work');
+  cpSync(join(twinsRoot, 'clean'), work, { recursive: true });
+  if (existsSync(setup('overlay'))) cpSync(setup('overlay'), work, { recursive: true });
+  symlinkSync(modules, join(work, 'node_modules'), 'dir');
+  freshDatabase(scale, join(twinsRoot, 'clean'));
+  const app = await serve(work, scale, join(out, 'twin.log'));
+  let i = 1_000_000;
+  const cost = async (q, upstream) => {
+    stubFor(upstream ?? {});
+    const one = async () => {
+      const n = String(++i);
+      const path = String(q.path).replaceAll('%24i', n).replaceAll('$i', n);
+      const body = q.body === undefined ? undefined : JSON.parse(JSON.stringify(q.body).replaceAll('$i', n));
+      try { await send(app.port, (q.method ?? 'GET').toUpperCase(), path, body, Math.min(q.timeoutMs ?? 10_000, 5_000)); } catch (e) { if (e.code !== 'ERLANG_TIMEOUT') throw e; }
+    };
+    for (let k = 0; k < HEADROOM_WARM; k++) await one();
+    await app.probe('elu-reset');
+    for (let k = 0; k < HEADROOM_N; k++) await one();
+    const u = await app.probe('elu');
+    return u.activeMs / HEADROOM_N;
+  };
+  const rows = [];
+  try {
+    for (const step of spec.steps) {
+      const ms = await cost(step, step.upstream);
+      const bg = step.background ? { method: step.background.method ?? 'GET', path: step.background.path, rate: step.background.rate, ms: await cost(step.background, step.upstream) } : null;
+      const busy = (step.rate * ms + (bg ? bg.rate * bg.ms : 0)) / 1000;
+      rows.push({ step: step.id, method: step.method ?? 'GET', path: step.path, rate: step.rate, ms: Number(ms.toFixed(3)), background: bg && { ...bg, ms: Number(bg.ms.toFixed(3)) }, busy: Number(busy.toFixed(4)) });
+      console.log(`headroom: ${spec.fixture} ${spec.form} clean ${step.id}: busy ${busy.toFixed(3)}`);
+    }
+  } finally { await app.stop(); stubFor(); }
+  rmSync(work, { recursive: true, force: true });
+  writeFileSync(join(outDir, 'headroom.json'), JSON.stringify({ fixture: spec.fixture, form: spec.form, twin: 'clean', n: HEADROOM_N, warm: HEADROOM_WARM, environment: environment(), rows }, null, 2) + '\n');
 }
 
 // The load average after a step: once below half the CPU count, rereading

@@ -50,6 +50,8 @@ The trace and load harnesses use the same codes, and one more: 75, temporarily b
 
 `npm run trace` (`scripts/trace.sh`) runs the trace harness on the fixtures: each twin is served against PostgreSQL in Docker with seeded data at 1x and 10x, and the statements, rows, calls and bytes of each request are counted and judged, with every outbound call going to a stub on 127.0.0.1 that counts it, fails it or never answers it, and the twin's pool counted (`research/trace-harness.md`). It needs Docker, sends requests one at a time to the fixture on 127.0.0.1, runs at nice 15, and waits while ITTEN's timing lock is active (`research/itten-lock.md`). It is not part of `npm test`.
 
+`scripts/trace.sh --headroom` checks each load form's clean twin has room to spare: at every step's rate its main thread is busy at most 0.2 of the time.
+
 `npm run load` (`scripts/load.sh`) runs the load harness on one fixture form: its twins served on 127.0.0.1 against PostgreSQL and driven by k6, which you install yourself, at a fixed arrival rate within capped rates and durations, each twin judged against the other (`research/load-harness.md`): counts and shares as measured, the heap slope per pair, and timed verdicts (latencies, the event loop's longest stretch, the shedding gap) under the relative timing rule, five pairs that all clear, none, or a mix, which is reported as unreliable and never fails (`docs/CONTRACT.md`). It loads only the twins it started on loopback, waits while ITTEN's timing lock is active, and runs the full suite only in CI.
 
 - `reference/`: the rules ERLANG checks against, with their sources.

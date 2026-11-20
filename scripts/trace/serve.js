@@ -9,7 +9,12 @@
 //   - answers the harness's probes over IPC: "pool" (the counts of the pool
 //     the twin's src/db.js exports), "memory" (after a full collection, when
 //     node runs with --expose-gc, with the responses answered so far), "loop-reset" and "loop" (the event loop's
-//     delay since the last reset).
+//     delay since the last reset), "timers-reset" and "timers" (every timer
+//     the twin declared since the reset: setTimeout, global or from
+//     node:timers/promises, with its delay as the code asked for it and when,
+//     on the system's monotonic clock, as the harness's stub times its hits),
+//     and "elu-reset" and "elu" (the main thread's busy time since the reset,
+//     performance.eventLoopUtilization).
 // Then it imports the twin's entry (trace.json "entry", or src/server.js,
 // or src/app.js). If no server is listening once the import is done and the
 // module exports `app`, it starts it. When the first server is listening it
@@ -22,7 +27,8 @@ import http from 'node:http';
 import https from 'node:https';
 import net from 'node:net';
 import { syncBuiltinESMExports } from 'node:module';
-import { monitorEventLoopDelay } from 'node:perf_hooks';
+import { monitorEventLoopDelay, performance } from 'node:perf_hooks';
+import timersPromises from 'node:timers/promises';
 import { writeFileSync, renameSync, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -71,6 +77,25 @@ http.request = (...args) => toStub(args);
 https.request = (...args) => toStub(args);
 http.get = (...args) => { const r = toStub(args); r.end(); return r; };
 https.get = (...args) => { const r = toStub(args); r.end(); return r; };
+
+// ---- Declared timers: the delay a wait asked for, not how long it took
+// (L06: a fixed wait is judged on the value the code declares, with no clock;
+// docs/CONTRACT.md, absolute waits). Recorded only between "timers-reset" and
+// "timers".
+const nowMs = () => Number(process.hrtime.bigint() / 1000n) / 1000;
+let declared = null;
+const plainTimeoutP = timersPromises.setTimeout;
+timersPromises.setTimeout = function setTimeout(delay, ...rest) {
+  declared?.push({ ms: Number(delay ?? 1), at: nowMs() });
+  return plainTimeoutP.call(this, delay, ...rest);
+};
+const plainTimeout = globalThis.setTimeout;
+const wrappedTimeout = function setTimeout(fn, delay, ...rest) {
+  declared?.push({ ms: Number(delay ?? 0), at: nowMs() });
+  return plainTimeout.call(this, fn, delay, ...rest);
+};
+for (const k of Reflect.ownKeys(plainTimeout)) if (!['length', 'name', 'prototype'].includes(k)) Object.defineProperty(wrappedTimeout, k, Object.getOwnPropertyDescriptor(plainTimeout, k));
+globalThis.setTimeout = wrappedTimeout;
 syncBuiltinESMExports();
 const plainFetch = globalThis.fetch;
 globalThis.fetch = (input, init = {}) => {
@@ -83,9 +108,14 @@ globalThis.fetch = (input, init = {}) => {
 };
 
 // ---- Probes.
+// The loop monitor samples every 1 ms, which wakes the main thread about
+// 1,000 times a second (about 1.75% of it busy): enabled only when a probe
+// first asks for it, so it never counts in the headroom's busy time.
 const loop = monitorEventLoopDelay({ resolution: 1 });
-loop.enable();
+let loopOn = false;
+const loopEnable = () => { if (!loopOn) { loop.enable(); loopOn = true; } };
 let dbModule = null;
+let eluFrom = null;
 process.on('message', async (m) => {
   const reply = (body) => process.send?.({ id: m.id, ...body });
   try {
@@ -100,10 +130,14 @@ process.on('message', async (m) => {
     // reset() also forgets the last tick, and the tick after it only notes
     // the time: wait for that tick, or a stretch that starts before it is
     // never recorded.
-    } else if (m.probe === 'loop-reset') { loop.reset(); await new Promise((ok) => setTimeout(ok, 5)); reply({}); }
+    } else if (m.probe === 'loop-reset') { loopEnable(); loop.reset(); await new Promise((ok) => setTimeout(ok, 5)); reply({}); }
     // The delay of a stretch is recorded when the monitor's timer next runs:
     // wait for a timer and an immediate, so the stretch just ended is in.
-    else if (m.probe === 'loop') { await new Promise((ok) => setTimeout(ok, 5)); await new Promise((ok) => setImmediate(ok)); reply({ maxMs: loop.max / 1e6, meanMs: loop.mean / 1e6, count: loop.count }); }
+    else if (m.probe === 'loop') { loopEnable(); await new Promise((ok) => setTimeout(ok, 5)); await new Promise((ok) => setImmediate(ok)); reply({ maxMs: loop.max / 1e6, meanMs: loop.mean / 1e6, count: loop.count }); }
+    else if (m.probe === 'timers-reset') { declared = []; reply({}); }
+    else if (m.probe === 'timers') { const list = declared ?? []; declared = null; reply({ timers: list }); }
+    else if (m.probe === 'elu-reset') { eluFrom = performance.eventLoopUtilization(); reply({}); }
+    else if (m.probe === 'elu') { const u = performance.eventLoopUtilization(eluFrom ?? undefined); reply({ activeMs: u.active, idleMs: u.idle, utilization: u.utilization, answered }); }
     else reply({ error: `unknown probe ${m.probe}` });
   } catch (e) { reply({ error: String(e?.message ?? e) }); }
 });

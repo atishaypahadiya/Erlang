@@ -13,7 +13,7 @@
 // Usage: node scripts/cli-test.js            exit 0 when every case holds
 
 import { spawnSync, execFileSync } from 'node:child_process';
-import { VERSION, commit, uncommitted } from '../bin/erlang.js';
+import { VERSION, commit, uncommitted } from '../lib/erlang.js';
 import { readFileSync, writeFileSync, rmSync, existsSync, mkdirSync, cpSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';

@@ -373,6 +373,11 @@
           ],
           "description": "Extra statements or calls per extra item between the two scales; for judge memory, the heap kept per request (bytes), the least-squares slope over a soak's points."
         },
+        "waits": {
+          "type": "array",
+          "items": { "type": "number", "minimum": 0 },
+          "description": "judge attempts: the delay the twin declared before each retry (ms), as its code asked for it (a timer), in every run; a declared value, not a measured time."
+        },
         "r2": {
           "type": [
             "number",

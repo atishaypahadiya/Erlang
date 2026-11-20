@@ -11,11 +11,12 @@ import { writeFileSync, mkdirSync, rmSync, readFileSync, cpSync, existsSync, sym
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { scan } from '../bin/erlang.js';
+import { scan } from '../lib/erlang.js';
 import { apply, syntaxErrors, fileOf } from '../lib/fix.js';
 import { describe, Plain } from '../lib/isolate.js';
 import * as TJ from '../lib/trace-judge.js';
 import * as TIMING from '../lib/timing.js';
+const { declaredWaits } = TIMING;
 import * as LOCK from '../lib/itten-lock.js';
 import * as GUARD from '../lib/load-guard.js';
 import { warmupFor, FALLBACK_WARMUP } from '../lib/scope.js';
@@ -352,6 +353,49 @@ console.log('\nAn internal failure exits 70');
     const r = spawnSync(process.execPath, [join(ROOT, 'scripts', judge, 'judge.js'), join(ROOT, 'fixtures', form), out], { encoding: 'utf8' });
     ok(`${label}: a raw.json that cannot be parsed is a crash: exit 70, not 1`, r.status === 70 && new RegExp(`^${label}: internal failure \\(exit 70\\)`, 'm').test(r.stderr), `exit ${r.status}: ${r.stderr.trim().split('\n')[0]}`);
   }
+  rmSync(out, { recursive: true, force: true });
+  // A module that throws while it loads: each entry (bin/erlang.js and both
+  // judges, which import nothing statically) exits 70, not Node's 1.
+  const boot = join(OUT, 'boot');
+  rmSync(boot, { recursive: true, force: true });
+  for (const [label, entry, real] of [['erlang', 'bin/erlang.js', 'lib/erlang.js'], ['trace judge', 'scripts/trace/judge.js', 'scripts/trace/judge-main.js'], ['load judge', 'scripts/load/judge.js', 'scripts/load/judge-main.js']]) {
+    for (const f of [entry, real]) mkdirSync(dirname(join(boot, f)), { recursive: true });
+    cpSync(join(ROOT, entry), join(boot, entry));
+    writeFileSync(join(boot, real), "throw new Error('broken while loading');\n");
+    const r = spawnSync(process.execPath, [join(boot, entry), 'x', 'y'], { encoding: 'utf8' });
+    ok(`${entry}: a module that throws while loading exits 70, internal failure`, r.status === 70 && new RegExp(`^${label}: internal failure \\(exit 70\\): Error: broken while loading`).test(r.stderr), `exit ${r.status}: ${r.stderr.trim().split('\n')[0]}`);
+  }
+  rmSync(boot, { recursive: true, force: true });
+}
+
+console.log('\nAbsolute waits: the delay the code declares, not a clock');
+{
+  // Attempts at 0, 1,003 and 2,005 ms (a busy machine's clock); a 2,000 ms
+  // request deadline set with each attempt; a fixed 1,000 ms wait declared.
+  const at = [0, 1003.4, 2005.1];
+  const deadlines = at.map((a) => ({ ms: 2000, at: a + 0.2 }));
+  const fixed = declaredWaits(at, [...deadlines, { ms: 1000, at: 2.1 }, { ms: 1000, at: 1004.9 }]);
+  ok('a fixed wait is read as declared, 1,000 ms each gap, whatever the clock measured', JSON.stringify(fixed) === '[1000,1000]', JSON.stringify(fixed));
+  const jitter = declaredWaits(at, [...deadlines, { ms: 1.13, at: 0.9 }, { ms: 0, at: 500 }, { ms: 731.2, at: 1004.9 }]);
+  ok('  a jittered wait, a draw of 1.13 ms included, is read as drawn; a 0 ms timer is not a wait', JSON.stringify(jitter) === '[1.13,731.2]', JSON.stringify(jitter));
+  ok('  a gap with no timer that fired in it is null (not judged: info)', JSON.stringify(declaredWaits(at, deadlines)) === '[null,null]');
+  ok('  no timers recorded at all is null', declaredWaits(at, undefined) === null);
+}
+
+console.log('\nHeadroom: the clean twin under 0.2 busy at every step');
+{
+  const out = join(OUT, 'headroom');
+  const run = (busy) => {
+    rmSync(out, { recursive: true, force: true });
+    mkdirSync(out, { recursive: true });
+    writeFileSync(join(out, 'headroom.json'), JSON.stringify({ fixture: 'L09', form: 'express', twin: 'clean', n: 10, warm: 3, rows: [{ step: 'avatars', method: 'GET', path: '/avatars/1', rate: 20, ms: 0.5, background: { method: 'GET', path: '/export', rate: 6, ms: (busy - 0.01) * 1000 / 6 }, busy }] }));
+    const r = spawnSync(process.execPath, [join(ROOT, 'scripts', 'headroom', 'judge.js'), 'fixtures/L09-blocking-work', out], { encoding: 'utf8' });
+    return { code: r.status, text: (r.stdout + r.stderr).trim() };
+  };
+  const ok19 = run(0.19);
+  ok('headroom: a clean twin busy 0.19 of the time at the step\'s rate passes, with the rate x ms line', ok19.code === 0 && /^HEADROOM  L09 express clean avatars: 20\/s x 0\.50 ms \(GET \/avatars\/1\) \+ 6\/s x .* = busy 0\.190$/m.test(ok19.text), ok19.text);
+  const over = run(0.21);
+  ok('  busy 0.21 fails the form (exit 1), naming the step', over.code === 1 && /busy 0\.210, over 0\.2/.test(over.text) && /^FAIL  L09 express headroom/m.test(over.text), over.text);
   rmSync(out, { recursive: true, force: true });
 }
 

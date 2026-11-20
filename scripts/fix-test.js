@@ -17,7 +17,7 @@ import { readFileSync, writeFileSync, rmSync, cpSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { FIXTURES, specOf, copyTwin } from './fixture-test.js';
-import { scan } from '../bin/erlang.js';
+import { scan } from '../lib/erlang.js';
 import { catches } from '../core/fixture-score.js';
 import { apply, syntaxErrors, fileOf } from '../lib/fix.js';
 

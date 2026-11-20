@@ -25,7 +25,7 @@
 import { readFileSync, writeFileSync, cpSync, rmSync, mkdirSync, readdirSync, existsSync } from 'node:fs';
 import { join, dirname, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { scan, exitCode } from '../bin/erlang.js';
+import { scan, exitCode } from '../lib/erlang.js';
 import { write, check } from '../core/report.js';
 import { validate } from '../core/schema.js';
 import { score, format, passed, catches } from '../core/fixture-score.js';

@@ -47,10 +47,17 @@ if [ "${1:-}" = "--load" ]; then
   SPEC=load/load.json
   LOADFLAG=--load
   shift
+elif [ "${1:-}" = "--headroom" ]; then
+  # Each load form's clean twin, one request at a time: its main-thread
+  # time per request against each step's rate (scripts/headroom/judge.js).
+  MODE=headroom
+  SPEC=load/load.json
+  LOADFLAG=--headroom
+  shift
 fi
 for a in "$@"; do
   case "$a" in
-    -*) echo "usage: scripts/trace.sh [--load] [form ...]   e.g. L01a-n-plus-one/sql" >&2; exit 64 ;;
+    -*) echo "usage: scripts/trace.sh [--load | --headroom] [form ...]   e.g. L01a-n-plus-one/sql" >&2; exit 64 ;;
   esac
   if [ ! -f "fixtures/$a/$SPEC" ]; then
     echo "$MODE: fixtures/$a/$SPEC does not exist" >&2
@@ -149,10 +156,10 @@ for form in "${forms[@]}"; do
   fi
   manifest="$twins/planted/package.json"
   [ -f "fixtures/$form/trace/package.json" ] && manifest="fixtures/$form/trace/package.json"
-  [ "$MODE" = "load" ] && [ -f "fixtures/$form/load/package.json" ] && manifest="fixtures/$form/load/package.json"
+  [ "$MODE" != "trace" ] && [ -f "fixtures/$form/load/package.json" ] && manifest="fixtures/$form/load/package.json"
   lock="fixtures/$form/trace/package-lock.json"
   [ -f "$lock" ] || lock="$twins/trace/package-lock.json"
-  [ "$MODE" = "load" ] && [ -f "fixtures/$form/load/package-lock.json" ] && lock="fixtures/$form/load/package-lock.json"
+  [ "$MODE" != "trace" ] && [ -f "fixtures/$form/load/package-lock.json" ] && lock="fixtures/$form/load/package-lock.json"
   # A Prisma form: its client is generated into the install from the planted
   # twin's schema (the twins' models are the same; L03's differ only in an
   # index, which the client does not hold), and run.js renders each twin's

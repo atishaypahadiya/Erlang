@@ -109,11 +109,11 @@
     },
     {
       "id": "L09-d4",
-      "title": "A SHA-256 of the response for its ETag: one fast pass",
+      "title": "A SHA-256 of the orders' JSON for the export's ETag, made when the orders change: one fast pass, outside any request",
       "where": {
-        "file": "src/routes/exports.js",
-        "line": 11,
-        "column": 16
+        "file": "src/store.js",
+        "line": 18,
+        "column": 18
       }
     },
     {
