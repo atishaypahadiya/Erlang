@@ -98,6 +98,10 @@ A trace or load finding carries the values its message quotes: `erlang.values.me
 
 - **The planted twin answers (load):** a load step whose planted twin fails or refuses any request, in any repeat, fails the form, unless `load.json` says why failures belong to it (`plantedFailures`).
 
+- **Fit margin (L05):** a planted row judged on a fitted heap slope needs a fit with room over the judge's R² bar: the median R² at least half way from the bar to 1 (0.95 for the trace's 0.9, 0.75 for the load form's 0.5), and no sample under the bar (`scripts/fit-margin.js`). Under load the samples are a run's repeats; in a trace each run fits once, so the median is taken across runs by the release gate, and one run's fit under 0.95 is printed as an outlier.
+- **L05's placeCart soak:** the trace reads the heap at 600, 1,200, 1,800, 2,400, 3,000 and 3,600 requests, not 600 to 1,100: the same 3,000-request span as createOrder's, so collections between readings move the fit less.
+- **L09's export (trace form):** the overlay seeds 350,000 orders, not 200,000, so the planted gzipSync's stretch on the Mac is about 150 ms, 1.5 times its 100 ms margin, rather than 86 ms, short of it. The load form is unchanged.
+- **Sizing:** margins in milliseconds are sized on the fastest machine in use, headroom and clean-twin limits on the slowest (`fixtures/PLAN.md`).
 - **L11's countries:** the seed loads 75,000 countries, not 50,000, so the planted first request under load sits at an estimated 1.5 times its margin on CI rather than 1.13 (fixtures/PLAN.md).
 
 ### Harness fixes
@@ -111,11 +115,11 @@ A trace or load finding carries the values its message quotes: `erlang.values.me
 ### Known limits
 
 - **Detection floor (L05).** A leak under about 512 bytes a request (trace), or under three times the clean twin's own retention per pair (load), is not detected. L05's `POST /orders`, about 83 to 215 bytes an order, is kept as a documented expected miss. It is reported on an EXPECTED line, not deleted.
-- **Thin margins,** all on Erlang's own fixtures (none crossed on the last two CI runs):
+- **Thin margins,** all on Erlang's own fixtures. One crossed on 21 November: L05's placeCart fit read R² 0.89 in CI run 44896867537, and the trace missed the leak; its readings now span 3,000 requests (Fixture checks, above).
 
   | Form | Quantity | Observed | Bar |
   |---|---|---|---|
-  | L05 trace | placeCart's fit | R² 0.95 to 0.96 | 0.9 |
+  | L05 trace | placeCart's fit | R² 0.89 to 0.95 on four CI runs with readings at 600 to 1,100 requests (0.91, 0.95, 0.94, 0.89); 1.00 on the Mac with readings at 600 to 3,600 | 0.9 |
   | L05 load | createOrder's closest pair | 193 B/request | 203 |
   | L09 load | clean twin's signup stretch | ≤ 34 ms | 50 |
   | L11 load | decoy price | ≤ 53 ms | 80 |

@@ -234,6 +234,14 @@ for form in "${forms[@]}"; do
   jrc=0
   node "scripts/$MODE/judge.js" "fixtures/$form" "dist/$MODE/$form" || jrc=$?
   if [ "$jrc" = "3" ]; then unreliable=1; elif [ "$jrc" = "70" ]; then internal=1; elif [ "$jrc" != "0" ]; then failed=1; fi
+  # Fit quality of the planted rows judged on a fitted slope
+  # (scripts/fit-margin.js): under load, the median over the repeats; in a
+  # trace, the bar per run (the median is taken across runs by the release gate).
+  if [ "$MODE" = "trace" ] || [ "$MODE" = "load" ]; then
+    frc=0
+    node scripts/fit-margin.js "$MODE" "fixtures/$form" "dist/$MODE/$form" || frc=$?
+    if [ "$frc" = "70" ]; then internal=1; elif [ "$frc" != "0" ]; then failed=1; fi
+  fi
 done
 if [ "${internal:-0}" = "1" ]; then exit 70; fi
 if [ "$failed" = "1" ]; then exit 1; fi

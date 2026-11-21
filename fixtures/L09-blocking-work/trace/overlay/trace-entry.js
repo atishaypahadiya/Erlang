@@ -7,7 +7,7 @@
 //   - one account with both hashes of its password, for POST /login: a
 //     bcrypt hash at cost 12, which the planted twin checks, and a scrypt
 //     hash, which the clean twin checks;
-//   - L09_ORDERS orders (the form's "env": 200,000, about 20 MB of JSON, in
+//   - L09_ORDERS orders (the form's "env": 350,000, about 35 MB of JSON, in
 //     the trace form; 1,000,000, about 100 MB, in the load form), for GET
 //     /export, saved in one
 //     batch (the store makes their JSON bytes and ETag once, when they change).

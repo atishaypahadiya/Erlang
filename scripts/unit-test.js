@@ -1318,5 +1318,25 @@ ok('describe() gives a Plain error\'s own words, and only the kind and position 
   ok('A file over 1 MiB is not read as source: partial, with the reason in ERLANG\'s own words', r.status === 'partial' && /big\.js: not read, an error stopped it \(larger than \d+ bytes/.test(r.reason), r.reason);
 }
 
+// Fit quality (scripts/fit-margin.js; the owner, 21 November 2026).
+{
+  const FM = await import('./fit-margin.js');
+  const src = (p) => readFileSync(join(ROOT, p), 'utf8');
+  ok('fit-margin states the judges\' own R² bars (MIN_FIT in the trace judge, LOAD_R2_MIN in the load judge)',
+    src('scripts/trace/judge-main.js').includes(`const MIN_FIT = ${FM.TRACE_FIT_BAR};`) && src('scripts/load/judge-main.js').includes(`export const LOAD_R2_MIN = ${FM.LOAD_FIT_BAR};`));
+  ok('fit margin: half way from the bar to 1 (0.95 for 0.9, 0.75 for 0.5)', Math.abs(FM.fitMarginOf(0.9) - 0.95) < 1e-9 && Math.abs(FM.fitMarginOf(0.5) - 0.75) < 1e-9);
+  const a = FM.fitMargin([0.911, 0.953, 0.942, null, 0.999], 0.9);
+  ok('fit margin across runs: a run with no fit is under the bar, and a median of 0.942 is short of 0.95', !a.ok && !a.held && a.below.join() === '3');
+  const b = FM.fitMargin([0.93, 0.97, 0.99, 0.96, 0.95], 0.9);
+  ok('fit margin across runs: one run at 0.93 is an outlier, not a failure, when the median holds', b.ok && b.outliers.join() === '0');
+  const c = FM.fitMargin([0.6, 0.8, 0.9], 0.5);
+  const d = FM.fitMargin([0.52, 0.7, 0.9], 0.5);
+  const e = FM.fitMargin([0.45, 0.9, 0.95], 0.5);
+  ok('fit margin under load: median 0.8 holds, median 0.7 is short of 0.75, one repeat at 0.45 is under the bar 0.5', c.ok && !d.ok && !d.held && !e.ok && e.below.join() === '0');
+  const f = FM.fitMargin([0.93], 0.9, false);
+  const g = FM.fitMargin([0.89], 0.9, false);
+  ok('fit margin in one trace run: the bar only, 0.93 an outlier, 0.89 a failure', f.ok && f.outliers.join() === '0' && !g.ok);
+}
+
 console.log(failed ? `\n${failed} unit case(s) failed` : '\nevery unit case holds');
 process.exit(failed ? 1 : 0);

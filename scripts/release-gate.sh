@@ -12,7 +12,10 @@
 #      nothing planted is an error or a warning in any run. An info "timing
 #      unreliable" on a row with nothing planted is not a difference: it is
 #      counted and printed with its row and run, and the gate fails if one row
-#      has one in two or more runs, or one run has more than two.
+#      has one in two or more runs, or one run has more than two; and
+#   4. the fit of every planted row judged on a fitted slope holds across
+#      the runs (scripts/fit-margin.js): median R² at least half way from the
+#      judge's bar to 1, no run under the bar.
 # Run before tagging, and again by CI on the tag itself (job release-gate).
 #
 # Usage: scripts/release-gate.sh <commit> [--local <dir>] [--exclude-run <id>]
@@ -82,6 +85,11 @@ if [ "$held" = "1" ]; then
   node scripts/compare-reports.js "${dirs[@]}" || rc=$?
   if [ "$rc" = "70" ]; then exit 70; fi
   if [ "$rc" != "0" ]; then held=0; fi
+  # 4. The fits of planted slope rows across the runs (scripts/fit-margin.js).
+  frc=0
+  node scripts/fit-margin.js reports "${dirs[@]}" || frc=$?
+  if [ "$frc" = "70" ]; then exit 70; fi
+  if [ "$frc" != "0" ]; then held=0; fi
 fi
 
 if [ "$held" = "1" ]; then
