@@ -153,7 +153,7 @@ A form is timed when a verdict reads a time: under load, a step whose metric is 
 
 ## Margins in the fixture suite
 
-Two checks on ERLANG's own fixtures, never on a real project's findings (the owner, 20 November 2026; `fixtures/PLAN.md`; `lib/margin.js`). They apply to every timed row, trace and load, the heap slope included:
+Two checks on ERLANG's own fixtures, never on a real project's findings (the owner, 20 November 2026; `fixtures/PLAN.md`; `lib/margin.js`). They apply to every timed row (a form is timed as defined under Timings: in a trace the judges `loop` and `starts`, under load every step whose metric is not a count), and that includes L05's load heap slope (`heap-slope` steps). The trace's soaks (`memory`) are not timed rows: they are judged on each twin alone against fixed bars, and have no margins:
 
 - **Decoy margin:** on the median of a decoy's samples, some condition of its bar is at most half way to it.
 - **Planted margin:** on the median of a planted defect's samples, every condition of its bar is cleared by 2x: twice the time or count, twice the ratio times the other twin's value. For a share bounded by 1 (a late share, the loop's share of a request), twice the bar when that is at most 1, else half way from the bar to 1 (L09's trace: a share of 0.85 for the 0.7 bar). Expected misses are printed and skipped.
@@ -237,7 +237,7 @@ With no form, it runs every `fixtures/<id>/<form>/trace/trace.json`: today the `
 
 Trace findings are finding/1:
 - `detection` includes `trace`.
-- `erlang.trace` holds what was judged (`judge`): counts at each scale and the slope or ratio, the attempts an upstream host received, the connections checked out of the pool, or whether the response came. A judgement on a time carries the timing lock's verdict in `erlang.trace.timing`; when the lock does not hold, the finding is `info` with reason `timing unreliable` and never fails.
+- `erlang.trace` holds what was judged (`judge`): counts at each scale and the slope or ratio, the attempts an upstream host received, the connections checked out of the pool, or whether the response came. A judgement on a time (`loop`, L09; `starts`, L11) carries the verdict of the relative timing rule (Timings, above) in `erlang.trace.timing`: every run or start must clear on its own; when some do and some do not, the finding is `info` with reason `timing unreliable` and never fails. A declared wait (L06, RTY-03) is judged on the value the code declares, under the rule for absolute waits (Timings, above).
 - A soak (`judge` `memory`, L05) is judged on the twin alone, the rule a project gets with no twin to compare against: a positive least-squares slope of the heap after full collections, 512 bytes a request or more, with a fit of R² 0.9 or better (`erlang.trace.slope`, `erlang.trace.r2`). A smaller leak is not detected.
 - `measured` is `[]`, since counts do not vary between runs.
 - What is judged, by form: statements and rows per request (pg_stat_statements); the statement log with its parameters (`log_statement`, for repeated reads, L10); plans (`auto_explain`, for sequential scans, L03); outbound attempts at the stub (L06, L07); pool and connection counts (L08, L13); the event loop's longest blocked stretch (L09); heap after a full collection, over a soak (L05); and the time of a fresh process's first request against its later ones (L11).
@@ -294,7 +294,7 @@ Each form's `load/load.json` lists its steps (method, path, rate, seconds, the l
 
 **ITTEN's timing lock** is read before each step and every 5 seconds during it. A lock that appears mid-step stops k6 and voids that twin's repeat, which runs again from a fresh database and server once the lock is gone; after five interruptions of one repeat the run stops with exit 75. At the wait's limit the run stops with exit 75, naming the lock.
 
-**Judges.** `shedding` (L12): past the knee, the share of requests served in time, against the twin's share below it. `compare` (every other row): each judged step names one quantity, and a twin reports when its median over the repeats is at least the step's `ratio` times the other twin's and at least its `floor`:
+**Judges.** `shedding` (L12): past the knee, the share of requests served in time, against the twin's share below it. `compare` (every other row): each judged step names one quantity and is judged against the other twin's at the step's `ratio` and `floor`. A count (the exempt metrics under Judging, below) is judged on its median over the repeats: a twin reports when that median is at least `ratio` times the other twin's and at least `floor`. Every other quantity is judged per pair under the relative timing rule: a twin reports when, in every pair, its value is at least `ratio` times the other twin's in that pair and at least `floor`:
 
 | Metric | The quantity, per step | Rows |
 |---|---|---|
