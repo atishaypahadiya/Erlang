@@ -1,6 +1,6 @@
-# ERLANG
+# Erlang
 
-ERLANG checks how a web service behaves under load and when its dependencies fail: missing timeouts, retry storms, unbounded queries, per-item queries, exhausted pools, blocking work, memory that only grows, cold starts. It reads a Node.js service's source and reports each defect with the rule it breaks and a suggested fix. Two harnesses confirm the checks on ERLANG's own fixtures, one by counting what each request does and one under load. It tests the owner's own services only.
+Erlang checks how a web service behaves under load and when its dependencies fail: missing timeouts, retry storms, unbounded queries, per-item queries, exhausted pools, blocking work, memory that only grows, cold starts. It reads a Node.js service's source and reports each defect with the rule it breaks and a suggested fix. Two harnesses confirm the checks on Erlang's own fixtures, one by counting what each request does and one under load. It tests the owner's own services only.
 
 Named after A. K. Erlang, the queueing theorist. It is unrelated to the Erlang programming language.
 
@@ -8,9 +8,9 @@ Named after A. K. Erlang, the queueing theorist. It is unrelated to the Erlang p
 
 | Name | Role | State |
 |---|---|---|
-| ERLANG | Load and resilience: tests the owner's own services, never third-party or production systems without the owner's say-so. | In development |
-| [ITTEN](https://github.com/atishaypahadiya/itten) | Design detail: checks the rendered page up close against a system measured from the owner's inspiration. | v0.3 |
-| KERCKHOFFS | Security: checks the owner's own code and deployments, never third-party sites. | In development |
+| Erlang | Load and resilience: tests the owner's own services, never third-party or production systems without the owner's say-so. | In development |
+| [Itten](https://github.com/atishaypahadiya/itten) | Design detail: checks the rendered page up close against a system measured from the owner's inspiration. | v0.3 |
+| Kerckhoffs | Security: checks the owner's own code and deployments, never third-party sites. | In development |
 
 Each one stands alone, and all of them write the same formats: findings in finding/1, defined in `schema/finding.schema.json`, inside reports in report/1, defined in `schema/report.schema.json`.
 
@@ -38,7 +38,7 @@ Fifteen static checks, each suggesting a fix for every finding:
 
 The rules are in `reference/`, with their sources. Request handlers are found in Express, Fastify, `node:http` and Next.js code. The checks read source and run nothing.
 
-The two harnesses are for ERLANG's own fixtures, where every defect has a planted twin and a clean twin. The trace harness serves each twin against PostgreSQL and counts the statements, rows, calls and bytes of each request. The load harness drives both twins with k6 at a fixed rate and judges each against the other. Neither ever loads anything but a twin it started on 127.0.0.1.
+The two harnesses are for Erlang's own fixtures, where every defect has a planted twin and a clean twin. The trace harness serves each twin against PostgreSQL and counts the statements, rows, calls and bytes of each request. The load harness drives both twins with k6 at a fixed rate and judges each against the other. Neither ever loads anything but a twin it started on 127.0.0.1.
 
 ## How to run it
 
@@ -60,18 +60,18 @@ It writes a report/1 to `dist/reports/<dir name>/report.json`, or to `<file>`. E
 
 The harnesses use the same codes, and one more: 75, temporarily blocked, when ITTEN's timing lock stayed active past the wait; nothing was judged.
 
-`erlang.config.json` at `<dir>` can exclude paths that are not part of the app, and name entry points ERLANG cannot find itself, tables that stay small, the database's `max_connections` when no file in the repository states it, and a warm-up route for the cold-start trace:
+`erlang.config.json` at `<dir>` can exclude paths that are not part of the app, and name entry points Erlang cannot find itself, tables that stay small, the database's `max_connections` when no file in the repository states it, and a warm-up route for the cold-start trace:
 
 ```json
 { "exclude": ["fixtures/"], "handlers": [{ "file": "src/worker.js", "function": "handle" }], "smallTables": ["settings"], "database": { "maxConnections": 200 }, "warmup": { "path": "/health" } }
 ```
 
-On ERLANG itself:
+On Erlang itself:
 
 - `npm test` runs every test, including a scan of this repository, which must come back clean. Its last stage is a short local load smoke, skipped with a message when k6 or Docker is absent.
 - `npm run trace` runs the trace harness on the fixtures. It needs Docker.
 - `scripts/trace.sh --headroom` checks that each load form's clean twin has room to spare.
-- `npm run load -- <form>` runs the load harness on one fixture form. It needs Docker and k6, which ERLANG never installs. The full load suite runs in CI.
+- `npm run load -- <form>` runs the load harness on one fixture form. It needs Docker and k6, which Erlang never installs. The full load suite runs in CI.
 
 The full behaviour, every judge and every bar, is in `docs/CONTRACT.md`. Decisions it cites are in `docs/decisions.md`.
 
@@ -80,19 +80,19 @@ The full behaviour, every judge and every bar, is in `docs/CONTRACT.md`. Decisio
 The full list is in `CHANGELOG.md`, under the release's known limits. In short:
 
 - Node.js only. Database access through `pg` and Prisma; Drizzle is not read. Handlers are found in Express, Fastify, `node:http` and Next.js only.
-- Static blind spots: statements built at run time, lists from the client, queue-draining loops, partial jitter, other retry libraries and pools, and code ERLANG cannot follow (`fixtures/PLAN.md`, Known gaps).
+- Static blind spots: statements built at run time, lists from the client, queue-draining loops, partial jitter, other retry libraries and pools, and code Erlang cannot follow (`fixtures/PLAN.md`, Known gaps).
 - A memory leak under about 512 bytes a request (trace), or under three times the clean twin's own retention (load), is not detected.
 - The trace and load judges measure different quantities with their own bars, so one can find a defect the other misses. The differences are listed form by form in the changelog.
-- The harnesses run on ERLANG's own fixtures only; on a real project, ERLANG's verdicts are static.
+- The harnesses run on Erlang's own fixtures only; on a real project, Erlang's verdicts are static.
 - The held-out set has not been planted or scored, so accuracy outside the fixtures is not measured.
 
 ## Folders
 
 - `bin/`, `lib/`, `checks/`: the command and the static checks.
 - `scripts/`: the tests, the trace and load harnesses, and the release gate.
-- `schema/`: the schemas for `erlang.config.json` and ERLANG's own finding fields.
+- `schema/`: the schemas for `erlang.config.json` and Erlang's own finding fields.
 - `core/`: a pinned copy of the set's shared finding/1 and report/1 code (`core.pin.json`).
-- `reference/`: the rules ERLANG checks against, with their sources.
+- `reference/`: the rules Erlang checks against, with their sources.
 - `research/`: the failure model, prior art, the name, the harness designs and other notes. `research/probes/` holds runtime probes and is excluded from the self-scan.
 - `fixtures/`: the test bench, one planted twin and one clean twin per defect class (`fixtures/PLAN.md`).
 - `docs/`: the contract and the decisions it cites.

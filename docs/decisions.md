@@ -4,7 +4,7 @@ Decisions cited by `docs/CONTRACT.md` and by the code, numbered as they are cite
 
 ## Q2. Timing judgements in the trace harness
 
-**Decided, 19 November 2026.** Timing judgements follow the shared timing rule. ERLANG takes no lock of its own and honours ITTEN's timing lock, which replaces the check for ITTEN's inspector process: `lib/itten-lock.js`, used by `scripts/trace.sh`, `scripts/trace/run.js` and the load harness; `research/itten-lock.md` states the rule.
+**Decided, 19 November 2026.** Timing judgements follow the shared timing rule. Erlang takes no lock of its own and honours ITTEN's timing lock, which replaces the check for ITTEN's inspector process: `lib/itten-lock.js`, used by `scripts/trace.sh`, `scripts/trace/run.js` and the load harness; `research/itten-lock.md` states the rule.
 
 **Context.** The trace harness was designed with no timing judgement (`research/trace-harness.md`), since latency on a shared machine is not deterministic. Some trace cells in `fixtures/PLAN.md` are timings all the same: L09's event-loop delay, L11's first-request latency, and L06's fixed wait between retries, which shows only as gaps that are all alike. Count-based judgements stay count-based. Since superseded for relative verdicts by Q8, and for L06's wait by the rule for absolute waits (`docs/CONTRACT.md`, Timings).
 
@@ -22,9 +22,9 @@ Decisions cited by `docs/CONTRACT.md` and by the code, numbered as they are cite
 
 ## Q5. A lock in another format
 
-**Decided, 19 November 2026.** A lock in a format ERLANG does not know counts as active, as an unparseable one does; it is stale only when its pid is dead or its expiry past: `judgeLock` in `lib/itten-lock.js`, its unit case, `research/itten-lock.md`.
+**Decided, 19 November 2026.** A lock in a format Erlang does not know counts as active, as an unparseable one does; it is stale only when its pid is dead or its expiry past: `judgeLock` in `lib/itten-lock.js`, its unit case, `research/itten-lock.md`.
 
-**Context.** The timing-lock rule makes a lock active when "the file parses, the format matches, the pid is alive and now is before expires", and a file that cannot be read or parsed active too. A file that parses in another format (a future `itten-timing-lock/2`), with a live pid and a future expiry, was neither active nor stale under that wording. Failing closed keeps a newer ITTEN from being timed under load before ERLANG learns its format.
+**Context.** The timing-lock rule makes a lock active when "the file parses, the format matches, the pid is alive and now is before expires", and a file that cannot be read or parsed active too. A file that parses in another format (a future `itten-timing-lock/2`), with a live pid and a future expiry, was neither active nor stale under that wording. Failing closed keeps a newer ITTEN from being timed under load before Erlang learns its format.
 
 ## Q6. The timing rule's "after" reading in a load run
 

@@ -2,7 +2,7 @@
 
 ## 0.1.0
 
-The first release. Built and fixture-tested: every planted defect in ERLANG's own fixtures (L01a to L13) is found, and no clean twin reports anything (recall and precision 1.00), statically, by trace and under load, on five consecutive CI runs whose trace reports agree. Nothing is claimed for code outside the fixtures; the held-out set has not been planted or scored. finding/1 and report/1 come from a pinned copy of the shared core, to be re-pinned when it gains expected rows.
+The first release. Built and fixture-tested: every planted defect in Erlang's own fixtures (L01a to L13) is found, and no clean twin reports anything (recall and precision 1.00), statically, by trace and under load, on five consecutive CI runs whose trace reports agree. Nothing is claimed for code outside the fixtures; the held-out set has not been planted or scored. finding/1 and report/1 come from a pinned copy of the shared core, to be re-pinned when it gains expected rows.
 
 ### Static checks (`erlang <dir>`)
 
@@ -111,7 +111,7 @@ A trace or load finding carries the values its message quotes: `erlang.values.me
 ### Known limits
 
 - **Detection floor (L05).** A leak under about 512 bytes a request (trace), or under three times the clean twin's own retention per pair (load), is not detected. L05's `POST /orders`, about 83 to 215 bytes an order, is kept as a documented expected miss. It is reported on an EXPECTED line, not deleted.
-- **Thin margins,** all on ERLANG's own fixtures (none crossed on the last two CI runs):
+- **Thin margins,** all on Erlang's own fixtures (none crossed on the last two CI runs):
 
   | Form | Quantity | Observed | Bar |
   |---|---|---|---|
@@ -135,7 +135,7 @@ A trace or load finding carries the values its message quotes: `erlang.values.me
   - queue-draining loops;
   - partial jitter;
   - other retry libraries and other pools;
-  - growth, repeated work and set-up done through code ERLANG cannot follow;
+  - growth, repeated work and set-up done through code Erlang cannot follow;
   - an unknown Prisma version (batching assumed).
 - **L09-4** (a small synchronous file read) is confirmed statically only, because no trace can separate it from the asynchronous read.
 - **L09-5** (bcryptjs's asynchronous hash on every password change) is an expected miss of the trace: it yields between 100 ms slices, so its longest stretch is under the 70% share the trace requires. It is confirmed statically.

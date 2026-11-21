@@ -1,6 +1,6 @@
-# ERLANG run contract
+# Erlang run contract
 
-What a caller, a CI job or another tool can rely on when it runs ERLANG. It describes ERLANG 0.0.1: the command `erlang`, below, and the trace harness, in its own section at the end. A change to anything here is a change to the contract and is recorded in this file.
+What a caller, a CI job or another tool can rely on when it runs Erlang. It describes Erlang 0.0.1: the command `erlang`, below, and the trace harness, in its own section at the end. A change to anything here is a change to the contract and is recorded in this file.
 
 ## Invocation
 
@@ -13,8 +13,8 @@ node bin/erlang.js --version
 - `--version` (or `-v`), alone, prints one line and exits 0:
   `erlang 0.0.1 (commit <40-hex SHA>): load and resilience checks (not the Erlang runtime)`,
   followed by ` (uncommitted changes)` when tracked files, staged or not, differ from that commit.
-  The SHA is the commit ERLANG runs from, read from its `.git`. It is `unknown` outside a git checkout. Uncommitted changes are found with `git diff --quiet HEAD`. Untracked files do not count. When git cannot answer, no suffix is printed.
-- Requirements: Node.js 22 or later, and `npm install` once in the ERLANG directory, which installs its one dependency, TypeScript 6.0.3.
+  The SHA is the commit Erlang runs from, read from its `.git`. It is `unknown` outside a git checkout. Uncommitted changes are found with `git diff --quiet HEAD`. Untracked files do not count. When git cannot answer, no suffix is printed.
+- Requirements: Node.js 22 or later, and `npm install` once in the Erlang directory, which installs its one dependency, TypeScript 6.0.3.
 
 Every form above is run by `scripts/cli-test.js`.
 
@@ -23,12 +23,12 @@ Every form above is run by `scripts/cli-test.js`.
 | Input | Needed | Notes |
 |---|---|---|
 | Path to the code | Yes | A directory. Source, SQL, `schema.prisma`, `package.json`, lockfiles, Dockerfiles and deployment files (Compose, Kubernetes, PM2, fly.toml, serverless.yml) under it are read. |
-| `erlang.config.json` at the root of `<dir>` | No | `exclude` (paths not part of the app), `handlers` (entry points ERLANG cannot find), `smallTables`, `database.maxConnections`, `warmup` (a cheap GET or HEAD route the trace harness requests in each fresh process before timing first requests; without it, a path that does not exist, a 404 that warms the framework but not the database driver, and the report says which ran). Schema: `schema/config.schema.json`. A config that cannot be read refuses the scan. |
-| URL of a running service | No | ERLANG runs nothing and sends no request. |
+| `erlang.config.json` at the root of `<dir>` | No | `exclude` (paths not part of the app), `handlers` (entry points Erlang cannot find), `smallTables`, `database.maxConnections`, `warmup` (a cheap GET or HEAD route the trace harness requests in each fresh process before timing first requests; without it, a path that does not exist, a 404 that warms the framework but not the database driver, and the report says which ran). Schema: `schema/config.schema.json`. A config that cannot be read refuses the scan. |
+| URL of a running service | No | Erlang runs nothing and sends no request. |
 | Test logins | No | None are read or used. |
 | Seed size | No | No database or data is used by the checks. |
 
-No environment variable changes what ERLANG does.
+No environment variable changes what Erlang does.
 
 What is not read:
 - `node_modules`, `.git`, and build output: `dist`, `build`, `out`, `.next`, `.nuxt`, `.svelte-kit`, `.output`, `.vercel`, `.netlify`, `.astro`, `.turbo`, `.cache`, `coverage`;
@@ -40,7 +40,7 @@ What is not read:
 
 One file, a report/1 in JSON (UTF-8, two-space indent, trailing newline):
 - at `<file>` when `--out` is given;
-- otherwise at `dist/reports/<name of dir>/report.json` inside the ERLANG directory, not the working directory.
+- otherwise at `dist/reports/<name of dir>/report.json` inside the Erlang directory, not the working directory.
 
 Each finding is also printed to standard output, one line per finding. A last line gives the status, the failing findings (errors and warnings) and the info findings counted apart, and the report's path: `complete: 2 failing (1 error, 1 warning), 3 info. Report: ...`. Standard output is for people; the report is the interface.
 
@@ -56,14 +56,14 @@ Each finding is also printed to standard output, one line per finding. A last li
 
 **finding/1** (`core/schema/finding.schema.json`, ITTEN's at v0.3.5):
 - `check`: one of `no-timeout`, `n-plus-one`, `per-row-writes`, `unbounded-query`, `pool-sizing`, `retry-policy`, `retry-budget`, `missing-index`, `pool-exhaustion`, `blocking-work`, `oversized-payload`, `memory-growth`, `no-cache`, `cold-start`, `no-load-shedding`.
-- `severity`: `error`, `warning` or `info`. A MUST rule gives `error` and a SHOULD rule gives `warning`. Errors and warnings fail a run; info never does. `info` with `erlang.unresolved` means ERLANG could not decide, for example when no request handler was found or the database's limit is unknown.
+- `severity`: `error`, `warning` or `info`. A MUST rule gives `error` and a SHOULD rule gives `warning`. Errors and warnings fail a run; info never does. `info` with `erlang.unresolved` means Erlang could not decide, for example when no request handler was found or the database's limit is unknown.
 - `fingerprint`: built from the check, the file and enclosing function (or table and column), and the kind of defect, with no line number, so it survives edits that move lines. Several of the same kind in one function are told apart by their order (`|2`, `|3`). Renaming the file or function changes it. A fingerprint never holds a value measured at run time (a count, a time, a size), so a finding keeps its fingerprint from one run to the next; declared values may appear, such as a route, a rule or an upstream host named in a trace form. The rule is shared with ITTEN and KERCKHOFFS.
 - `message`: what is wrong, why it matters and what it rests on.
 - `measured: []` and `floor: null`: nothing is measured by static checks.
 - `detection`: `static`, and `config` when deployment or configuration files were read.
 - `rules`: ids from `reference/`, such as `DAT-03`.
 - `where.locations`: `{ file, line, column }`, with `file` relative to `<dir>`. The first location is where to act.
-- `erlang`: ERLANG's own fields (`schema/finding-erlang.schema.json`). `strength` (MUST or SHOULD) and `fix` are always present; the rest depend on the check.
+- `erlang`: Erlang's own fields (`schema/finding-erlang.schema.json`). `strength` (MUST or SHOULD) and `fix` are always present; the rest depend on the check.
 
 ## Suggested fixes
 
@@ -80,7 +80,7 @@ The edit unit is shared with ITTEN and KERCKHOFFS, from ITTEN's contract, so one
 
 Every `file` is relative to the project root. `lib/fix.js` applies the unit and refuses, changing nothing, an edit whose file is outside the root or is build output, a position past the end of its line or file, a create of a file that exists, an edit or remove of one that does not, overlapping edits, and a file that one apply both edits and creates or removes. `scripts/unit-test.js` holds a case for each, and for UTF-16 columns and lengths.
 
-ERLANG never applies a fix. Applying one is the caller's step. Every auto fix in the fixtures is applied and re-checked by `scripts/fix-test.js`: it must clear its finding, add none, and leave the code parsing.
+Erlang never applies a fix. Applying one is the caller's step. Every auto fix in the fixtures is applied and re-checked by `scripts/fix-test.js`: it must clear its finding, add none, and leave the code parsing.
 
 ## Exit codes
 
@@ -104,8 +104,8 @@ None. `erlang` opens no socket, sends no request and generates no load. It start
 
 ## Writes
 
-- **The report file only:** at `--out <file>`, wherever that is, or else under `dist/reports/` in the ERLANG directory. Its parent directories are created.
-- **Nothing in `<dir>`:** ERLANG does not write, create or modify anything there, and suggested fixes are not applied.
+- **The report file only:** at `--out <file>`, wherever that is, or else under `dist/reports/` in the Erlang directory. Its parent directories are created.
+- **Nothing in `<dir>`:** Erlang does not write, create or modify anything there, and suggested fixes are not applied.
 - **Nothing else:** no cache, temporary file, log or home-directory state.
 
 ## Timings
@@ -153,7 +153,7 @@ A form is timed when a verdict reads a time: under load, a step whose metric is 
 
 ## Margins in the fixture suite
 
-Two checks on ERLANG's own fixtures, never on a real project's findings (the owner, 20 November 2026; `fixtures/PLAN.md`; `lib/margin.js`). They apply to every timed row (a form is timed as defined under Timings: in a trace the judges `loop` and `starts`, under load every step whose metric is not a count), and that includes L05's load heap slope (`heap-slope` steps). The trace's soaks (`memory`) are not timed rows: they are judged on each twin alone against fixed bars, and have no margins:
+Two checks on Erlang's own fixtures, never on a real project's findings (the owner, 20 November 2026; `fixtures/PLAN.md`; `lib/margin.js`). They apply to every timed row (a form is timed as defined under Timings: in a trace the judges `loop` and `starts`, under load every step whose metric is not a count), and that includes L05's load heap slope (`heap-slope` steps). The trace's soaks (`memory`) are not timed rows: they are judged on each twin alone against fixed bars, and have no margins:
 
 - **Decoy margin:** on the median of a decoy's samples, some condition of its bar is at most half way to it.
 - **Planted margin:** on the median of a planted defect's samples, every condition of its bar is cleared by 2x: twice the time or count, twice the ratio times the other twin's value. For a share bounded by 1 (a late share, the loop's share of a request), twice the bar when that is at most 1, else half way from the bar to 1 (L09's trace: a share of 0.85 for the 0.7 bar). Expected misses are printed and skipped.
@@ -190,7 +190,7 @@ A finding of the trace and load harnesses carries the values its message quotes,
 
 finding/1's `measured` lists, for such a finding, `message`, `erlang.values.measured` and each measured field of its evidence. A comparison then needs no knowledge of any check: it drops what `measured` lists and compares the rest in full, the template and the declared values included.
 
-**Proposal for the shared format.** Move `values` (`measured`, `declared`) and `template` from ERLANG's extension into finding/1, beside `measured`, as optional fields: a specialist that fills them lets any consumer compare findings across runs by template and declared values, and show measured values as data rather than parse them out of prose. finding/1's `measured` paths stay as they are; `"message"` in them keeps its meaning (the numbers in the message) for findings without a template. To agree with ITTEN and KERCKHOFFS before it changes the shared schema.
+**Proposal for the shared format.** Move `values` (`measured`, `declared`) and `template` from Erlang's extension into finding/1, beside `measured`, as optional fields: a specialist that fills them lets any consumer compare findings across runs by template and declared values, and show measured values as data rather than parse them out of prose. finding/1's `measured` paths stay as they are; `"message"` in them keeps its meaning (the numbers in the message) for findings without a template. To agree with ITTEN and KERCKHOFFS before it changes the shared schema.
 
 ## Decoy margin
 
@@ -201,18 +201,18 @@ In a timed form, every decoy stays at most half way to the bar it is judged agai
 - Two runs on the same files give the same report apart from `started`: the same findings, in the same order, with the same fingerprints, messages and fixes. Checks run in a fixed order, and files are read in sorted order.
 - The working directory changes only `subject`.
 - No clock, randomness, network or environment variable enters a finding.
-- The report changes when the files change, or when ERLANG's version or commit does.
+- The report changes when the files change, or when Erlang's version or commit does.
 
 ## Scope and limits
 
-- Static checks only: ERLANG reads source and configuration and judges what they say.
+- Static checks only: Erlang reads source and configuration and judges what they say.
 - Request handlers are found in Express, Fastify, `node:http` and Next.js. Database access is read through `pg` and Prisma.
 - Known false negatives and positives are listed in `fixtures/PLAN.md`, under Known gaps.
-- ERLANG is for the owner's own code and services only.
+- Erlang is for the owner's own code and services only.
 
 ## The trace harness
 
-A separate program, for ERLANG's own fixtures: `scripts/trace.sh` (`npm run trace`). It confirms static findings by what a served twin does, on a real database: statement and row counts, outbound calls, pool counts, and whether a response comes at all. It is not part of `erlang` or `npm test`. Design and decisions: `research/trace-harness.md`.
+A separate program, for Erlang's own fixtures: `scripts/trace.sh` (`npm run trace`). It confirms static findings by what a served twin does, on a real database: statement and row counts, outbound calls, pool counts, and whether a response comes at all. It is not part of `erlang` or `npm test`. Design and decisions: `research/trace-harness.md`.
 
 ```
 scripts/trace.sh [form ...]      e.g. scripts/trace.sh L01a-n-plus-one/sql
@@ -274,7 +274,7 @@ Trace findings are finding/1:
 
 ## The load harness
 
-A separate program, for ERLANG's own fixtures: `scripts/load.sh` (`npm run load`). It serves a form's twins on 127.0.0.1 against PostgreSQL, as the trace harness does, and drives them with k6 at a fixed arrival rate, each twin judged against the other. Design: `research/load-harness.md`.
+A separate program, for Erlang's own fixtures: `scripts/load.sh` (`npm run load`). It serves a form's twins on 127.0.0.1 against PostgreSQL, as the trace harness does, and drives them with k6 at a fixed arrival rate, each twin judged against the other. Design: `research/load-harness.md`.
 
 ```
 scripts/load.sh form ...         e.g. scripts/load.sh L12-no-load-shedding
@@ -282,7 +282,7 @@ scripts/load.sh form ...         e.g. scripts/load.sh L12-no-load-shedding
 
 Each form's `load/load.json` lists its steps (method, path, rate, seconds, the latency that counts as served in time, a timeout), which steps are controls and which are judged, how many repeats, and the expected defects. Schema, seed and lockfile come from `load/` when the form has its own, else from `trace/`.
 
-**k6.** The `k6` on the path, or `ERLANG_K6`; with neither, the run stops (exit 2) with an install hint. ERLANG never installs, vendors or links k6. Each step's script is written at run time into the form's output folder; k6 runs it with `--no-usage-report`, so it sends nothing about the run anywhere. CI installs k6 v2.3.0 from Grafana's release, checked by SHA-256.
+**k6.** The `k6` on the path, or `ERLANG_K6`; with neither, the run stops (exit 2) with an install hint. Erlang never installs, vendors or links k6. Each step's script is written at run time into the form's output folder; k6 runs it with `--no-usage-report`, so it sends nothing about the run anywhere. CI installs k6 v2.3.0 from Grafana's release, checked by SHA-256.
 
 **The guard** (`lib/load-guard.js`). The target is only ever the twin the harness started, on the loopback interface, over plain HTTP; any other host is refused, and no flag widens it. Caps, refused before anything runs (exit 2):
 
