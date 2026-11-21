@@ -552,7 +552,10 @@ function judgeTwin(twin) {
   const r = report({
     specialist: 'erlang', version: VERSION, subject: relative(process.cwd(), subjectDir) || '.', started: new Date(raw.started ?? Date.now()),
     findings: out,
-    run: { trace: { image: raw.image, fixture: raw.fixture, form: raw.form, twin, judge: spec.judge, ...(hi.warmup ? { warmup: hi.warmup } : {}), seed: raw.seed, scales: Object.fromEntries(Object.entries(raw.scales).map(([k, v]) => [k, { n: v.n, tables: v.tables }])) } },
+    // measured: the report's own run-level paths that a machine measures
+    // (the warm-up's times), dropped when runs are compared, as a finding's
+    // measured paths are (scripts/compare-reports.js).
+    run: { measured: hi.warmup ? ['erlang.trace.warmup.runs[].ms'] : [], trace: { image: raw.image, fixture: raw.fixture, form: raw.form, twin, judge: spec.judge, ...(hi.warmup ? { warmup: hi.warmup } : {}), seed: raw.seed, scales: Object.fromEntries(Object.entries(raw.scales).map(([k, v]) => [k, { n: v.n, tables: v.tables }])) } },
   });
   writeFileSync(join(outDir, twin, 'report.json'), JSON.stringify(r, null, 2) + '\n');
   return r;

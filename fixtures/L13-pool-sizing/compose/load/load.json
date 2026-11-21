@@ -1,5 +1,6 @@
 {
   "note": "Load form (research/load-harness.md) for L13's compose form: the connections the app role holds open at the database, sampled each second (pg_stat_activity). The pool made once per process stays at its size whatever the rate; a pool made per request adds connections with every request until PostgreSQL refuses more (\"too many clients already\"). A twin reports when it holds at least three times the other's connections, and at least 30. The per-request pool's step runs last, after the decoy, and the next repeat starts a fresh twin and database. L13-c1, pools across processes over max_connections, is a sum over the deployment's configuration and stays with the static check. Each step runs at a fixed arrival rate (k6), each twin judged against the other over 3 repeats, every finding under the timing rule. defects are what the planted twin must report and the clean twin must not; every other judged step is a decoy, in both twins.",
+  "plantedFailures": "Pool sizing: the planted twin opens more connections than the database allows, and the requests over the limit fail.",
   "fixture": "L13",
   "form": "compose",
   "judge": "compare",

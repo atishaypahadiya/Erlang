@@ -96,6 +96,15 @@ else
 fi
 
 NAME="erlang-trace-$$"
+# The database's data directory: a volume of this run's own, named and
+# labelled, removed at the end. The image declares one; left to Docker, it is
+# an anonymous volume that `docker rm -f` does not remove (one was left behind
+# per run, 63 of them by 20 November 2026). Leftovers of a run killed before
+# its cleanup, labelled erlang.trace and used by no container, are removed
+# first.
+VOLUME="erlang-trace-$$-data"
+docker volume ls -q --filter label=erlang.trace --filter dangling=true 2>/dev/null \
+  | while read -r v; do docker volume rm "$v" >/dev/null 2>&1 || true; done
 RUN="$ROOT/dist/trace/run/$$"
 umask 077
 mkdir -p "$RUN"
@@ -105,7 +114,8 @@ cleanup() {
   # beside the reports: dist/<mode>/postgres.log (trace, headroom, load).
   mkdir -p "$ROOT/dist/${OUT:-$MODE}"
   docker logs "$NAME" > "$ROOT/dist/${OUT:-$MODE}/postgres.log" 2>&1 || true
-  docker rm -f "$NAME" >/dev/null 2>&1 || true
+  docker rm -f -v "$NAME" >/dev/null 2>&1 || true
+  docker volume rm "$VOLUME" >/dev/null 2>&1 || true
   rm -rf "$RUN"
 }
 trap cleanup EXIT
@@ -117,7 +127,9 @@ secret() { od -An -tx1 -N24 /dev/urandom | tr -d ' \n'; }
 printf 'POSTGRES_PASSWORD=%s\n' "$(secret)" > "$RUN/pg.env"
 secret > "$RUN/app-password"
 
+docker volume create --label erlang.trace=1 "$VOLUME" >/dev/null
 docker run -d --rm --name "$NAME" --cpus 1 --memory 1g \
+  -v "$VOLUME:/var/lib/postgresql/data" \
   -p 127.0.0.1::5432 --env-file "$RUN/pg.env" \
   "$IMAGE" \
   -c shared_preload_libraries=pg_stat_statements \

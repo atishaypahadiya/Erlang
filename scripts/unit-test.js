@@ -327,6 +327,13 @@ console.log('\nThe load judge (compare), on recorded runs');
   ok('  one planted pair at 0.5 (over the bar, under the margin), the others 0.75: an OUTLIER with its load averages, not failed', onePlanted.code === 0 && /^OUTLIER  L09 express load planted step export \(late-share\): short of the planted margin but clearing the bar \(not failed\): pair 3: 0\.5 against 0\.02; load /m.test(onePlanted.text) && !/SHORT|BELOW/.test(onePlanted.text), onePlanted.text);
   const oneDecoy = run((k) => [step('signup', 180 + k), step('login', 190 + k), step('export', 150 + k), step('codes', k === 1 ? 40 : 4)]);
   ok('  one decoy pair late 0.2 (past half the floor, under the bar), the others 0.02: an OUTLIER, not failed', oneDecoy.code === 0 && /^OUTLIER  L09 express load planted step codes \(late-share\): past the decoy margin but inside the bar \(not failed\): pair 2: 0\.2 against 0\.02/m.test(oneDecoy.text) && !/OVER|REACHED/.test(oneDecoy.text), oneDecoy.text);
+  // The planted twin answers every request (the owner, 20 November 2026),
+  // unless load.json says why failures belong to the step or the form.
+  const failing = (st, n) => ({ ...st, counts: { ...st.counts, ok: st.counts.ok - n, failed: n } });
+  const fellOver = run((k) => [step('signup', 180 + k), step('login', 190 + k), failing(step('export', 150 + k), k === 2 ? 14 : 0), step('codes', 4)]);
+  ok('  a planted step that failed requests in one repeat, with no plantedFailures: the form fails, naming the repeat', fellOver.code === 1 && /^FAIL  L09 express load acceptance: the planted twin fails no request  \(failed or refused: step export in 1 of 5 repeat\(s\): repeat 3 14 of 200/m.test(fellOver.text), fellOver.text);
+  const declared = run((k) => [step('signup', 180 + k), failing(step('login', 190 + k), 1), step('export', 150 + k), step('codes', 4)]);
+  ok('  failures on a step whose load.json gives plantedFailures (L09 login, a request held past k6\'s timeout): not checked, the form passes', declared.code === 0 && /^PASS  L09 express load acceptance: the planted twin fails no request  \(3 step\(s\), 5 repeat\(s\); not checked, failures declared in load.json: login\)/m.test(declared.text), declared.text);
   const decoyBar = run((k) => [step('signup', 180 + k), step('login', 190 + k), step('export', 150 + k), step('codes', k === 1 ? 80 : 4)]);
   ok('  one decoy pair late 0.4, past the judge\'s bar: fails outright', decoyBar.code === 1 && /REACHED THE BAR in pair\(s\) 2/.test(decoyBar.text) && /^FAIL  L09 express load decoy margin/m.test(decoyBar.text), decoyBar.text);
   rmSync(form, { recursive: true, force: true });
@@ -342,7 +349,9 @@ console.log('\nThe load judge (heap slope), on recorded runs');
   const out = join(form, 'out');
   const spec = JSON.parse(readFileSync(join(form, 'load', 'load.json'), 'utf8'));
   // A step whose heap grows by perReq bytes a response, plus a wobble.
-  const step = ({ id, method = 'GET', path, route }, perReq, k) => ({ id, method, path, route, rate: 100, seconds: 15, interrupted: false, counts: { requests: 1500, ok: 1500, late: 0, refused: 0, failed: 0, dropped: 0 }, served: { medMs: 2, p90Ms: 3, p99Ms: 5, maxMs: 9 }, refusals: null, samples: [], environment: { before: { load1: 6, cpus: 8 }, after: { load1: 6, cpus: 8, cooledAfterS: 5 } }, heap: { points: Array.from({ length: 8 }, (_, j) => ({ t: 2 * j, answered: 200 * j, heapUsed: 9e6 + perReq * 200 * j + ((j * 7919 + k * 31) % 5) * 300 })) } });
+  const step = ({ id, method = 'GET', path, route }, perReq, k) => ({ id, method, path, route, rate: 100, seconds: 15, interrupted: false, counts: { requests: 1500, ok: 1500, late: 0, refused: 0, failed: 0, dropped: 0 }, served: { medMs: 2, p90Ms: 3, p99Ms: 5, maxMs: 9 }, refusals: null, samples: [], environment: { before: { load1: 6, cpus: 8 }, after: { load1: 6, cpus: 8, cooledAfterS: 5 } }, heap: { points: Array.from({ length: 8 }, (_, j) => ({ t: 2 * j, answered: 200 * j, heapUsed: 9e6 + (perReq.per ?? perReq) * 200 * j + (perReq.noise ? NOISE[j] * perReq.noise : ((j * 7919 + k * 31) % 5) * 300) })) } });
+  // Noise with no trend over the step (for fits of low R²), times perReq.noise.
+  const NOISE = [0, 9, 2, 7, 1, 8, 3, 6];
   const run = (planted, clean, n = 5) => {
     rmSync(out, { recursive: true, force: true });
     for (const t of ['planted', 'clean']) mkdirSync(join(out, t), { recursive: true });
@@ -367,6 +376,14 @@ console.log('\nThe load judge (heap slope), on recorded runs');
   ok('  a decoy slope 1.65 times the clean twin\'s in every pair (under the 3x bar, over half of it): over on the median, the form fails with nothing reported', nearSuggest.code === 1 && /^DECOY  L05 express load planted step suggest \(heap-slope\): .*OVER on the median/m.test(nearSuggest.text) && /^PASS  L05 express load planted: 2\/2/m.test(nearSuggest.text), nearSuggest.text);
   const thinSlope = run(planted, (id) => (id === 'searchProducts' ? 100 : clean(id)));
   ok('  a planted slope 3.7 times the clean twin\'s (over the 3x bar, under 6x): short on the median, the form fails', thinSlope.code === 1 && /^PLANTED  L05 express load planted step searchProducts \(heap-slope\): .*SHORT on the median/m.test(thinSlope.text), thinSlope.text);
+  // Fit quality (the owner, 20 November 2026): a pair counts only with a fit
+  // of R² 0.5 or better, planted and decoy rows alike.
+  const noisyDecoy = run((id, k) => (id === 'orderLines' && k === 4 ? { per: 130, noise: 40000 } : planted(id, k)), clean);
+  ok('  R² 0.5: a decoy pair whose slope clears the bar on a fit of R² 0.32 (noise) does not reach it: an OUTLIER, the form passes', noisyDecoy.code === 0 && /^OUTLIER  L05 express load planted step orderLines \(heap-slope\): past the decoy margin but inside the bar \(not failed\): pair 5/m.test(noisyDecoy.text) && !/REACHED/.test(noisyDecoy.text), noisyDecoy.text);
+  const noisyPlanted = run((id, k) => (id === 'placeCart' ? { per: 2400, noise: 700000 } : planted(id, k)), clean);
+  ok('  R² 0.5: a planted slope 2,400 B/request fitted at R² under 0.5 in every pair is not found (missed)', noisyPlanted.code === 1 && /missed memory-growth step placeCart/.test(noisyPlanted.text), noisyPlanted.text);
+  const noisyOne = run((id, k) => (id === 'placeCart' && k === 2 ? { per: 2400, noise: 700000 } : planted(id, k)), clean);
+  ok('  R² 0.5: one planted pair fitted under 0.5: info, timing unreliable, 4 of 5, and below the bar for the planted margin', noisyOne.code === 1 && /UNRELIABLE  L05 express load planted: memory-growth STB-05 step placeCart: timing unreliable .*4 of 5 repeats cleared/.test(noisyOne.text) && /BELOW THE BAR in pair\(s\) 3/.test(noisyOne.text), noisyOne.text);
   const three = run(planted, clean, 3);
   ok('  three pairs are too few: unreliable, fewer than 5', three.code === 3 && /3 repeat\(s\), fewer than 5/.test(three.text), three.text);
   const same = run(clean, clean);
@@ -468,6 +485,15 @@ console.log('\nMeasured and declared values; the release gate\'s comparison');
   ok('  a severity that differs, or a finding in one run only, is a difference', cmp([f(31)], [f(31, { severity: 'info' })]).code === 1 && cmp([f(31)], []).code === 1);
   const bare = (msg) => ({ check: 'c', severity: 'error', fingerprint: 'c|y', measured: ['message'], message: msg });
   ok('  with no template, "message" in measured compares the message with its numbers masked (finding/1)', cmp([bare('3 attempts in 1,002 ms')], [bare('4 attempts in 998 ms')]).code === 0 && cmp([bare('3 attempts in 1,002 ms')], [bare('3 tries in 1,002 ms')]).code === 1);
+  // A report's own measured run-level paths (erlang.measured): two runs
+  // whose warm-up times differ are identical; a warm-up status that differs,
+  // not listed, is a difference.
+  const withWarmup = (run, ms, status = 200) => { mkdirSync(join(dir, run, 'F', 'clean'), { recursive: true }); writeFileSync(join(dir, run, 'F', 'clean', 'report.json'), JSON.stringify({ schema: 'report/1', started: run, findings: [], erlang: { measured: ['erlang.trace.warmup.runs[].ms'], trace: { warmup: { path: '/w', runs: ms.map((x) => ({ status, ms: x })) } } } })); };
+  const cmpWarmup = (a, b, statusB = 200) => { rmSync(dir, { recursive: true, force: true }); withWarmup('a', a); withWarmup('b', b, statusB); const r = spawnSync(process.execPath, [join(ROOT, 'scripts', 'compare-reports.js'), join(dir, 'a'), join(dir, 'b')], { encoding: 'utf8' }); return { code: r.status, text: r.stdout + r.stderr }; };
+  const warm = cmpWarmup([11.4, 10.6, 9.7], [16.9, 15.8, 19.0]);
+  ok('  a report\'s measured run-level paths (warm-up times in erlang.measured) are dropped: runs that differ only there are identical', warm.code === 0 && /^IDENTICAL/m.test(warm.text), warm.text);
+  const warmStatus = cmpWarmup([11.4, 10.6, 9.7], [11.4, 10.6, 9.7], 404);
+  ok('  a run-level field not listed as measured (the warm-up\'s status) is still compared', warmStatus.code === 1 && /erlang\.trace\.warmup\.runs\[0\]\.status/.test(warmStatus.text), warmStatus.text);
   rmSync(dir, { recursive: true, force: true });
 }
 

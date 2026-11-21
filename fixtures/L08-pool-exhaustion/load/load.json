@@ -1,5 +1,6 @@
 {
   "note": "Load form (research/load-harness.md) for L08: the twins' pool holds 5 connections and waits 2 s for one (src/db.js), and the payment and warehouse stubs answer in 500 ms. At 20 requests a second a handler that holds its connection across that call needs 10 at once, so requests fail acquiring one; a handler that takes its connection after the call holds it for milliseconds. A twin reports when at least 10% of its requests fail, and at least one and a half times the other's share. The share that failed is judged on the two routes that call out (STB-09); reading an order, which calls nothing, is the decoy. L08's leaks (STB-08, a connection never returned on an error path) are confirmed by the trace; a load step after one would only measure the leak's aftermath. Each step runs at a fixed arrival rate (k6), each twin judged against the other over 3 repeats, every finding under the timing rule. defects are what the planted twin must report and the clean twin must not; every other judged step is a decoy, in both twins.",
+  "plantedFailures": "Pool exhaustion: the planted twin's requests fail waiting for a connection; the share that fails is the judged quantity.",
   "fixture": "L08",
   "form": "fastify",
   "judge": "compare",

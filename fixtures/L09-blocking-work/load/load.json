@@ -38,6 +38,7 @@
     },
     {
       "id": "login",
+      "plantedFailures": "Blocking work: the planted login hashes on the main thread, which now and then holds a request past k6's timeout (1 of about 144 in most repeats on CI).",
       "method": "GET",
       "path": "/avatars/1",
       "route": "/avatars/:id",

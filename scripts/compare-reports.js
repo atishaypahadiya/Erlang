@@ -8,7 +8,9 @@
 //     "message", the message is left out when the finding carries its
 //     template (erlang.template: the message with each value as {name}),
 //     and compared with its numbers masked when it does not;
-//   - the report's `started` and `environment` (when and where it ran).
+//   - the report's `started` and `environment` (when and where it ran);
+//   - the report's own measured run-level paths, listed in erlang.measured
+//     (the warm-up's times), as a finding's are.
 // Everything else is compared in full: the set of findings, verdicts,
 // rules, severities, fingerprints, locations, fixes, declared values
 // (erlang.values.declared) and message templates. A finding present in one
@@ -83,6 +85,7 @@ function normalize(report) {
   const r = structuredClone(report);
   for (const k of REPORT_MEASURED) delete r[k];
   if (r.erlang) for (const k of REPORT_MEASURED) delete r.erlang[k];
+  for (const p of r.erlang?.measured ?? []) dropPath(r, p);
   r.findings = (r.findings ?? []).map((f) => {
     for (const p of f.measured ?? []) {
       if (p !== 'message') dropPath(f, p);

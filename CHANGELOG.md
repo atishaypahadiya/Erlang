@@ -49,7 +49,7 @@ Request handlers are found in Express, Fastify, `node:http` and Next.js.
 - k6, which you install yourself, at a fixed arrival rate. It targets only twins the harness started on loopback, with rates and durations capped per step and per run (workstation, CI, and CI long). The full suite runs in CI.
 - **Judging:** each twin against the other, never against an absolute number.
   - Counts and shares are judged as measured: statements, rows read, shared blocks, attempts, connections, bytes, failed requests.
-  - The heap slope is judged per pair.
+  - The heap slope is judged per pair, and a pair counts only with a fit of R² 0.5 or better (the trace's soaks need 0.9).
   - Timed verdicts (latencies, the event loop's longest stretch, late shares, the shedding gap) are judged under the relative timing rule.
 - **Headroom:** `scripts/trace.sh --headroom` measures each load form's clean twin, one request at a time: at every step's rate, its main thread must be busy at most 0.2 of the time, or a verdict that compares the twins under load would turn on the machine's speed. CI checks every form.
 - **Postgres** is pinned by digest, with a random password per run, and the container is removed afterwards.
@@ -89,6 +89,24 @@ A `v*` tag is cut only when its commit's last five CI runs are green and their t
 ### Findings
 
 A trace or load finding carries the values its message quotes: `erlang.values.measured` (what the run measured), `erlang.values.declared` (what the code, the fixture or the judge declares) and `erlang.template` (the message with each value as `{name}`). finding/1's `measured` lists the measured paths, so runs are compared by template and declared values without knowing any check. Proposed for the shared format (`docs/CONTRACT.md`).
+
+### Judge fixes
+
+- **Load heap slope (L05):** a slope fitted to noise could previously clear the bar. A pair now counts only when its fit has R² 0.5 or better, for planted and decoy rows alike (CI run 44783787423: L05's decoy orderLines cleared in one pair at 130.5 B/request with R² 0.08).
+
+### Fixture checks
+
+- **The planted twin answers (load):** a load step whose planted twin fails or refuses any request, in any repeat, fails the form, unless `load.json` says why failures belong to it (`plantedFailures`).
+
+- **L11's countries:** the seed loads 75,000 countries, not 50,000, so the planted first request under load sits at an estimated 1.5 times its margin on CI rather than 1.13 (fixtures/PLAN.md).
+
+### Harness fixes
+
+- **Database volumes:** each run's database lives in a volume of its own, named and labelled `erlang.trace`, and removed at the end of the run; leftovers of a killed run are removed by the next. Before, the image's anonymous volume was left behind on every run.
+
+### Release gate fixes
+
+- A report lists its own measured run-level paths in `erlang.measured` (the trace's warm-up times), and the comparison drops them as it drops a finding's: until now, the four L11 trace reports differed in every pair of runs on their warm-up times alone, so the gate could not hold.
 
 ### Known limits
 

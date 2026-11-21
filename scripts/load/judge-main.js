@@ -12,8 +12,8 @@
 // timing rule (lib/timing.js ruleC; docs/decisions.md, Q8): five pairs or more, the
 // twins in alternating order; it holds when every pair clears the step's
 // threshold, there is no finding when none does, and a mix is info, timing
-// unreliable, never failing. Spread and load averages are recorded only. The
-// heap slope is gated on the spread of the slopes. A finding that agrees with
+// unreliable, never failing. Spread and load averages are recorded only; the
+// heap slope also needs a fit of R² 0.5 or better in a pair. A finding that agrees with
 // a static finding (check, rule, and the symbol or endpoint) is that
 // finding, with load added to its detection.
 //
@@ -104,8 +104,17 @@ const CONTROL_SHARE = 0.9;
 // step's points (MIN_POINTS or more) in each repeat, and judged per pair under
 // the relative rule: a pair clears when this twin's slope is positive, at
 // least the step's floor and at least ratio times the other twin's in the
-// same pair. Every pair, none, or a mix (unreliable); the spread of the slopes
-// and each fit's R² are recorded only.
+// same pair, and its fit has R² LOAD_R2_MIN or better. Every pair, none, or
+// a mix (unreliable); the spread of the slopes is recorded only.
+//
+// Fit quality (the owner, 20 November 2026; docs/CONTRACT.md, the load
+// harness's "Judging"): the trace's soaks need R² 0.9, the load form 0.5.
+// Load samples are noisier, so 0.9 would turn real leaks into misses; with no
+// floor at all, a slope fitted to noise could clear the bar (CI run
+// 44783787423: L05's decoy orderLines, 130.5 B/request at R² 0.08). Planted
+// and decoy rows alike.
+export const LOAD_R2_MIN = 0.5;
+const fitted = (f) => f.points >= MIN_POINTS && (f.r2 ?? 0) >= LOAD_R2_MIN;
 const fit = (points) => slopeOf((points ?? []).map((p) => ({ x: p.answered, y: p.heapUsed })));
 
 const NOTE = {
@@ -189,15 +198,15 @@ function judgeTwin(raw, twin) {
         const theirsS = median(fits.map((f) => f.them.slope ?? 0));
         // Per pair, under the relative rule (the owner, 19 November 2026): a
         // pair clears when this twin's slope, fitted over MIN_POINTS or more
-        // readings, is positive, at least the floor, and at least ratio times
+        // readings with R² LOAD_R2_MIN or better, is positive, at least the floor, and at least ratio times
         // the other twin's slope in the same pair (a negative or flat slope
         // there is cleared by any positive one). All pairs, none, or a mix
         // (unreliable); the spread of the slopes is recorded only.
-        const clears = fits.map((f) => f.me.points >= MIN_POINTS && f.me.slope > 0 && f.me.slope >= (step.floor ?? 0) && f.me.slope >= ratio * (f.them.slope ?? 0));
+        const clears = fits.map((f) => fitted(f.me) && f.me.slope > 0 && f.me.slope >= (step.floor ?? 0) && f.me.slope >= ratio * (f.them.slope ?? 0));
         // Both margin tests, as for every timed step (the owner, 20 November
         // 2026): the slopes per pair, with the judge's own test of a pair.
         margins(step, twin, fits.map((f) => ({ me: f.me.slope ?? 0, them: f.them.slope ?? 0, fit: f })), raw.repeats.map((rep) => stepOf(rep, twin, step.id)),
-          (r) => r.fit.me.points >= MIN_POINTS && r.me > 0 && r.me >= (step.floor ?? 0) && r.me >= ratio * r.them);
+          (r) => fitted(r.fit.me) && r.me > 0 && r.me >= (step.floor ?? 0) && r.me >= ratio * r.them);
         const c = ruleC({ clears, samples: slopes, before: env.before, after: env.after });
         if (!c.holds) continue;
         const s0 = stepOf(raw.repeats[0], twin, step.id);
@@ -394,4 +403,21 @@ for (const step of spec.steps.filter((x) => x.cleanMax !== undefined)) {
   const over = values.filter((v) => v > step.cleanMax);
   say(!over.length, `acceptance: step ${step.id}, the clean twin's ${METRICS[step.metric].what} at most ${step.cleanMax} in every pair`, `clean ${JSON.stringify(values.map((v) => Number(v.toFixed(4))))}${over.length ? `; ${over.length} of ${values.length} pairs over` : ''}`);
 }
+// A form's planted twin answers every request (the owner, 20 November 2026):
+// a step where it failed or refused any, in any repeat, fails the form,
+// unless the form, or the step, says why failures belong to it
+// ("plantedFailures" in load.json: a form about failures, such as a retry
+// storm, a missing timeout, an exhausted pool, or a step whose defect holds a
+// request past k6's timeout). Otherwise a planted twin that falls over under
+// the step's rate is measuring its own collapse, not the defect (CI runs
+// 44779441422 and 44783787423: L11 at 100,000 countries failed 11 to 18 of
+// about 19 countries requests in every repeat).
+const checkedSteps = spec.plantedFailures ? [] : spec.steps.filter((x) => !x.plantedFailures);
+const fellOver = checkedSteps.map((step) => {
+  const per = raw.repeats.map((rep) => { const c = rep.planted?.steps?.find((x) => x.id === step.id)?.counts ?? {}; return { requests: c.requests ?? 0, failed: (c.failed ?? 0) + (c.refused ?? 0) }; });
+  const bad = per.map((x, i) => ({ ...x, i })).filter((x) => x.failed > 0);
+  return bad.length ? `step ${step.id} in ${bad.length} of ${per.length} repeat(s): ${bad.map((x) => `repeat ${x.i + 1} ${x.failed} of ${x.requests}`).join(', ')}` : null;
+}).filter(Boolean);
+if (spec.plantedFailures) console.log(`NOTE  ${spec.fixture ?? raw.fixture} ${raw.form ?? ''} load: the planted twin's failed requests are not checked; failures belong to this form (load.json plantedFailures)`.replace(/  +/g, ' '));
+if (checkedSteps.length) say(!fellOver.length, 'acceptance: the planted twin fails no request', fellOver.length ? `failed or refused: ${fellOver.join('; ')}; the planted twin falls over at the step's rate, so the step measures that, not the defect` : `${checkedSteps.length} step(s), ${raw.repeats.length} repeat(s)${spec.steps.length > checkedSteps.length ? `; not checked, failures declared in load.json: ${spec.steps.filter((x) => x.plantedFailures).map((x) => x.id).join(', ')}` : ''}`);
 process.exit(failed ? 1 : unreliable ? 3 : 0);
