@@ -1,6 +1,6 @@
 # Failure model
 
-What web services written by coding agents are most likely to get wrong under load, in rank order, and how each defect can be found: in the source, in traces from a short run, or by a local load test. ERLANG's checks and fixtures follow this list.
+What web services written by coding agents are most likely to get wrong under load, in rank order, and how each defect can be found: in the source, in traces from a short run, or by a local load test. Erlang's checks and fixtures follow this list.
 
 ## What the evidence can and cannot support
 
@@ -11,9 +11,9 @@ No study has measured web applications written by coding agents under load. The 
 3. **Incident studies.** Retry policies sustained more than half of 22 metastable outages from 11 organisations [F5]. Missing timeouts are among the root causes of timeout bugs in cloud systems, most of which produce no error message [F6].
 4. **Studies of agents' pull requests.** These describe process, not defects: agents' performance pull requests include explicit performance validation less often than humans' (45.7% against 63.6%) [F7], and performance tasks are among those agents fail most often to get merged [F8].
 
-So the top three ranks rest on measured frequency and impact. Ranks 4 to 6 rest on the LLM study and on mechanism. Ranks 7 to 12 are judgment: the impact mechanisms are well documented (the reference rules), but no study gives their frequency in web-application code, human or generated. The ranking orders defects by expected harm (how often, times how bad when it happens), then breaks ties by how cheaply ERLANG can catch the defect before merge.
+So the top three ranks rest on measured frequency and impact. Ranks 4 to 6 rest on the LLM study and on mechanism. Ranks 7 to 12 are judgment: the impact mechanisms are well documented (the reference rules), but no study gives their frequency in web-application code, human or generated. The ranking orders defects by expected harm (how often, times how bad when it happens), then breaks ties by how cheaply Erlang can catch the defect before merge.
 
-The LLM study also points at the remedy ERLANG relies on. Adding a performance goal to the prompt, without naming a technique, cut column over-fetching from 73% to 25% of correct implementations and session memory bloat from 60% to 12% [F4]. The defects come from defaults, not from inability, which suggests (but has not shown) that feeding findings back to the agent will fix most of them.
+The LLM study also points at the remedy Erlang relies on. Adding a performance goal to the prompt, without naming a technique, cut column over-fetching from 73% to 25% of correct implementations and session memory bloat from 60% to 12% [F4]. The defects come from defaults, not from inability, which suggests (but has not shown) that feeding findings back to the agent will fix most of them.
 
 ## Ranking
 
@@ -32,9 +32,9 @@ The LLM study also points at the remedy ERLANG relies on. Adding a performance g
 | 11 | Cold starts | Platform property: under 1% of serverless invocations [F20] | 100 ms to over 1 s each [F20] | First-request latency after a restart | CAP-03, CAP-11, STB-10 | L11 |
 | 12 | No load shedding: unbounded concurrency and queues | Not measured | Mechanism [S17][S18][S21] | Goodput past the knee (CAP-02) | OVL-01 to OVL-03, CAP-02 | L12 |
 
-Rank 12 is not in the brief's list of defects. It is here because it decides whether the service passes CAP-02, ERLANG's main load oracle, and because a service with every other defect fixed can still collapse past its knee without it.
+Rank 12 is not in the brief's list of defects. It is here because it decides whether the service passes CAP-02, Erlang's main load oracle, and because a service with every other defect fixed can still collapse past its knee without it.
 
-Connection-pool exhaustion (8) is often the symptom through which 1, 3, 6, 7 and 9 become visible under concurrency. ERLANG reports the root cause where it can tell, and pool exhaustion only when no root cause is found.
+Connection-pool exhaustion (8) is often the symptom through which 1, 3, 6, 7 and 9 become visible under concurrency. Erlang reports the root cause where it can tell, and pool exhaustion only when no root cause is found.
 
 ## The defects
 
@@ -68,11 +68,11 @@ A list route returns every matching row, or takes its page size from the client 
 
 A query filters, joins or sorts on a column with no index, which is fast on development data and slow at production size.
 
-*Evidence.* In Yang et al., "missing index is the most common performance problem reported" in the applications' bug trackers (30 of 140), yet "it only appears in three out of the 40 problematic actions" in the latest versions: teams add indexes after deployment, once a query becomes slow [F1]. ERLANG's value here is catching them before the data grows.
+*Evidence.* In Yang et al., "missing index is the most common performance problem reported" in the applications' bug trackers (30 of 140), yet "it only appears in three out of the 40 problematic actions" in the latest versions: teams add indexes after deployment, once a query becomes slow [F1]. Erlang's value here is catching them before the data grows.
 
 *Static.* Columns used in `WHERE`, `JOIN` and `ORDER BY`, from SQL and ORM calls, compared with the indexes declared in migrations. Foreign keys without an index.
 
-*Trace.* `EXPLAIN` on the statements captured during the run, against seeded data at realistic size, looking for sequential scans of large tables. PostgreSQL's `auto_explain` logs slow statements' plans automatically, but its timing option can have "an extremely negative impact on performance" [F16], so ERLANG runs `EXPLAIN` itself after the run.
+*Trace.* `EXPLAIN` on the statements captured during the run, against seeded data at realistic size, looking for sequential scans of large tables. PostgreSQL's `auto_explain` logs slow statements' plans automatically, but its timing option can have "an extremely negative impact on performance" [F16], so Erlang runs `EXPLAIN` itself after the run.
 
 *Load.* Latency of the route against the clean twin. Weaker than the plan, which says why.
 
@@ -118,7 +118,7 @@ An HTTP, database or cache call that can wait forever, because no timeout was se
 
 *Evidence.* A study of timeout bugs in eleven cloud server systems lists missing timeouts among the root causes, and finds that 60% of timeout bugs produce no error message [F6]. Nygard: socket reads often "block forever" by default [S23]. Frequency in web-application code is not measured.
 
-*Static.* The cheapest check in the set. Bandit's B113 already finds Python `requests` and `httpx` calls with no timeout [F9]; ERLANG needs the same for `fetch`, axios, database drivers and pools in each language it supports. A static check cannot see a timeout set in configuration elsewhere, so it reports what it could not resolve as unknown, not as a defect.
+*Static.* The cheapest check in the set. Bandit's B113 already finds Python `requests` and `httpx` calls with no timeout [F9]; Erlang needs the same for `fetch`, axios, database drivers and pools in each language it supports. A static check cannot see a timeout set in configuration elsewhere, so it reports what it could not resolve as unknown, not as a defect.
 
 *Trace.* Spans to a dependency whose durations have no ceiling.
 
@@ -156,7 +156,7 @@ The same expensive work repeated: a loop-invariant query inside a loop, the same
 
 *Static.* A query inside a loop whose arguments do not depend on the loop.
 
-*Trace.* The same statement with the same parameters, repeated within one request or across consecutive identical requests. Parameter values are opt-in in OpenTelemetry [F10], so ERLANG turns them on for its own runs.
+*Trace.* The same statement with the same parameters, repeated within one request or across consecutive identical requests. Parameter values are opt-in in OpenTelemetry [F10], so Erlang turns them on for its own runs.
 
 *Load.* Throughput of the route against the twin.
 

@@ -16,7 +16,7 @@ Strength: MUST · Evidence: practice · Check: load
 
 As offered load rises past capacity, the service keeps serving roughly its capacity in good requests and refuses or degrades the rest. A service whose goodput falls as load rises past the knee fails this rule, however high the knee.
 
-*Why:* three sources state the same test. Google: past the breaking point the component "should ideally start serving errors or degraded results in response to additional load, but not significantly reduce the rate at which it successfully handles requests" [S18]. Google again: a task should keep serving its provisioned rate "regardless of how much excess traffic is thrown at the task", up to "somewhere above 2x or even 10x" that rate [S17]. Amazon: "The ideal load test result is for goodput to plateau when the service is close to being fully utilized, and to remain flat even when more throughput is applied" [S21]. This is ERLANG's main load oracle.
+*Why:* three sources state the same test. Google: past the breaking point the component "should ideally start serving errors or degraded results in response to additional load, but not significantly reduce the rate at which it successfully handles requests" [S18]. Google again: a task should keep serving its provisioned rate "regardless of how much excess traffic is thrown at the task", up to "somewhere above 2x or even 10x" that rate [S17]. Amazon: "The ideal load test result is for goodput to plateau when the service is close to being fully utilized, and to remain flat even when more throughput is applied" [S21]. This is Erlang's main load oracle.
 
 ### CAP-03 · Test both a gradual ramp and a sudden step
 Strength: SHOULD · Evidence: practice · Check: load
@@ -42,7 +42,7 @@ Run the bottleneck resource well below full utilisation at expected peak, and re
 ### CAP-06 · Above capacity there is no steady latency to report
 Strength: MUST · Evidence: theory · Check: report
 
-A queue is stable only while the arrival rate is below the service rate (λ < μ). A run offered more load than the service can serve has a queue that grows for as long as the run lasts, so its latency depends on the run's length. ERLANG reports such a run as over capacity, with queue growth, and does not report its latency as a property of the service.
+A queue is stable only while the arrival rate is below the service rate (λ < μ). A run offered more load than the service can serve has a queue that grows for as long as the run lasts, so its latency depends on the run's length. Erlang reports such a run as over capacity, with queue growth, and does not report its latency as a property of the service.
 
 *Why:* the M/M/1 results hold only for "λ < µ" [S27], and Little's law needs stationary processes [S1].
 
@@ -88,6 +88,6 @@ If a cache is there to provide capacity, not only to cut latency, the service is
 ### CAP-12 · Load only what the owner runs, within its limits
 Strength: MUST · Evidence: practice, taste · Check: report
 
-ERLANG generates load only against services its owner runs: on the local machine, in CI service containers, or on a staging deployment the owner names. Never against a third party, and never against production without the owner's explicit say-so. Every run has a rate cap and a duration cap.
+Erlang generates load only against services its owner runs: on the local machine, in CI service containers, or on a staging deployment the owner names. Never against a third party, and never against production without the owner's explicit say-so. Every run has a rate cap and a duration cap.
 
 *Why:* load against someone else's service is a denial-of-service attack. Google adds that load tests must stay within the resources committed to them: "When performing load tests, make sure that you remain within your committed resource limits" [S18].

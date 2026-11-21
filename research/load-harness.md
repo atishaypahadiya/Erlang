@@ -6,7 +6,7 @@ The third channel of `fixtures/PLAN.md`: each fixture's twins served on 127.0.0.
 
 From `fixtures/PLAN.md` (Ground rules, Stack, Decisions) and the owner's rules:
 
-- **k6, external.** ERLANG runs the `k6` the user or CI installed, as a separate process, and reads its output. It never vendors, bundles, modifies or links k6 (AGPL-3.0; `research/prior-art.md`). With no `k6` on the path it stops with an install hint. CI installs k6 v2.3.0 from Grafana's release, checked against its SHA-256.
+- **k6, external.** Erlang runs the `k6` the user or CI installed, as a separate process, and reads its output. It never vendors, bundles, modifies or links k6 (AGPL-3.0; `research/prior-art.md`). With no `k6` on the path it stops with an install hint. CI installs k6 v2.3.0 from Grafana's release, checked against its SHA-256.
 - **Open model.** k6's `constant-arrival-rate` executor: requests start at a fixed rate whatever the service does, so a slow service builds a queue instead of slowing the test (the closed-model mistake that hides overload).
 - **Loopback only.** The target is the twin the harness started, on 127.0.0.1, on a port the system picked. The guard (`lib/load-guard.js`) refuses any other host, whatever the flags; there is no override.
 - **Caps.** Rate and duration are capped per step and per run, and the run log records the target, the rate and the duration of every step.
@@ -69,7 +69,7 @@ A load step raises the machine's load average itself: k6, the twin and PostgreSQ
 ## Not covered
 
 - Distributed load, or load from another machine: one k6 process, on the machine that serves the twin.
-- Any target ERLANG did not start.
+- Any target Erlang did not start.
 - Absolute thresholds (a p99 of 200 ms): every judgement compares the twins on the same machine, back to back.
 
 ## The timing trial (docs/decisions.md, Q6 and Q7; not adopted)

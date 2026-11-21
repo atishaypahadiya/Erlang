@@ -1,6 +1,6 @@
-# What ERLANG needs from finding/1
+# What Erlang needs from finding/1
 
-> **Superseded in part.** finding/1 and report/1 were released at ITTEN's `v0.3.5`, and ERLANG uses them through a pinned copy of KERCKHOFFS's `core/`. The release settled several points below:
+> **Superseded in part.** finding/1 and report/1 were released at ITTEN's `v0.3.5`, and Erlang uses them through a pinned copy of KERCKHOFFS's `core/`. The release settled several points below:
 > - `where` takes `elements`, `locations`, `endpoints` and `resources` together;
 > - `rules` is in the core;
 > - a core `detection` field (`render`, `static`, `config`, `trace`, `live`, `load`) carries the evidence proposed here as `evidence`;
@@ -8,36 +8,36 @@
 >
 > The rest stays as a record of what was asked.
 
-ERLANG's requirements on the shared finding format, split into what the core must carry (because the gate, the board or another specialist reads it) and what stays in ERLANG's own `erlang` object. Written against the uncommitted draft in ITTEN's `finding1` worktree (`schema/finding.schema.json` and `schema/finding-itten.schema.json`), read on 17 November 2026. Nothing here changes ITTEN; it is a list to take there.
+Erlang's requirements on the shared finding format, split into what the core must carry (because the gate, the board or another specialist reads it) and what stays in Erlang's own `erlang` object. Written against the uncommitted draft in ITTEN's `finding1` worktree (`schema/finding.schema.json` and `schema/finding-itten.schema.json`), read on 17 November 2026. Nothing here changes ITTEN; it is a list to take there.
 
 ## What the draft has
 
 Required core fields: `schema`, `specialist`, `check`, `severity` (error, warning, info), `fingerprint`, `message`, `measured` (paths of fields that differ between runs of the same subject), `floor` (security, accessibility or null) and `where`. `where` is exactly one of `elements` (CSS selectors), `location` (`file`, `line`) or `endpoint` (`method`, `route`). Any other top-level key must be an object named after a specialist and is not validated by the core. ITTEN's extension carries `id`, `count`, `seen`, `first`, `title`, `rule` and `crops`.
 
-## What works for ERLANG as it is
+## What works for Erlang as it is
 
-- `specialist: "erlang"`, `check` with ERLANG's check names (`n-plus-one`, `retry-storm`, …), `severity`, `message`.
-- `floor: null`. No ERLANG check holds a security or accessibility floor. Where ERLANG and KERCKHOFFS meet (rate limits against load shedding), KERCKHOFFS's floor wins, as the core intends.
-- `measured`, unchanged in principle. Every latency, rate, percentile, duration and memory figure from a load or trace run is a measured field. Counts that ERLANG can make deterministic (statements per request, rows returned, attempts per request, bytes per response) are not, so parity compares them exactly. Percentile keys need names that start with a letter to fit the path pattern (`p50`, `p99`, `p999`, not `99.9`); ERLANG will name them so.
-- The extension mechanism: an `erlang` object, validated by ERLANG's own schema.
+- `specialist: "erlang"`, `check` with Erlang's check names (`n-plus-one`, `retry-storm`, …), `severity`, `message`.
+- `floor: null`. No Erlang check holds a security or accessibility floor. Where Erlang and KERCKHOFFS meet (rate limits against load shedding), KERCKHOFFS's floor wins, as the core intends.
+- `measured`, unchanged in principle. Every latency, rate, percentile, duration and memory figure from a load or trace run is a measured field. Counts that Erlang can make deterministic (statements per request, rows returned, attempts per request, bytes per response) are not, so parity compares them exactly. Percentile keys need names that start with a letter to fit the path pattern (`p50`, `p99`, `p999`, not `99.9`); Erlang will name them so.
+- The extension mechanism: an `erlang` object, validated by Erlang's own schema.
 
-## Core changes ERLANG needs
+## Core changes Erlang needs
 
 ### 1. Which kind of evidence a finding rests on
 
-ERLANG's main difference from other tools is that one finding can rest on several kinds of evidence: a loop in the source, 51 statements of one shape in a trace, statements growing tenfold as the page grows tenfold. The gate and the board need to read this without opening the extension: a static-only finding is cheaper to trust and fix than a load-only one, and a load-only finding that comes and goes needs different handling.
+Erlang's main difference from other tools is that one finding can rest on several kinds of evidence: a loop in the source, 51 statements of one shape in a trace, statements growing tenfold as the page grows tenfold. The gate and the board need to read this without opening the extension: a static-only finding is cheaper to trust and fix than a load-only one, and a load-only finding that comes and goes needs different handling.
 
 **Proposal.** A required core field, an array of one or more values from a shared enum, sorted, without duplicates:
 
 | Value | Meaning | Used by |
 |---|---|---|
-| `static` | Read from source, configuration or migrations, without running anything | ERLANG, KERCKHOFFS, ITTEN's lint step |
+| `static` | Read from source, configuration or migrations, without running anything | Erlang, KERCKHOFFS, ITTEN's lint step |
 | `render` | Measured in a browser on a rendered page | ITTEN |
-| `trace` | Read from telemetry of a run at low rate: spans, query logs, process metrics | ERLANG |
-| `load` | Measured under generated load | ERLANG |
+| `trace` | Read from telemetry of a run at low rate: spans, query logs, process metrics | Erlang |
+| `load` | Measured under generated load | Erlang |
 | `probe` | Measured by sending requests to a running deployment | KERCKHOFFS |
 
-**Name.** Your note calls it `mode`. ITTEN's extension already uses "mode" for something else: `seen` is keyed "per mode (light, dark, 200% text, an engine, a resize)". To keep one word for one idea across the set, ERLANG proposes calling the core field **`evidence`**. If ITTEN's word stays as it is, `mode` is fine and `seen`'s description should change.
+**Name.** Your note calls it `mode`. ITTEN's extension already uses "mode" for something else: `seen` is keyed "per mode (light, dark, 200% text, an engine, a resize)". To keep one word for one idea across the set, Erlang proposes calling the core field **`evidence`**. If ITTEN's word stays as it is, `mode` is fine and `seen`'s description should change.
 
 **Compatibility.** The draft's root `additionalProperties` admits only objects, so this cannot be added by a specialist; it must be in the core. The draft is uncommitted, so making it required now costs nothing. Later it would be finding/2.
 
@@ -45,24 +45,24 @@ ERLANG's main difference from other tools is that one finding can rest on severa
 
 ### 2. A finding on an endpoint and in code at once
 
-Most ERLANG findings have two places: where the defect shows (an endpoint) and where it is fixed (one or more places in code). An N+1 shows on `GET /orders` and is fixed in the handler's loop and, often, in a serializer in another file. The draft's `oneOf` allows exactly one shape.
+Most Erlang findings have two places: where the defect shows (an endpoint) and where it is fixed (one or more places in code). An N+1 shows on `GET /orders` and is fixed in the handler's loop and, often, in a serializer in another file. The draft's `oneOf` allows exactly one shape.
 
 **Proposal.**
 
 - `where` holds one or more of `elements`, `locations` and `endpoint`, with at least one present. ITTEN keeps sending `elements` alone; nothing changes for it.
 - `location` becomes `locations`, an array, matching `elements`. A defect's fix can span files.
-- Each location gains optional `symbol` (the function or method, such as `listOrders`), `endLine` and `column`. ERLANG's fingerprint uses `file` and `symbol`, not `line`, so a finding keeps its fingerprint when unrelated edits move it down a file.
+- Each location gains optional `symbol` (the function or method, such as `listOrders`), `endLine` and `column`. Erlang's fingerprint uses `file` and `symbol`, not `line`, so a finding keeps its fingerprint when unrelated edits move it down a file.
 
 ### 3. The endpoint shape
 
 - **`route` is a route template, not a URL**: `/users/:id/events`, never `/users/42/events`. Otherwise every id makes a new fingerprint. State this in the schema's description.
-- **Optional `service`**: the name of the service, for repositories that hold more than one (and for ERLANG's fixtures, which hold many).
+- **Optional `service`**: the name of the service, for repositories that hold more than one (and for Erlang's fixtures, which hold many).
 - **Optional `protocol`**, defaulting to `http`: `http`, `grpc`, `queue` or `job`. For `queue`, `route` is the queue or topic; for `job`, the job's name. `method` is required only when `protocol` is `http`. Queue consumers and scheduled jobs are where backlogs and retry storms live (OVL-10, MEA-10).
 - **A service-wide shape**: some findings belong to no single endpoint. Goodput falling past the knee (CAP-02), a pool exhausted by several routes, memory growing with uptime. Proposal: `where.service` as a fourth option, `{ "name": "api" }`, used alone.
 
 ### 4. Rules in the core
 
-Every ERLANG finding cites the rules it breaks (`DAT-01`, `TMO-01`), and so does ITTEN, in its extension's `rule` string. A gate that merges three specialists' findings should be able to show "why" without knowing each extension.
+Every Erlang finding cites the rules it breaks (`DAT-01`, `TMO-01`), and so does ITTEN, in its extension's `rule` string. A gate that merges three specialists' findings should be able to show "why" without knowing each extension.
 
 **Proposal.** An optional core `rules`: an array of rule IDs or external criteria (`DAT-01`, `WCAG 2.5.8`). ITTEN can keep `rule` in its extension or move it.
 
@@ -70,17 +70,17 @@ Every ERLANG finding cites the rules it breaks (`DAT-01`, `TMO-01`), and so does
 
 A load finding can appear in one run and not the next, on the same code, when the service sits near a threshold. ITTEN met the same thing with contrast over a moving background and keeps a `movingBackground` marker in its extension, which its parity test reads. If the gate compares a pull request's findings with a baseline, it needs to know which findings may flicker, or it will report them as new and fixed on alternate pushes.
 
-**Proposal.** An optional core flag, `unstable: true`, set by the specialist when a finding's presence has been seen to vary between runs of the same subject. The gate then judges it on repeated runs instead of one. ERLANG's own fixture test treats any unstable finding as a failure; in a user's project it is reported and judged, not hidden.
+**Proposal.** An optional core flag, `unstable: true`, set by the specialist when a finding's presence has been seen to vary between runs of the same subject. The gate then judges it on repeated runs instead of one. Erlang's own fixture test treats any unstable finding as a failure; in a user's project it is reported and judged, not hidden.
 
 ### 6. A home for the run
 
-finding/1 describes one finding. ERLANG's findings mean little without their run: the target (and the proof that it was loopback or a CI container), the load profile, the rate and duration caps, the seeded data size, the k6 version, whether an ITTEN timing lock refused or interrupted a step. These are per run, not per finding.
+finding/1 describes one finding. Erlang's findings mean little without their run: the target (and the proof that it was loopback or a CI container), the load profile, the rate and duration caps, the seeded data size, the k6 version, whether an ITTEN timing lock refused or interrupted a step. These are per run, not per finding.
 
-**Question for ITTEN.** Does the core define a report envelope (say `report/1`: specialist, version, run id, start and end, subject, status, findings), or does each specialist keep its own report and the core only merge findings? ERLANG needs a run status the gate can read, at least `complete`, `refused` (a timing lock or the loopback guard stopped the run) and `interrupted`, so a refused run is never mistaken for a clean one.
+**Question for ITTEN.** Does the core define a report envelope (say `report/1`: specialist, version, run id, start and end, subject, status, findings), or does each specialist keep its own report and the core only merge findings? Erlang needs a run status the gate can read, at least `complete`, `refused` (a timing lock or the loopback guard stopped the run) and `interrupted`, so a refused run is never mistaken for a clean one.
 
 ## The `erlang` extension
 
-Validated by ERLANG's own schema, as ITTEN's is by `finding-itten.schema.json`. Proposed fields:
+Validated by Erlang's own schema, as ITTEN's is by `finding-itten.schema.json`. Proposed fields:
 
 | Field | Type | Measured? | Meaning |
 |---|---|---|---|
@@ -99,7 +99,7 @@ Validated by ERLANG's own schema, as ITTEN's is by `finding-itten.schema.json`. 
 
 ## Example
 
-An N+1 finding as ERLANG would write it, with the proposed core changes (`evidence`, `rules`, `where` with `endpoint` and `locations`). Against the current draft it fails on `evidence` and `rules` (not objects at the root) and on `where` (two shapes).
+An N+1 finding as Erlang would write it, with the proposed core changes (`evidence`, `rules`, `where` with `endpoint` and `locations`). Against the current draft it fails on `evidence` and `rules` (not objects at the root) and on `where` (two shapes).
 
 ```json
 {

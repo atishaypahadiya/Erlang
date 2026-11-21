@@ -1,6 +1,6 @@
 # Load and resilience rules
 
-A reference set of rules for how a web service should behave under load, with the reasoning and evidence behind each rule. ERLANG's checks cite these rules, so a finding can say which rule it breaks and why the rule exists.
+A reference set of rules for how a web service should behave under load, with the reasoning and evidence behind each rule. Erlang's checks cite these rules, so a finding can say which rule it breaks and why the rule exists.
 
 The set draws on queueing theory (Little, Erlang, Gunther), Google's Site Reliability Engineering book, the Amazon Builders' Library, Michael Nygard's *Release It!*, Brendan Gregg's USE method, Tom Wilkie's RED method, and empirical studies of performance bugs in database-backed applications. Every rule carries an identifier, a strength and an evidence level, so it can be cited in a review, checked by a tool, or overridden on purpose.
 
@@ -30,7 +30,7 @@ Sources: [S19][S23]
 
 **Strength** follows RFC 2119: **MUST** (violations are defects), **SHOULD** (deviate only with a recorded reason), **MAY** (an option worth considering).
 
-**Evidence** states what kind of authority stands behind a rule. The vocabulary is shared by ITTEN, KERCKHOFFS and ERLANG, so a level means the same in every specialist's findings; each specialist uses the levels that apply to it.
+**Evidence** states what kind of authority stands behind a rule. The vocabulary is shared by ITTEN, KERCKHOFFS and Erlang, so a level means the same in every specialist's findings; each specialist uses the levels that apply to it.
 
 | Level | Meaning | Changes when |
 |---|---|---|
@@ -45,7 +45,7 @@ Sources: [S19][S23]
 
 None of the sources on overload, retries and timeouts is peer-reviewed research. They are practice: what Google and Amazon do and why, written by the engineers who did it. The evidence column says so rather than borrow a stronger word.
 
-**Check** names the kinds of evidence ERLANG can use for the rule: `static` (source and migrations), `trace` (spans, query logs and metrics from a short low-rate run), `load` (a local load run against the owner's own service), or `report` (a property of ERLANG's own output, not of the service). `research/failure-model.md` gives the detection method for each defect.
+**Check** names the kinds of evidence Erlang can use for the rule: `static` (source and migrations), `trace` (spans, query logs and metrics from a short low-rate run), `load` (a local load run against the owner's own service), or `report` (a property of Erlang's own output, not of the service). `research/failure-model.md` gives the detection method for each defect.
 
 Numbers quoted from a source as an example ("e.g. 50% or less", "say, 60 retries per minute") are given as the source's example, not as thresholds the source endorses.
 

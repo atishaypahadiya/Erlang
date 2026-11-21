@@ -1,6 +1,6 @@
 # ITTEN timing lock
 
-A lock file that ITTEN writes while it measures time, so ERLANG never generates load on the same machine during those measurements. The rule as the owner decided it (19 November 2026) is in Reading, below, and in `lib/itten-lock.js`; it replaces this proposal where they differ. Load would steal CPU from the browser being timed and skew ITTEN's benchmark, settle windows, motion and frame timing. This file is the spec to carry to ITTEN. ITTEN writes the lock; ERLANG only reads it.
+A lock file that ITTEN writes while it measures time, so Erlang never generates load on the same machine during those measurements. The rule as the owner decided it (19 November 2026) is in Reading, below, and in `lib/itten-lock.js`; it replaces this proposal where they differ. Load would steal CPU from the browser being timed and skew ITTEN's benchmark, settle windows, motion and frame timing. This file is the spec to carry to ITTEN. ITTEN writes the lock; Erlang only reads it.
 
 ## When ITTEN holds it
 
@@ -41,7 +41,7 @@ ${ITTEN_LOCK_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/itten/locks}/timing-<pid
 |---|---|---|
 | `format` | `"itten-timing-lock/1"` | Format version. |
 | `pid` | integer > 1 | The ITTEN process that holds the lock: the Node process, not a browser child. |
-| `phase` | `"benchmark"` or `"motion"` | Which timed phase. Informational; ERLANG prints it in its refusal. |
+| `phase` | `"benchmark"` or `"motion"` | Which timed phase. Informational; Erlang prints it in its refusal. |
 | `taken` | ISO 8601 UTC, milliseconds | When the lock was taken. |
 | `expires` | ISO 8601 UTC, milliseconds | After this instant the lock is void whatever the pid. |
 | `project` | absolute path | The project being inspected. Informational. |
@@ -54,24 +54,24 @@ ${ITTEN_LOCK_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/itten/locks}/timing-<pid
 2. Remove the file when the phase ends, in a `finally`, and on `SIGINT` and `SIGTERM`. A crash that skips both leaves a stale file, which the pid check or the expiry voids.
 3. On start, ITTEN may delete stale files (dead pid or past expiry) in the directory. It never deletes a file whose pid is alive and whose expiry is in the future.
 
-## Reading (ERLANG)
+## Reading (Erlang)
 
 As decided by the owner, and implemented in `lib/itten-lock.js` (unit cases in `scripts/unit-test.js`):
 
 - **Location.** `timing-<pid>.json` in the first of `$ITTEN_LOCK_DIR`, `$XDG_STATE_HOME/itten/locks` and `$HOME/.local/state/itten/locks` that is set. Only names matching `timing-<digits>.json` are locks. A missing directory means no locks.
 - **Active:** the file parses, `format` is `itten-timing-lock/1`, the pid is alive (`kill(pid, 0)` succeeds or fails with `EPERM`) and now is before `expires`. A file that cannot be read or parsed counts as active too.
-- **Stale:** the pid is dead, or now is at or past `expires`. ERLANG ignores it and leaves it in place.
-- A file that parses, in another `format`, counts as active, as one that cannot be parsed does, unless its pid is dead or its expiry past (the owner, 19 November 2026; docs/decisions.md, Q5): a newer ITTEN is not timed under load while ERLANG learns its format.
-- **Behaviour.** ERLANG generates no load while any lock is active. It waits, rereading about once a second, up to a limit (`ERLANG_LOCK_WAIT_S`, 600 s by default), then stops with exit 75, naming the lock: its file, phase, project, pid and expiry. It rereads immediately before starting load. The trace harness, which is not load, follows the same rule, at its start and before each twin, in place of its earlier check for ITTEN's inspector process.
+- **Stale:** the pid is dead, or now is at or past `expires`. Erlang ignores it and leaves it in place.
+- A file that parses, in another `format`, counts as active, as one that cannot be parsed does, unless its pid is dead or its expiry past (the owner, 19 November 2026; docs/decisions.md, Q5): a newer ITTEN is not timed under load while Erlang learns its format.
+- **Behaviour.** Erlang generates no load while any lock is active. It waits, rereading about once a second, up to a limit (`ERLANG_LOCK_WAIT_S`, 600 s by default), then stops with exit 75, naming the lock: its file, phase, project, pid and expiry. It rereads immediately before starting load. The trace harness, which is not load, follows the same rule, at its start and before each twin, in place of its earlier check for ITTEN's inspector process.
 
-The load harness also checks during each load step, as proposed: if a lock appears mid-step, ERLANG stops sending, waits for the requests in flight up to their timeout, discards the step's results and reports the step as interrupted.
+The load harness also checks during each load step, as proposed: if a lock appears mid-step, Erlang stops sending, waits for the requests in flight up to their timeout, discards the step's results and reports the step as interrupted.
 
-ERLANG never writes, renews or removes a lock file.
+Erlang never writes, renews or removes a lock file.
 
 ## Not covered
 
-- **The other direction.** ITTEN does not check for ERLANG's load before timing. A load run that starts first and then sees ITTEN's lock stops within one check interval. If that window matters, a symmetric `erlang-load` lock in the same directory, read by ITTEN, closes it; that is ITTEN's call.
-- **Other machines.** The lock is per machine. CI jobs run on separate runners, so no lock is needed there unless ITTEN and ERLANG share a self-hosted runner, where the same directory works.
+- **The other direction.** ITTEN does not check for Erlang's load before timing. A load run that starts first and then sees ITTEN's lock stops within one check interval. If that window matters, a symmetric `erlang-load` lock in the same directory, read by ITTEN, closes it; that is ITTEN's call.
+- **Other machines.** The lock is per machine. CI jobs run on separate runners, so no lock is needed there unless ITTEN and Erlang share a self-hosted runner, where the same directory works.
 - **Pid reuse.** A crashed ITTEN whose pid is reused by an unrelated process keeps its stale lock active until `expires`, at most 15 minutes. Recording the process's start time as well would close this, at the cost of a platform-specific lookup; the cap was judged enough.
 
 ## Test cases (both sides)

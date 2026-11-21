@@ -2,7 +2,7 @@
 
 Proposed and reviewed on 17 November 2026; the decisions are at the end. Check A is being built.
 
-The owner's machine is busy with a science run for days, so ERLANG's first check must be static: it reads source and configuration and generates no load. Its findings carry `detection: ["static"]`, or `["config"]` where configuration alone decides. Checks that need trace or load evidence come later, on GitHub's runners or once the machine is free. Stack as decided: Node 22 and TypeScript or JavaScript first, with raw `pg` and Prisma.
+The owner's machine is busy with a science run for days, so Erlang's first check must be static: it reads source and configuration and generates no load. Its findings carry `detection: ["static"]`, or `["config"]` where configuration alone decides. Checks that need trace or load evidence come later, on GitHub's runners or once the machine is free. Stack as decided: Node 22 and TypeScript or JavaScript first, with raw `pg` and Prisma.
 
 Prior-art claims below were checked against raw source text (code, docs source, release notes) on 17 November 2026; sources C1–C18 are at the end. "None found" means a search of npm, GitHub code search, the public Semgrep rules and the CodeQL repository found nothing mainstream. It does not prove that nothing exists: Semgrep's Pro rules are not public.
 
@@ -153,7 +153,7 @@ D has the highest value, rank 1 in the failure model, but its precision depends 
 
 ## Shared core, pinned
 
-ERLANG uses KERCKHOFFS's `core/` as a pinned, read-only copy until the shared core is extracted into its own repository:
+Erlang uses KERCKHOFFS's `core/` as a pinned, read-only copy until the shared core is extracted into its own repository:
 - `finding.js`;
 - `report.js`;
 - `fixture-score.js`;
@@ -169,22 +169,22 @@ About the copy:
 The released finding/1 already answers most of `research/finding1-requirements.md`:
 - `where` takes `locations`, `endpoints` and `resources` together;
 - `rules` is in the core;
-- `detection` (`render`, `static`, `config`, `trace`, `live`, `load`) is the evidence field ERLANG asked for.
+- `detection` (`render`, `static`, `config`, `trace`, `live`, `load`) is the evidence field Erlang asked for.
 
 That file needs a note that it is superseded where the release settled a question.
 
 ## Questions
 
 1. **First check.** `no-timeout` first, as recommended, or `n-plus-one` first, as PLAN's build order (L01a first) implies?
-2. **Parser.** KERCKHOFFS has no dependencies and lexes SQL by hand. ERLANG's checks need loops, call targets and option objects in JS/TS, which a hand lexer cannot give reliably. Options:
+2. **Parser.** KERCKHOFFS has no dependencies and lexes SQL by hand. Erlang's checks need loops, call targets and option objects in JS/TS, which a hand lexer cannot give reliably. Options:
    - the TypeScript compiler API (`typescript`, Apache-2.0): parses JS and TS, and can resolve a call to its import or instance;
    - a plain parser such as acorn (MIT, JS only, TS stripped first);
    - stay dependency-free and handle only the simple shapes.
 
    Recommendation: `typescript`, as the one runtime dependency.
-3. **Pinned core.** Copy into ERLANG's `core/` from KERCKHOFFS `0f70ed0`, with recorded hashes and a test, as above?
+3. **Pinned core.** Copy into Erlang's `core/` from KERCKHOFFS `0f70ed0`, with recorded hashes and a test, as above?
 4. **Prisma version for fixtures.** npm's `latest` for the `prisma` CLI is now `8.0.0-rc.34`, while `@prisma/client` is at `7.10.1`. Pin fixtures to Prisma 7.10.1 and add a Prisma 8 form once 8 is released? The batching difference makes it a real second form for D, not a copy.
-5. **Scope of "request path".** A, C and D report only code reachable from a request handler. Should ERLANG find handlers itself (Express, Fastify, `node:http`, Next.js route files), or take entry points from a project configuration file, as KERCKHOFFS takes its excludes?
+5. **Scope of "request path".** A, C and D report only code reachable from a request handler. Should Erlang find handlers itself (Express, Fastify, `node:http`, Next.js route files), or take entry points from a project configuration file, as KERCKHOFFS takes its excludes?
 
 ## Decisions
 

@@ -1,18 +1,18 @@
 # Prior art
 
-What existing tools already cover, so ERLANG builds only what is missing and reuses the rest. Checked against each tool's own documentation on 17 November 2026. No tool was installed or run.
+What existing tools already cover, so Erlang builds only what is missing and reuses the rest. Checked against each tool's own documentation on 17 November 2026. No tool was installed or run.
 
 ## Summary
 
 Three groups of tools each cover one kind of evidence well, and none spans all three:
 
 - **Load generators** (k6, Gatling, Artillery, Locust, wrk2) produce synthetic load, and all but wrk2 can fail a CI job on thresholds. They measure the service from outside and say nothing about the code that made it slow.
-- **APM and tracing products** (Datadog, Sentry, New Relic, Scout) already detect several of the defects in ERLANG's failure model from traces: N+1 queries, sequential calls, aggressive retries, dependency timeouts, missing indexes, memory bloat. They work on telemetry from a running, instrumented service, sent to the vendor's backend, after deployment.
+- **APM and tracing products** (Datadog, Sentry, New Relic, Scout) already detect several of the defects in Erlang's failure model from traces: N+1 queries, sequential calls, aggressive retries, dependency timeouts, missing indexes, memory bloat. They work on telemetry from a running, instrumented service, sent to the vendor's backend, after deployment.
 - **Static rules** (Semgrep, Bandit, Ruff) catch single patterns, most clearly an HTTP call with no timeout in Python.
 
 Lighthouse measures one page load in a browser and nothing about the server under concurrent requests; it belongs on ITTEN's side of the line.
 
-A tool aimed at agent-written code already exists (VibeDoctor), and an APM vendor already feeds N+1 and memory findings to coding agents over MCP (Scout). So "performance checking for agent-written code" is not new, and ERLANG should not claim it is.
+A tool aimed at agent-written code already exists (VibeDoctor), and an APM vendor already feeds N+1 and memory findings to coding agents over MCP (Scout). So "performance checking for agent-written code" is not new, and Erlang should not claim it is.
 
 ## Load generators
 
@@ -54,7 +54,7 @@ APM Recommendations lists detectors including "N+1 Queries on Database", "Repeat
 
 ### Sentry
 
-Detects performance issues from transaction spans, including N+1 Queries, Consecutive DB Queries, N+1 API Calls and Large HTTP Payload [P17]. Its N+1 detector looks for "sequential, non-overlapping database spans with similar descriptions", above a total duration (50 ms) and a span count (usually five), with full query text in the spans [P18]. This is the most precisely documented trace heuristic found, and a good starting point for ERLANG's trace check.
+Detects performance issues from transaction spans, including N+1 Queries, Consecutive DB Queries, N+1 API Calls and Large HTTP Payload [P17]. Its N+1 detector looks for "sequential, non-overlapping database spans with similar descriptions", above a total duration (50 ms) and a span count (usually five), with full query text in the spans [P18]. This is the most precisely documented trace heuristic found, and a good starting point for Erlang's trace check.
 
 ### New Relic
 
@@ -66,9 +66,9 @@ An MCP server gives coding agents read-only access to insights that identify "N+
 
 ### OpenTelemetry
 
-Instrumentation and a data format, not a backend or a detector [P21]. Its database span conventions carry the query text (parameterised by default) and, optionally, the rows returned, which is enough for every trace check in ERLANG's failure model [F10]. ERLANG should read OpenTelemetry rather than define its own trace format.
+Instrumentation and a data format, not a backend or a detector [P21]. Its database span conventions carry the query text (parameterised by default) and, optionally, the rows returned, which is enough for every trace check in Erlang's failure model [F10]. Erlang should read OpenTelemetry rather than define its own trace format.
 
-*Common to all four products:* they need an instrumented service with real or staged traffic and a vendor backend. None generates load. Whether any can gate a pull request on a pre-merge run was not checked; if one can, ERLANG's "before merge" difference narrows. None treats a missing timeout as a property of the code: Datadog sees timeouts that fired, not calls that could hang.
+*Common to all four products:* they need an instrumented service with real or staged traffic and a vendor backend. None generates load. Whether any can gate a pull request on a pre-merge run was not checked; if one can, Erlang's "before merge" difference narrows. None treats a missing timeout as a property of the code: Datadog sees timeouts that fired, not calls that could hang.
 
 ## Static rules
 
@@ -76,7 +76,7 @@ Semgrep's `python.requests.best-practice.use-timeout` flags a `requests` call ma
 
 ## Front end: Lighthouse
 
-Lighthouse scores one page load in a lab browser. In Lighthouse 10 the score weights Total Blocking Time 30%, Largest Contentful Paint 25%, Cumulative Layout Shift 25%, First Contentful Paint 10% and Speed Index 10% [P23]. Lighthouse CI's `assert` command exits with a failing status when an assertion at `error` level fails [P24]. It measures the client, not the server under concurrent load. Page weight and front-end performance are ITTEN's to judge; ERLANG covers what the server does when many such pages are requested at once.
+Lighthouse scores one page load in a lab browser. In Lighthouse 10 the score weights Total Blocking Time 30%, Largest Contentful Paint 25%, Cumulative Layout Shift 25%, First Contentful Paint 10% and Speed Index 10% [P23]. Lighthouse CI's `assert` command exits with a failing status when an assertion at `error` level fails [P24]. It measures the client, not the server under concurrent load. Page weight and front-end performance are ITTEN's to judge; Erlang covers what the server does when many such pages are requested at once.
 
 ## Tools for agent-written code
 
@@ -107,7 +107,7 @@ Y documented, P partial, N not found in the documentation checked, ? not checked
 
 New Relic's Slow SQL and Scout's slow queries are marked partial for missing indexes: they find the slow query, not the absent index. VibeDoctor is partial on the shared format because it puts security and front-end findings in one report, not a contract shared between separate checkers.
 
-## The gap ERLANG fills
+## The gap Erlang fills
 
 Not new, and not claimed: open-model load with CI thresholds; N+1, retry and timeout detection from production traces; performance findings delivered to agents over MCP; scanning agent-written code; a static missing-timeout rule.
 
@@ -120,21 +120,21 @@ What no tool found does:
 
 ## What to reuse rather than build
 
-- **The load driver: k6, as a separate program.** k6's arrival-rate executors generate open-model load and avoid coordinated omission. ERLANG drives it rather than building a driver, and adds its own safety guard and output format on top (decision of 17 November 2026; see the licence boundary below).
-- **Trace input.** OpenTelemetry spans and PostgreSQL's `pg_stat_statements`, not a format of ERLANG's own.
-- **Trace heuristics.** Sentry's N+1 rule as the starting point for ERLANG's, tuned on the fixtures.
-- **Static rules.** Bandit B113 and Semgrep's timeout rule for Python; ERLANG adds the languages and libraries they do not cover.
+- **The load driver: k6, as a separate program.** k6's arrival-rate executors generate open-model load and avoid coordinated omission. Erlang drives it rather than building a driver, and adds its own safety guard and output format on top (decision of 17 November 2026; see the licence boundary below).
+- **Trace input.** OpenTelemetry spans and PostgreSQL's `pg_stat_statements`, not a format of Erlang's own.
+- **Trace heuristics.** Sentry's N+1 rule as the starting point for Erlang's, tuned on the fixtures.
+- **Static rules.** Bandit B113 and Semgrep's timeout rule for Python; Erlang adds the languages and libraries they do not cover.
 
 ## Licence boundary with k6
 
-k6 is licensed under the GNU Affero General Public License v3 [P1]. ERLANG keeps a clean separation from it:
+k6 is licensed under the GNU Affero General Public License v3 [P1]. Erlang keeps a clean separation from it:
 
-- **Run, never ship.** ERLANG runs the `k6` executable that the user or CI installed, as a separate process. It does not vendor, bundle, download into the repository, modify, fork or link k6 code, and its packages do not depend on k6.
-- **Talk through files and arguments.** ERLANG writes a k6 scenario at run time and passes it on the command line; k6 writes its results as JSON, which ERLANG reads. No k6 code runs inside ERLANG's process, and no ERLANG code is loaded into k6 beyond the generated scenario.
-- **No k6 extensions.** ERLANG does not build or ship a custom k6 binary (xk6). A need for one is a reason to reconsider, not a step to take quietly.
-- **Installation is the user's.** ERLANG checks that `k6` is on the path and stops with an install hint if it is not. CI installs it from Grafana's own release in a workflow step.
+- **Run, never ship.** Erlang runs the `k6` executable that the user or CI installed, as a separate process. It does not vendor, bundle, download into the repository, modify, fork or link k6 code, and its packages do not depend on k6.
+- **Talk through files and arguments.** Erlang writes a k6 scenario at run time and passes it on the command line; k6 writes its results as JSON, which Erlang reads. No k6 code runs inside Erlang's process, and no Erlang code is loaded into k6 beyond the generated scenario.
+- **No k6 extensions.** Erlang does not build or ship a custom k6 binary (xk6). A need for one is a reason to reconsider, not a step to take quietly.
+- **Installation is the user's.** Erlang checks that `k6` is on the path and stops with an install hint if it is not. CI installs it from Grafana's own release in a workflow step.
 
-Running an unmodified AGPL program as a separate process and reading its output does not place ERLANG under the AGPL. This is a design rule, not legal advice; if ERLANG ever needs to change k6 or ship it, the licence question comes back before the code does.
+Running an unmodified AGPL program as a separate process and reading its output does not place Erlang under the AGPL. This is a design rule, not legal advice; if Erlang ever needs to change k6 or ship it, the licence question comes back before the code does.
 
 ## Sources
 

@@ -60,11 +60,11 @@ postgres:17.11@sha256:ff87138949ad9a46f32ff23bd6852b52ce024a13dffe9b4087be98292c
 ```
 
 Provenance:
-- The digest is recorded in KERCKHOFFS's `research/`. ERLANG takes it from the owner, not by reading that repository. A change to it is agreed by the owner for both projects.
+- The digest is recorded in KERCKHOFFS's `research/`. Erlang takes it from the owner, not by reading that repository. A change to it is agreed by the owner for both projects.
 - It was checked against Docker Hub on 17 November 2026: the digest resolves to an OCI image index, and the `17.11` tag still points to it.
-- ERLANG writes it in its harness script, with a comment saying it is KERCKHOFFS's pin.
+- Erlang writes it in its harness script, with a comment saying it is KERCKHOFFS's pin.
 
-**The connection.** KERCKHOFFS runs this image with `--network none` and reaches it only through `docker exec`. ERLANG's fixture service needs a database connection, so it needs one of two things, and never a port on `0.0.0.0`:
+**The connection.** KERCKHOFFS runs this image with `--network none` and reaches it only through `docker exec`. Erlang's fixture service needs a database connection, so it needs one of two things, and never a port on `0.0.0.0`:
 - **A port on `127.0.0.1` only** (`-p 127.0.0.1::5432`). Docker picks the host port, and the script reads it back with `docker port`. The fixture service and the harness run on the host as they are.
 - **A private Docker network** (`docker network create --internal`, no route out), with the fixture service in a second container on it, and requests sent through `docker exec`. No port reaches the host at all, but every fixture's dependencies must install inside a Node image.
 

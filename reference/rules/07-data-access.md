@@ -47,7 +47,7 @@ A request does not repeat a query whose result it already has: a query inside a 
 ### DAT-07 · Judge data access at production scale
 Strength: MUST · Evidence: research · Check: report
 
-ERLANG judges every data-access check on seeded data at a realistic size, and at ten times that size, comparing the two. A route that is fast on a development database proves nothing about the defects in this file.
+Erlang judges every data-access check on seeded data at a realistic size, and at ten times that size, comparing the two. A route that is fast on a development database proves nothing about the defects in this file.
 
 *Why:* "About two thirds of performance bugs need large-scale inputs to manifest" [S32]. "developers usually only test their code on a small scale", while the problems surface at larger scales [S31]. The Rails study found its non-scalable page actions by testing at increased data sizes [S30].
 
