@@ -2,7 +2,7 @@
 
 ## 0.1.0
 
-The first release. Built and fixture-tested: every planted defect in Erlang's own fixtures (L01a to L13) is found, and no clean twin reports anything (recall and precision 1.00), statically, by trace and under load, on five consecutive CI runs whose trace reports agree. Nothing is claimed for code outside the fixtures; the held-out set has not been planted or scored. finding/1 and report/1 come from a pinned copy of the shared core, to be re-pinned when it gains expected rows.
+The first release. Built and fixture-tested on Erlang's own fixtures (L01a to L13), which plant 86 defects: the static checks find all 86; the trace finds 65, with 2 documented expected misses and 19 it does not exercise; the load forms find 33, with 1 documented expected miss and 52 they do not exercise. No clean twin reports anything. Recall and precision are 1.00 in each mode, stated over the defects that mode exercises and excluding the documented expected misses, on five consecutive CI runs whose trace reports agree. Nothing is claimed for code outside the fixtures; the held-out set has not been planted or scored. finding/1 and report/1 come from a pinned copy of the shared core, to be re-pinned when it gains expected rows.
 
 ### Static checks (`erlang <dir>`)
 
@@ -122,6 +122,7 @@ A trace or load finding carries the values its message quotes: `erlang.values.me
   | L05 trace | placeCart's fit | R² 0.89 to 0.95 on four CI runs with readings at 600 to 1,100 requests (0.91, 0.95, 0.94, 0.89); 1.00 on the Mac with readings at 600 to 3,600 | 0.9 |
   | L05 load | createOrder's closest pair | 193 B/request | 203 |
   | L09 load | clean twin's signup stretch | ≤ 34 ms | 50 |
+  | L09 trace | planted signup stretch (`POST /signup`, `crypto.pbkdf2Sync`) | median 114.43 ms on the Mac under macOS 27.2 and 121.96 ms under macOS 27.3: 1.14 and 1.22 times its margin, under the 1.3 the sizing rule asks for | 100 (2x the bar 50) |
   | L11 load | decoy price | ≤ 53 ms | 80 |
   | L11 trace, warm-up form | decoy above the baseline | 4 to 7 ms | 20 |
   | L11 trace, fallback form | clean twin's largest extra | 12 ms | 25 |

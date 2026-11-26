@@ -165,7 +165,7 @@ Added while building `blocking-work` (L09):
 - bcryptjs's asynchronous `hash` and `compare` at cost 4, for one-time codes (docs/decisions.md, Q4: at cost 10 or more bcryptjs is a defect, asynchronous or not), and a SHA-256 of the response with `createHash`;
 - a file read when the module loads, and templates read by a function only startup calls;
 - synchronous compression in a worker thread;
-- bcrypt's `hashSync` in a script no request runs.
+- bcryptjs's `hashSync` in a script no request runs.
 
 Added while building `oversized-payload` (L04):
 
