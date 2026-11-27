@@ -8,7 +8,7 @@
     "erlang": "bin/erlang.js"
   },
   "scripts": {
-    "test": "node scripts/core-pin-test.js && node scripts/unit-test.js && node scripts/fixture-test.js && node scripts/fix-test.js && node scripts/cli-test.js && node scripts/self-scan.js && bash scripts/hygiene-test.sh && bash scripts/load-smoke.sh",
+    "test": "node scripts/core-pin-test.js && node scripts/unit-test.js && node scripts/fixture-test.js && node scripts/fix-test.js && node scripts/cli-test.js && node scripts/self-scan.js && node scripts/readme-numbers.js && bash scripts/hygiene-test.sh && bash scripts/load-smoke.sh",
     "trace": "scripts/trace.sh",
     "load": "scripts/load.sh"
   },
