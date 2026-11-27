@@ -47,7 +47,7 @@ The output of `node bin/erlang.js fixtures/L07-no-timeout/planted`, run from a c
 
 ## Part of a set
 
-Erlang, [Itten](https://github.com/atishaypahadiya/Itten) and [Kerckhoffs](https://github.com/atishaypahadiya/Kerckhoffs) are one set, and each checks a different side of the same app: Erlang its load and resilience, Itten its design, and Kerckhoffs its security.
+Erlang, [Itten](https://github.com/atishaypahadiya/Itten) and Kerckhoffs are one set, and each checks a different side of the same app: Erlang its load and resilience, Itten its design, and Kerckhoffs its security.
 Each one stands alone. All three write their findings as finding/1 inside a report/1, and all three use the same exit codes.
 
 ## What it does
