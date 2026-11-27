@@ -27,7 +27,24 @@ jobs:
         with:
           node-version: 22
       - run: npm ci
+      - run: npm ci --prefix scripts/docs
+      # The doc checks' tools (scripts/docs/check.sh), each checked by SHA-256.
+      - name: Install Vale v3.26.0 and lychee v0.24.2
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/vale.tar.gz" https://github.com/errata-ai/vale/releases/download/v3.26.0/vale_3.26.0_Linux_64-bit.tar.gz
+          echo "22aa69a556558e4a9dfc63c17030777383d8d3c48dcdfad655fa98e839d666ed  $RUNNER_TEMP/vale.tar.gz" | sha256sum -c -
+          curl -fsSL -o "$RUNNER_TEMP/lychee.tar.gz" https://github.com/lycheeverse/lychee/releases/download/lychee-v0.24.2/lychee-x86_64-unknown-linux-gnu.tar.gz
+          echo "1f4e0ef7f6554a6ed33dd7ac144fb2e1bbed98598e7af973042fc5cd43951c9a  $RUNNER_TEMP/lychee.tar.gz" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/doc-tools"
+          tar -xzf "$RUNNER_TEMP/vale.tar.gz" -C "$RUNNER_TEMP/doc-tools" vale
+          tar -xzf "$RUNNER_TEMP/lychee.tar.gz" -C "$RUNNER_TEMP/doc-tools" --strip-components=1 lychee-x86_64-unknown-linux-gnu/lychee
+          echo "$RUNNER_TEMP/doc-tools" >> "$GITHUB_PATH"
       - run: npm test
+        env:
+          # A missing doc tool fails the run here rather than being skipped.
+          ERLANG_DOCS_REQUIRED: 1
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
 
   # The trace harness (scripts/trace.sh): each trace form's twins against a
   # PostgreSQL container pinned by digest, on loopback, at low rate. No load.

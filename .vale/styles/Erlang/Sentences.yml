@@ -1,0 +1,27 @@
+# Prose is written in full sentences: every paragraph and list item ends with
+# a full stop, a colon, a question mark or a closing bracket, before any
+# closing emphasis marks. Headings, table
+# rows, fenced blocks, HTML and link-only lines are not prose.
+extends: script
+message: "Write a full sentence: this line ends without a full stop."
+level: error
+scope: raw
+script: |
+  text := import("text")
+  matches := []
+  pos := 0
+  fence := false
+  for line in text.split(scope, "\n") {
+    t := text.trim_space(line)
+    if text.has_prefix(t, "```") { fence = !fence }
+    prose := !fence && len(t) > 0 && !text.has_prefix(t, "```")
+    prose = prose && !text.has_prefix(t, "#") && !text.has_prefix(t, "|") && !text.has_prefix(t, "<")
+    if prose {
+      u := text.trim_right(t, "*_")
+      last := len(u) > 0 ? u[len(u)-1:] : ""
+      if !text.contains(".:?!)", last) && !text.has_suffix(t, "-->") {
+        matches = append(matches, {begin: pos, end: pos + len(line)})
+      }
+    }
+    pos += len(line) + 1
+  }

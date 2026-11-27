@@ -1,0 +1,12 @@
+// markdownlint for the pages scripts/docs-check.sh checks. Long lines are
+// allowed: a paragraph is one line, and tables carry full sentences.
+{
+  "config": {
+    "default": true,
+    "MD013": false,
+    "MD024": { "siblings_only": true },
+    "MD033": false,
+    "MD060": { "style": "compact" }
+  },
+  "globs": ["README.md", "docs/explanation.md", "docs/reference/*.md"]
+}

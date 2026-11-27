@@ -1,0 +1,17 @@
+# A page names, in capitals, only Markdown files in the tracked tree, so it
+# never mentions an untracked working file such as an agent's instructions.
+# scripts/docs/check.sh fails when this list and the tracked tree's
+# upper-case .md names differ.
+extends: existence
+message: "'%s' is not an upper-case Markdown file in the tracked tree."
+level: error
+scope: raw
+nonword: true
+tokens:
+  - '\b[A-Z][A-Z0-9_-]*\.md\b'
+exceptions:
+  - CHANGELOG.md
+  - CONTRACT.md
+  - PLAN.md
+  - README.md
+  - SOURCES.md

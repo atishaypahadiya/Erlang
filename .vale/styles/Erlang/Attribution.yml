@@ -1,0 +1,13 @@
+# No page says the work was made by an AI tool. AI and LLM as subjects are
+# fine; a claim of making is not.
+extends: existence
+message: "'%s' attributes the work to an AI tool."
+level: error
+ignorecase: true
+scope: raw
+nonword: true
+tokens:
+  - '\b(?:generated|written|created|authored|drafted|made|built|produced|coded)\s+(?:by|with|using|via)\s+(?:an?\s+)?(?:AI|LLMs?|large language models?|language models?|chatbots?|coding assistants?|AI assistants?|AI agents?|AI tools?|copilot)\b'
+  - '\bAI[- ](?:generated|written|authored|assisted)\b'
+  - '\bco-authored-by\b'
+  - '\bgenerated[- ]by[- ]AI\b'

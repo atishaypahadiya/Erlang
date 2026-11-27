@@ -1,0 +1,140 @@
+{
+  "note": "One run of Erlang v0.1.0 on a project it had never seen. The command, the counts and the findings are as the run gave them; runsIn and basis are where each finding's code runs, read by hand from the project's files, not by Erlang. Nothing was run on the project and nothing was installed in it.",
+  "project": "umami-software/umami",
+  "url": "https://github.com/umami-software/umami",
+  "commit": "dbb8d606fbd4e99220fb83bcb4abad3e0f97f42a",
+  "date": "2026-11-26",
+  "erlang": {
+    "tag": "v0.1.0",
+    "commit": "9a18ae98e1597f8b46660d2615a6d693462a9820"
+  },
+  "command": "node bin/erlang.js ../umami --out ../umami-report.json",
+  "machine": "the Mac (macOS 27.3), Node v26.13.1",
+  "seconds": 19.7,
+  "exit": 1,
+  "status": "complete",
+  "files": 1507,
+  "handlers": 210,
+  "findings": [
+    {
+      "severity": "info",
+      "check": "no-timeout",
+      "file": "packages/api-client/src/http.ts",
+      "line": 230,
+      "runsIn": "client library",
+      "basis": "the @umami/api-client package"
+    },
+    {
+      "severity": "error",
+      "check": "no-timeout",
+      "file": "scripts/build-geo.js",
+      "line": 47,
+      "runsIn": "build or maintenance script",
+      "basis": "run by a build:geo or download: script in package.json, not by the server"
+    },
+    {
+      "severity": "error",
+      "check": "no-timeout",
+      "file": "scripts/build-geo.js",
+      "line": 55,
+      "runsIn": "build or maintenance script",
+      "basis": "run by a build:geo or download: script in package.json, not by the server"
+    },
+    {
+      "severity": "error",
+      "check": "no-timeout",
+      "file": "scripts/download-country-names.js",
+      "line": 23,
+      "runsIn": "build or maintenance script",
+      "basis": "run by a build:geo or download: script in package.json, not by the server"
+    },
+    {
+      "severity": "error",
+      "check": "no-timeout",
+      "file": "scripts/download-language-names.js",
+      "line": 23,
+      "runsIn": "build or maintenance script",
+      "basis": "run by a build:geo or download: script in package.json, not by the server"
+    },
+    {
+      "severity": "error",
+      "check": "no-timeout",
+      "file": "scripts/test-api.ts",
+      "line": 214,
+      "runsIn": "build or maintenance script",
+      "basis": "run by the test:api scripts in package.json, not by the server"
+    },
+    {
+      "severity": "error",
+      "check": "no-timeout",
+      "file": "src/lib/fetch.ts",
+      "line": 24,
+      "runsIn": "browser",
+      "basis": "imported by React hooks in src/components/hooks/"
+    },
+    {
+      "severity": "error",
+      "check": "no-timeout",
+      "file": "src/recorder/index.js",
+      "line": 132,
+      "runsIn": "browser",
+      "basis": "bundled by rollup.recorder.config.js into public/recorder.js"
+    },
+    {
+      "severity": "error",
+      "check": "no-timeout",
+      "file": "src/recorder/index.js",
+      "line": 694,
+      "runsIn": "browser",
+      "basis": "bundled by rollup.recorder.config.js into public/recorder.js"
+    },
+    {
+      "severity": "error",
+      "check": "no-timeout",
+      "file": "src/store/version.ts",
+      "line": 20,
+      "runsIn": "browser",
+      "basis": "a zustand store, imported by src/app/(main)/UpdateNotice.tsx, a component that uses React state and Next.js navigation hooks"
+    },
+    {
+      "severity": "error",
+      "check": "no-timeout",
+      "file": "src/tracker/errors.ts",
+      "line": 62,
+      "runsIn": "browser",
+      "basis": "bundled by rollup.tracker.config.js into public/script.js, the tracker visitors load"
+    },
+    {
+      "severity": "error",
+      "check": "no-timeout",
+      "file": "src/tracker/index.ts",
+      "line": 476,
+      "runsIn": "browser",
+      "basis": "bundled by rollup.tracker.config.js into public/script.js, the tracker visitors load"
+    },
+    {
+      "severity": "error",
+      "check": "no-timeout",
+      "file": "tests/api/global-setup.ts",
+      "line": 23,
+      "runsIn": "test",
+      "basis": "under tests/, the API test set-up"
+    },
+    {
+      "severity": "error",
+      "check": "no-timeout",
+      "file": "tests/api/global-setup.ts",
+      "line": 53,
+      "runsIn": "test",
+      "basis": "under tests/, the API test set-up"
+    },
+    {
+      "severity": "info",
+      "check": "pool-sizing",
+      "file": "src/lib/prisma.ts",
+      "line": 891,
+      "runsIn": "server",
+      "basis": "the Prisma client the server uses; the finding is about deployment, from vercel.json"
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+# The tool's name in prose is written Erlang. Code and quoted output are not
+# prose and are left as they are.
+extends: substitution
+message: "Write '%s', not '%s'."
+level: error
+ignorecase: false
+scope: text
+swap:
+  ERLANG: Erlang
+  '\berlang\b': Erlang

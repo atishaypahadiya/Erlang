@@ -1,4 +1,5 @@
-// Checks the numbers README.md marks as checked. A marked number is written
+// Checks the numbers that README.md and docs/explanation.md mark as checked.
+// A marked number is written
 //   <!--n:key-->value<!--/n-->
 // and each key has one source in the tree, below. The test fails when a marked
 // value differs from what its source gives now, when a marker names a key with
@@ -8,9 +9,11 @@
 //   derived   counted or read from the files the number is about;
 //   recorded  matched against the sentence in CHANGELOG.md that records it,
 //             for numbers that come from CI run artifacts, which are not in
-//             the tree (the trace and load coverage counts, two medians).
+//             the tree (the trace and load coverage counts, two medians);
+//             or read from docs/evidence/, which records a run on a project
+//             outside the tree.
 //
-// Usage: node scripts/readme-numbers.js [--root <dir>] [--readme <file>]
+// Usage: node scripts/readme-numbers.js [--root <dir>] [--readme <file> ...]
 //        exit 0 when every marked number matches its source
 
 import { readFileSync, readdirSync } from 'node:fs';
@@ -20,7 +23,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const args = process.argv.slice(2);
 const opt = (name, fallback) => { const i = args.indexOf(name); return i === -1 ? fallback : resolve(args[i + 1]); };
 const ROOT = opt('--root', join(dirname(fileURLToPath(import.meta.url)), '..'));
-const README = opt('--readme', join(ROOT, 'README.md'));
+const given = args.flatMap((a, i) => (args[i - 1] === '--readme' ? [resolve(a)] : []));
+const PAGES = given.length ? given : ['README.md', 'docs/explanation.md'].map((p) => join(ROOT, p));
 const text = (p) => readFileSync(join(ROOT, p), 'utf8');
 const json = (p) => JSON.parse(text(p));
 
@@ -69,6 +73,8 @@ const jobs = [...ci.slice(ci.indexOf('\njobs:')).matchAll(/^ {2}([a-z][a-z-]*):\
 const matrix = loadFormPaths.filter((p) => !p.startsWith('fixtures/L05-memory-growth/')).length;
 must(jobs.includes('load') && jobs.includes('load-long'), 'ci.yml no longer has the load and load-long jobs the job count assumes');
 const ruleIds = new Set(readdirSync(join(ROOT, 'reference/rules')).flatMap((f) => text(`reference/rules/${f}`).match(/\b[A-Z]{3}-\d{2}\b/g) ?? []));
+const umami = json('docs/evidence/umami.json');
+const runsIn = (w) => umami.findings.filter((x) => x.severity === 'error' && x.runsIn === w).length;
 const signup = match('CHANGELOG.md', /median ([\d.]+) ms on the Mac under macOS 27\.2 and ([\d.]+) ms under macOS 27\.3/);
 
 // key -> [value now, source]
@@ -101,12 +107,25 @@ const SOURCES = {
   'ci-jobs': [jobs.length - 1 + matrix, '.github/workflows/ci.yml jobs, with the load matrix counted per load form but L05'],
   'signup-27.2': [signup[1], 'CHANGELOG.md, thin margins, L09 trace (recorded)'],
   'signup-27.3': [signup[2], 'CHANGELOG.md, thin margins, L09 trace (recorded)'],
+  'umami-files': [umami.files, 'docs/evidence/umami.json, files'],
+  'umami-handlers': [umami.handlers, 'docs/evidence/umami.json, handlers'],
+  'umami-seconds': [umami.seconds, 'docs/evidence/umami.json, seconds'],
+  'umami-errors': [umami.findings.filter((x) => x.severity === 'error').length, 'docs/evidence/umami.json, findings that are errors'],
+  'umami-infos': [umami.findings.filter((x) => x.severity === 'info').length, 'docs/evidence/umami.json, findings that are info'],
+  'umami-scripts': [runsIn('build or maintenance script'), 'docs/evidence/umami.json, errors in scripts'],
+  'umami-tests': [runsIn('test'), 'docs/evidence/umami.json, errors in tests'],
+  'umami-browser': [runsIn('browser'), 'docs/evidence/umami.json, errors in browser code'],
+  'umami-server': [runsIn('server'), 'docs/evidence/umami.json, errors in server code'],
 };
 
-const readme = readFileSync(README, 'utf8');
-const marks = [...readme.matchAll(/<!--n:([a-z0-9.-]+)-->([^<]*)<!--\/n-->/g)];
-must(marks.length > 0, `${README} marks no number`);
-must((readme.match(/<!--n:/g) ?? []).length === marks.length, 'a number marker is malformed (an opening <!--n:key--> with no value and <!--/n--> after it)');
+const marks = [];
+for (const page of PAGES) {
+  const text = readFileSync(page, 'utf8');
+  const found = [...text.matchAll(/<!--n:([a-z0-9.-]+)-->([^<]*)<!--\/n-->/g)];
+  must((text.match(/<!--n:/g) ?? []).length === found.length, `${page}: a number marker is malformed (an opening <!--n:key--> with no value and <!--/n--> after it)`);
+  marks.push(...found);
+}
+must(marks.length > 0, 'no page marks a number');
 const used = new Set();
 for (const [, key, value] of marks) {
   used.add(key);
@@ -120,4 +139,4 @@ if (problems.length) {
   console.log(`readme-numbers: ${problems.length} problem(s) in ${marks.length} marked number(s)`);
   process.exit(1);
 }
-console.log(`readme-numbers: ${marks.length} marked number(s) under ${used.size} key(s) match their sources`);
+console.log(`readme-numbers: ${marks.length} marked number(s) under ${used.size} key(s) in ${PAGES.length} page(s) match their sources`);

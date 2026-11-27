@@ -1,0 +1,11 @@
+{
+  "name": "erlang-docs-tools",
+  "private": true,
+  "description": "The tools scripts/docs/check.sh runs on Erlang's pages, kept apart from Erlang's own dependencies.",
+  "type": "module",
+  "devDependencies": {
+    "jsdom": "26.1.0",
+    "markdownlint-cli2": "0.24.1",
+    "mermaid": "11.17.2"
+  }
+}
